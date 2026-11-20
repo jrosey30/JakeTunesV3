@@ -163,12 +163,14 @@ export function restoreActionFor(t: NavLocation): RestoreAction {
  * (Jake 2026-10-30: "I flip from Perfecth to a playlist page, and I don't have
  * any way of going back to the Perfecth page"). No saved view → Home. The
  * Record Store room was removed (2026-11-09), so a session saved there
- * reopens on Songs (4.5.0-63).
+ * reopens on Songs (4.5.0-63). The Bandcamp Store and the old Download page
+ * left as views (Brief 253): a session saved on either reopens in the Record
+ * Shop, on the tab legacyShopTab names.
  */
 export function savedLocation(ui: Record<string, unknown> | null | undefined): NavLocation {
   const str = (k: string): string | null => { const v = ui?.[k]; return typeof v === 'string' ? v : null }
   const saved = str('currentView')
-  const view = saved === null ? 'home' : saved === 'recordstore' ? 'songs' : saved
+  const view = saved === null ? 'home' : saved === 'recordstore' ? 'songs' : legacyShopTab(ui) ? 'discovery' : saved
   return locationOf({
     currentView: view,
     activePlaylistId: str('activePlaylistId'),
@@ -176,4 +178,16 @@ export function savedLocation(ui: Record<string, unknown> | null | undefined): N
     activeArtist: str('activeArtist'),
     pendingAlbumKey: str('pendingAlbumKey'),
   })
+}
+
+/**
+ * The Record Shop tab a session saved on a retired shop view reopens on
+ * (Brief 253): the old Bandcamp Store view ('store') is the Bandcamp tab, the
+ * old Download page ('download') is the Search tab (id 'browse'). Null for
+ * every other saved view. App's startup restore asks for the tab before it
+ * dispatches the restore action.
+ */
+export function legacyShopTab(ui: Record<string, unknown> | null | undefined): 'bandcamp' | 'browse' | null {
+  const v = ui?.currentView
+  return v === 'store' ? 'bandcamp' : v === 'download' ? 'browse' : null
 }

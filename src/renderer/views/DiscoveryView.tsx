@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import NewForYouView from './NewForYouView'
 import ListenToTheListView from './ListenToTheListView'
 import DownloadView from './DownloadStore/DownloadView'
+import StoreView from './BandcampStore'
 import { useShopList } from '../record-shop/useShopSession'
 import { DISCOVERY_TAB_EVENT, rememberDiscoveryTab, rememberedDiscoveryTab, type DiscoveryTab } from './discoveryTab'
 import '../styles/discovery.css'
@@ -46,27 +47,38 @@ export default function DiscoveryView({ initialTab }: { initialTab?: DiscoveryTa
           className={`discovery-tab ${tab === 'new-for-you' ? 'discovery-tab--on' : ''}`}
           onClick={() => select('new-for-you')}
         >For You<span className="discovery-tab__sub">The Racks</span></button>
-        {/* Browse (step 5 slice 4): the catalogue search, inside the shop —
-            the Download view in its trimmed mode, same Get pipeline. The
-            sidebar Download route stays until this is verified. */}
+        {/* Search (step 5 slice 4; "Browse" until Brief 253): the catalogue
+            search, inside the shop. The old Download page and its route are
+            gone; the Downloads panel is where progress and failures live. */}
         <button
           role="tab"
           aria-selected={tab === 'browse'}
           className={`discovery-tab ${tab === 'browse' ? 'discovery-tab--on' : ''}`}
           onClick={() => select('browse')}
-        >Browse</button>
+        >Search</button>
         <button
           role="tab"
           aria-selected={tab === 'your-list'}
           className={`discovery-tab ${tab === 'your-list' ? 'discovery-tab--on' : ''}`}
           onClick={() => select('your-list')}
         >Listen List{recs.length > 0 && <span className="discovery-tab__count" aria-label={`${recs.length} saved`}>{recs.length.toLocaleString()}</span>}</button>
+        {/* Bandcamp (Brief 253, Jake: a tab, not a fourth door): the real
+            Bandcamp site, the same StoreView the sidebar row opened. */}
+        <button
+          role="tab"
+          aria-selected={tab === 'bandcamp'}
+          className={`discovery-tab ${tab === 'bandcamp' ? 'discovery-tab--on' : ''}`}
+          onClick={() => select('bandcamp')}
+        >Bandcamp</button>
         {/* Rock DNA left the tabs (2026-11-09): it is a quiz, not a place to
             shop. Its own page ('rock-dna' view) is linked from the For You
             page's "What I've learned" strip ("Tune my taste"). */}
       </div>
       <div className="discovery-body">
-        {tab === 'new-for-you' ? <NewForYouView /> : tab === 'browse' ? <DownloadView mode="browse" /> : <ListenToTheListView />}
+        {tab === 'new-for-you' ? <NewForYouView />
+          : tab === 'browse' ? <DownloadView />
+            : tab === 'bandcamp' ? <StoreView />
+              : <ListenToTheListView />}
       </div>
     </div>
   )

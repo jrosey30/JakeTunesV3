@@ -50,9 +50,12 @@ describe('the back pill names every page you can come from (Jake 10/30: "make go
       ['home', 'Home'], ['songs', 'Songs'], ['albums', 'Albums'], ['artists', 'Artists'], ['genres', 'Genres'],
       ['discovery', 'Record Shop'], ['top1000', 'Top 1000 Quiz'], ['concerts', 'Live Concerts'],
       ['musicman', 'The Music Man'], ['year-in-review', 'Year in Review'],
-      ['device', 'iPod'], ['store', 'Bandcamp Store'], ['dj', 'DJ'],
+      ['device', 'iPod'], ['dj', 'DJ'],
     ]
     for (const [view, name] of named) assert.equal(backLabelForLocation(loc(view)), `← ${name}`)
+    // Brief 253: the Bandcamp Store and the old Download page are Record Shop tabs, not views.
+    assert.equal(backLabelForLocation(loc('store')), '← Back')
+    assert.equal(backLabelForLocation(loc('download')), '← Back')
   })
   it('a playlist, a smart playlist, an album and an artist by THEIR names when the caller resolved them', () => {
     assert.equal(backLabelForLocation(loc('playlist'), false, { playlist: 'Road Trip' }), '← Road Trip')

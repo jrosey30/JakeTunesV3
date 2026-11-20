@@ -17,8 +17,6 @@ const BACK_LABELS: Record<ViewName, string> = {
   'smart-playlist': '← Playlist',
   device: '← iPod',
   'cd-import': '← CD Import',
-  store: '← Bandcamp Store',
-  download: '← Downloads',
   scotus: '← Beck v. Prupis',
   'rock-dna': '← Rock DNA',
   'listen-to-the-list': '← Listen List',

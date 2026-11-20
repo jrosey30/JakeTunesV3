@@ -19,8 +19,6 @@ import SmartPlaylistView from '../views/SmartPlaylistView'
 import DeviceView from '../views/DeviceView'
 import IpodIdentityBar from './IpodIdentityBar'
 import CDImportView from '../views/CDImportView'
-import StoreView from '../views/BandcampStore'
-import DownloadView from '../views/DownloadStore'
 import ScotusView from '../views/ScotusView'
 import RockDnaView from '../views/RockDnaView'
 import YearInReviewView from '../views/YearInReviewView'
@@ -174,6 +172,9 @@ export default function MainContent() {
     // 'discovery' entry — kept so any stray/deep-linked nav still works).
     case 'listen-to-the-list': viewElement = <DiscoveryView initialTab="your-list" />; break
     case 'new-for-you': viewElement = <DiscoveryView initialTab="new-for-you" />; break
+    // 'store' (Bandcamp) and 'download' (the old Download page) are no
+    // longer views (Brief 253): both are Record Shop tabs, and a session
+    // saved on either reopens there (nav-history.ts legacyShopTab).
     case 'musicman': break  // handled by the always-mounted wrapper below
     case 'playlist': viewElement = <PlaylistView />; break
     case 'smart-playlist': viewElement = <SmartPlaylistView />; break
@@ -185,8 +186,6 @@ export default function MainContent() {
       </div>
     ); break
     case 'cd-import': viewElement = <CDImportView />; break
-    case 'store': viewElement = <StoreView />; break
-    case 'download': viewElement = <DownloadView />; break
     case 'scotus': viewElement = <ScotusView />; break
     // Rock DNA left the Record Shop's tabs (2026-11-09): a quiz, not a place
     // to shop. The shop's "What I've learned" strip links here.

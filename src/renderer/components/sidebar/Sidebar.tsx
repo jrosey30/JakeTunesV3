@@ -719,22 +719,11 @@ export default function Sidebar() {
           highlight="#b87333"
           onClick={() => dispatch({ type: 'SET_VIEW', view: 'discovery' })}
         />
-        <SidebarItem
-          label="Bandcamp Store"
-          icon={(
-            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M3 3h10l-1.2 7.5a1.5 1.5 0 0 1-1.48 1.25H5.68A1.5 1.5 0 0 1 4.2 10.5L3 3z" fill="#2c5aa0" />
-              <circle cx="6" cy="13.5" r="1" fill="#2c5aa0" />
-              <circle cx="11" cy="13.5" r="1" fill="#2c5aa0" />
-            </svg>
-          )}
-          selected={state.currentView === 'store'}
-          onClick={() => dispatch({ type: 'SET_VIEW', view: 'store' })}
-        />
         {/* Placement audit P1 (approved): the Downloads row IS the panel's door —
             the whole row toggles it; the glyph stays visible when the queue is
-            empty and the count rides inside it. The legacy page keeps its own
-            row below until parity and everyday use retire it. */}
+            empty and the count rides inside it. Brief 253: STORE is these two
+            rows. Bandcamp is a Record Shop tab, and the old Download page is
+            gone (the panel is the one place for progress and failures). */}
         <SidebarItem
           label="Downloads"
           icon={(
@@ -757,18 +746,6 @@ export default function Sidebar() {
               </svg>
             ),
           }}
-        />
-        <SidebarItem
-          label="Download page"
-          className="sidebar-item--legacy"
-          icon={(
-            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#9a948a" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
-              <path d="M2.5 6h11" />
-            </svg>
-          )}
-          selected={state.currentView === 'download'}
-          onClick={() => dispatch({ type: 'SET_VIEW', view: 'download' })}
         />
         {/* DJ booth — nav entry HIDDEN 2026-08-04 at Jake's request ("it needs to
             be on the shelf for a little bit"). The feature is intact and the 'dj'

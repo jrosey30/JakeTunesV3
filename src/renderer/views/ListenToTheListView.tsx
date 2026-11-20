@@ -354,7 +354,7 @@ export default function ListenToTheListView() {
           {dl.state === 'queued' || dl.state === 'downloading' ? (
             <span className="ltl-tri-getting" title="Importing…">
               <span className="ltl-tri-spinner" aria-hidden="true" />
-              {dl.state === 'downloading' ? 'Getting…' : 'Queued…'}
+              {dl.state === 'downloading' ? 'Saving…' : 'Queued…'}
             </span>
           ) : dl.state === 'error' ? (
             <>
@@ -367,11 +367,11 @@ export default function ListenToTheListView() {
               <button type="button" className="ltl-tri-get" onClick={() => getReco(r)} title={dl.error || 'Try again'}>Retry</button>
             </>
           ) : isAlbum ? (
-            <button type="button" className="ltl-tri-get" onClick={() => openDownloadForReco(r)} title="Pick tracks in Download">Tracks</button>
+            <button type="button" className="ltl-tri-get" onClick={() => openDownloadForReco(r)} title="Pick the edition in Search">Save album</button>
           ) : sentLink ? (
             <button type="button" className="ltl-tri-get" onClick={() => { void window.electronAPI.openExternalUrl?.(sentLink) }} title={sentLink}>Open</button>
           ) : canDl && (
-            <button type="button" className="ltl-tri-get" onClick={() => getReco(r)} title="Get it (Enter)">Get</button>
+            <button type="button" className="ltl-tri-get" onClick={() => getReco(r)} title="Save it (Enter)">Save</button>
           )}
           <button type="button" className="ltl-tri-toss" onClick={() => tossReco(r)} title="Toss it (X)">✕</button>
         </div>
@@ -391,7 +391,7 @@ export default function ListenToTheListView() {
           </span>
         </div>
         <div className="ltl-header-tools">
-          {inboxFlat.length > 0 && <span className="ltl-kbd-hint">Space preview · Enter get · X toss · ↑↓ move</span>}
+          {inboxFlat.length > 0 && <span className="ltl-kbd-hint">Space preview · Enter save · X toss · ↑↓ move</span>}
           <button
             type="button"
             className={`ltl-tool${showFriends ? ' is-on' : ''}`}
