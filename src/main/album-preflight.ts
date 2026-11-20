@@ -11,9 +11,8 @@
  * Where the walk would look at something this didn't, the answer is
  * "unknown" and the walk runs as it always has.
  *
- * What it adds that the walk can't know before a byte moves: a listed track
- * Qobuz can't stream. streamrip skips those, so the walk would download the
- * rest of the album and then refuse it as incomplete.
+ * A listed song Qobuz marks unstreamable is never a "no" here: the walk does
+ * not read that flag (it stages and judges the files), so the walk decides.
  *
  * Pure: listings in, an answer out. The wiring is streamrip-store/index.ts
  * ('check-qobuz-album').
@@ -107,19 +106,17 @@ export function judgeQobuzAlbum(req: RequestedAlbum, o: { listings: readonly Pre
   }
 
   const judged = considered.map((l) => ({ l, v: verifyAlbumCandidate(req, l.cand) }))
-  // This edition, every song streamable: the walk downloads it.
-  let short: { have: number; of: number } | null = null
+  // This edition: the walk downloads it. A listed song Qobuz marks unstreamable is not a
+  // "no": the walk never reads that flag, it stages the files and judges what arrives, so
+  // such a shortfall is left to the walk ("can't tell"), never refused here.
+  let shortOnly = false
   for (const { l, v } of judged) {
     if (v.verdict === 'reject') continue
-    if (l.listed > 0 && l.streamable < l.listed) {
-      const of = req.trackCount ?? l.cand.trackCount ?? l.listed
-      if (!short || l.streamable > short.have) short = { have: l.streamable, of }
-      continue
-    }
+    if (l.listed > 0 && l.streamable < l.listed) { shortOnly = true; continue }
     return { answer: 'found' }
   }
+  if (shortOnly) return { answer: 'unknown', why: 'unsure' }
   const alternatives = judged.filter(({ v }) => v.verdict === 'reject').map(({ l, v }) => alternativeOf(l.cand, (v as { reason: string }).reason))
-  if (short) return { answer: 'no', why: 'partial', have: short.have, of: short.of, alternatives }
 
   const rejects = judged.map(({ l, v }) => ({ cand: l.cand, v: v as Extract<AlbumVerdict, { verdict: 'reject' }> }))
   const sameRecord = rejects.filter((r) => r.v.kind !== 'artist' && r.v.kind !== 'title')

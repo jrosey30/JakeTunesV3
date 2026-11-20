@@ -95,10 +95,9 @@ describe('does Qobuz have this edition?', () => {
     assert.equal(v.answer, 'no'); assert.equal(v.answer === 'no' && v.why, 'not-on-qobuz')
   })
 
-  it('partial: the edition is listed but Qobuz can stream only some of it', () => {
+  it('songs Qobuz marks unstreamable are left to the walk, never refused (the walk never reads that flag)', () => {
     const v = judgeQobuzAlbum(reqOf(), { listings: [listing('a', 'Manning Fireworks', nine, { streamable: [true, true, true, true, true, true, false, false, false] })] })
-    assert.deepEqual({ ...v, alternatives: undefined }, { answer: 'no', why: 'partial', have: 6, of: 9, alternatives: undefined })
-    assert.equal(preflightLine(v), 'Qobuz has 6 of 9 songs')
+    assert.deepEqual(v, { answer: 'unknown', why: 'unsure' })
   })
 
   it('partial: a smaller edition whose every song is on this one', () => {

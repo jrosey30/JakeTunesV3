@@ -7,6 +7,7 @@ import { qobuzNoticeFor } from '../../../common/qobuz-notice'
 import { nearEditionOf } from '../../../common/near-edition-detect'
 import { toggleDownloadsPanel, showDownload } from '../../components/DownloadsPanel'
 import { useLibrary } from '../../context/LibraryContext'
+import { saveSongsLabel } from './albumEditions'
 import { enqueue, itemFor, subscribeQueue, getQueue, retry, cancel, primaryFor, trackQueryId, albumQueryId, type QItem, type QResult, type QueueOrigin } from './downloadQueue'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
 import type { ItunesSuggestion } from '../../types'
@@ -242,6 +243,12 @@ export default function DownloadView() {
   // "there has to be an easier way to see all tracks on this album"). Raw
   // tracks are cached per album key; owned/preview are computed at render.
   const [expandedAlbums, setExpandedAlbums] = useState<Set<string>>(() => new Set())
+  /** Songs ticked in an open tracklist, per album, for "Save N songs" (Brief 255). */
+  const [tickedTracks, setTickedTracks] = useState<Record<string, number[]>>({})
+  const toggleTick = (key: string, i: number) => setTickedTracks((m) => {
+    const cur = m[key] ?? []
+    return { ...m, [key]: cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i] }
+  })
   /** Setup drawer: paste-a-link, the Qobuz account and the streamrip check.
    *  Closed by default — these are things you do once, and they used to sit
    *  permanently under the results on the page you use every day. */
@@ -438,7 +445,9 @@ export default function DownloadView() {
   // Every Get goes through here: a missing Qobuz account is said out loud with
   // its fix (Preferences → Music Sources); the job still runs so the other
   // providers can answer for a song. Search and previews never ask.
-  const startGet = (q: QResult): void => {
+  const startGet = (asked: QResult): void => {
+    // An album save is timed from here to Qobuz's first answer (Brief 255, usage log).
+    const q: QResult = asked.mediaType === 'album' ? { ...asked, clickedAt: Date.now(), surface: 'search', editionFrom: asked.collectionId ? 'card' : 'none' } : asked
     const n = qobuzNoticeFor(qobuz, 'get', { kind: q.mediaType === 'album' ? 'album' : 'song', title: (q.mediaType === 'album' ? q.album : q.title) || q.desc })
     if (n) showCredentialNotice(n)
     funnel.saved(q.mediaType === 'album' ? 'album' : 'song')
@@ -722,13 +731,16 @@ export default function DownloadView() {
   // there on Qobuz. One album download gets every track; the importer dedups
   // the few already owned. asSongRow stays — individual track rows still use it.
 
-  const renderAlbumTrack = (t: ItunesSuggestion, i: number) => {
+  const renderAlbumTrack = (t: ItunesSuggestion, i: number, key: string) => {
     const s = asSongRow(t)
     const qres = songQ(s)
     const item = itemFor(qres)
     const pid = `dl|${qres.id}`
+    // A song in the library, or one already on its way, can't be ticked.
+    const tickable = !s.owned && (!item || item.status === 'failed' || item.status === 'canceled')
     return (
       <li key={qres.id} className={`dl-track${item ? ` is-${item.status}` : ''}`}>
+        <input type="checkbox" className="dl-track-tick" aria-label={`Pick ${t.song}`} disabled={!tickable} checked={tickable && (tickedTracks[key] ?? []).includes(i)} onChange={() => toggleTick(key, i)} />
         <span className="dl-track-lead">
           <span className="dl-track-num">{t.trackNumber ?? i + 1}</span>
           {t.previewUrl && previewBtn(pid, t.previewUrl, t.song, t.artist, 'dl-track-play')}
@@ -814,6 +826,12 @@ export default function DownloadView() {
                 {cache?.tracks ? ` · ${cache.tracks.length} tracks` : ''}
               </span>
               <span className="dl-rel-panel-spacer" />
+              {cache?.tracks && (() => {
+                // A few songs of this edition, each an ordinary song save (Brief 255).
+                const picked = (tickedTracks[key] ?? []).map((ti) => cache.tracks![ti]).filter((t): t is ItunesSuggestion => Boolean(t)).map(asSongRow).filter((sr) => !sr.owned)
+                if (!picked.length) return null
+                return <button type="button" className="download-result-btn download-result-btn--sm" onClick={() => { for (const sr of picked) startGet(songQ(sr)); setTickedTracks((m) => ({ ...m, [key]: [] })) }}>{saveSongsLabel(picked.length)}</button>
+              })()}
               {cache?.tracks && cache.tracks.length > 0 && (
                 <button type="button" className="download-result-btn download-result-btn--sm" onClick={() => { if (item) showDownload(item.key); else startGet(albumQ({ ...a, collectionId: a.collectionId ?? cache?.collectionId, trackCount: a.trackCount ?? cache?.trackCount, releaseYear: a.releaseYear ?? cache?.releaseYear })) }} title={item ? 'Show it in Downloads' : undefined}>Save album</button>
               )}
@@ -831,7 +849,7 @@ export default function DownloadView() {
                 className="dl-track-list"
                 role="list"
                 style={{ gridTemplateRows: `repeat(${Math.ceil(cache.tracks.length / 2)}, auto)` }}
-              >{cache.tracks.map((t, ti) => renderAlbumTrack(t, ti))}</ul>
+              >{cache.tracks.map((t, ti) => renderAlbumTrack(t, ti, key))}</ul>
             )}
           </div>
         )}

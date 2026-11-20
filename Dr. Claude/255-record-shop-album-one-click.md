@@ -14,7 +14,7 @@
 ## Pre-flight (the seams, at `origin/main` e1f6591e)
 
 - Album door of the walk: `src/main/streamrip-store/index.ts` `streamrip:download-by-query` (742). Qobuz album search + bare retry (≈770-781), `rankWithArtistAliases` (≈800), the album identity request (`buildRequestedAlbum`, ≈960-976; `itunesFindAlbum` when there is no collection id), ownership (≈980), the metadata probe of the top six (≈885), explicit gate / explicit-first (≈925-940, ≈1082-1094), the pre-stage listing check of the first three (`verifyAlbumCandidate`, 1127), then staging, then Bandcamp (`bandcampSearch(query, 'a')`, 1263; `bcNamed` / `bcPicks`).
-- Listing fetch: `qobuzAlbumTrackList` (632) — `album/get` with per-track `streamable`.
+- Listing fetch: `qobuzAlbumTrackList` (632) — `album/get` with per-track `streamable` (the walk ignores that flag; so does every "no" here).
 - Rules: `src/main/album-identity.ts` `verifyAlbumCandidate` (296-385), `buildRequestedAlbum`.
 - Apple: `src/main/download-search.ts` `itunesFindAlbum` (576, unique-or-nothing), `itunesAlbumTracks`. Apple's album **search** leaves explicit editions out; the artist's own album list (`lookup?id=<artist>&entity=album`) has them (as `fetchExplicitAlbumMap` already does).
 - Queue: `src/renderer/views/DownloadStore/downloadQueue.ts` `enqueue` (173), `pump` (317): one job at a time.
@@ -29,8 +29,8 @@
 ### Phase A — the fast answer (main)
 
 1. `check-qobuz-album` (streamrip-store): the walk's own steps up to the first byte, and no further — the same Qobuz album search (and bare retry), the same ranking and aliases, the same requested edition (`buildRequestedAlbum`, `itunesFindAlbum` when no id), ownership, the top six listings. The verdict is `album-preflight.ts judgeQobuzAlbum` (pure): the walk's explicit gate / explicit-first, its first three candidates, `verifyAlbumCandidate` unchanged. Answers:
-   - `found` (a listing is this edition, every song streamable; or unverifiable, which the walk would stage; or the library has it all),
-   - `no`: `not-on-qobuz`, `partial` (the edition with songs Qobuz can't stream, or a smaller edition holding at least half of this one's songs and nothing else), `edition-differs` (labelled other edition, other count, or a same-size copy whose songs don't line up), `clean-only`,
+   - `found` (a listing is this edition, or unverifiable, which the walk would stage; or the library has it all). A listing that is this edition but marks some songs unstreamable is `unknown`: the walk never reads that flag (it stages and judges the files), so it decides,
+   - `no`: `not-on-qobuz`, `partial` (a smaller edition holding at least half of this one's songs and nothing else), `edition-differs` (labelled other edition, other count, or a same-size copy whose songs don't line up), `clean-only`,
    - `unknown` (no login, Qobuz didn't answer a search or a considered listing, over 20 s, an error, the walk would reach candidates past the six, or a Bandcamp page the walk would stage).
 2. A Qobuz "no" is checked against Bandcamp the walk's way (asked in parallel at the start): if the walk would stage a Bandcamp page, the answer is `unknown` and the walk runs exactly as today. A Bandcamp bot check stands as no pages, as in the walk.
 3. `qobuzAlbumTrackList` takes an optional `heard` out-param (answered / Qobuz's 404). The walk passes nothing. Nothing else in the walk changes.

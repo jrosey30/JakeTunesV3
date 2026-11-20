@@ -795,6 +795,8 @@ declare global {
       deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
       suggestRecommendations: (opts?: { force?: boolean }) => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>
       searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
+      /** A record's real editions and the one Save album takes (Brief 255). */
+      listAlbumEditions?: (artist: string, album: string) => Promise<import('../common/album-preflight').AlbumEditions>
       itunesAlbumTracks: (ref: number | { artist?: string; album: string }) => Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string; collectionId?: number }>
       /** Record Shop (6.0): resolve an item's catalogue selection + ownership (src/common/record-shop-live.ts types). */
       recordShop?: { resolve: (req: import('../common/record-shop-live').ShopResolveRequest) => Promise<import('../common/record-shop-live').ShopResolveResult> }
@@ -1199,6 +1201,8 @@ declare global {
       streamripDownload: (url: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
       streamripSearch?: (opts: { query: string; source?: string; mediaType?: string; numResults?: number }) => Promise<{ ok: boolean; results?: Array<{ source: string; mediaType: string; id: string; desc: string }>; error?: string }>
       streamripDownloadId?: (source: string, mediaType: string, id: string, addedVia?: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
+      /** Does Qobuz have this album edition? Asked before an album job downloads (Brief 255). */
+      checkQobuzAlbum?: (opts: import('../common/album-preflight').AlbumPreflightRequest) => Promise<import('../common/album-preflight').AlbumPreflight>
       streamripDownloadByQuery?: (opts: { artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number ; sourceEdition?: import('../common/source-edition').SourceEdition; addedVia?: string }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }>
       streamripCancelActive?: () => Promise<{ ok: boolean; killed: number }>
       streamripGetQobuz?: () => Promise<{ ok: boolean; configured: boolean; email?: string }>

@@ -7,7 +7,7 @@ import { app } from 'electron'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { pickAlbumReleaseDate, sanitizeAlbumCredits, tagYearStr } from '../../common/albumReleaseDate'
-import { itunesAlbumTracks, pickItunesAlbumRow, searchItunesSuggestions } from '../download-search'
+import { itunesAlbumEditions, itunesAlbumTracks, pickItunesAlbumRow, searchItunesSuggestions } from '../download-search'
 import { safeIpcError } from '../safe-ipc-error'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -223,6 +223,9 @@ export function registerAlbumInfoIpc(ipc: IpcRegistrar, host: AlbumInfoHost = {}
 
   ipc.handle('itunes-album-tracks', async (_event, ref: number | { artist?: string; album: string }) => itunesAlbumTracks(ref),
     { refuse: { ok: false, tracks: [] } })
+  // A record's real editions and the one a one-click Save album takes (Brief 255).
+  ipc.handle('list-album-editions', async (_event, artist: string, album: string) => itunesAlbumEditions(String(artist || ''), String(album || '')),
+    { refuse: { ok: false, editions: [], chosenId: null } })
   // The Record Shop's identity + ownership question rides the same catalogue lookup.
   registerRecordShopIpc(ipc)
   registerNearEditionIpc(ipc)

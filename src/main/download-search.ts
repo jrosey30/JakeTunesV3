@@ -28,6 +28,8 @@ import { packagingMarkersOf } from './album-identity.ts'
 import { recoArtistMatches, recoTitleMatches } from './reco-match.ts'
 import type { AppleSongRow } from './exact-recording.ts'
 import { requestedVersionMarkers, searchTitle } from './streamrip-match.ts'
+import { chooseAlbumEditions, type ItunesAlbumRow } from './album-editions.ts'
+import type { AlbumEditions } from '../common/album-preflight.ts'
 
 /**
  * A catalogue row that is really a 30-second PREVIEW, not the song.
@@ -587,6 +589,43 @@ export async function itunesFindAlbum(artist: string, title: string): Promise<{ 
     return { collectionId: pick.collectionId, collectionName: pick.collectionName, trackCount: pick.trackCount, releaseYear: itunesYear(pick.releaseDate) }
   } catch {
     return null
+  }
+}
+
+/** Every real edition of a record named by artist + title, and the one a
+ *  one-click save takes (Brief 255; the choice is album-editions.ts). Any
+ *  trouble is `ok: false`: the save then goes without an edition, as before. */
+export async function itunesAlbumEditions(artist: string, title: string): Promise<AlbumEditions> {
+  const a = (artist || '').trim(), t = (title || '').trim()
+  if (!a || !t) return { ok: false, editions: [], chosenId: null }
+  const rowsOf = (results: Array<Record<string, unknown>> | undefined): Array<ItunesAlbumRow & { artistId?: number }> => (results || [])
+    .filter((r) => r.wrapperType === 'collection' && typeof r.collectionId === 'number' && typeof r.collectionName === 'string')
+    .map((r) => ({
+      collectionId: Number(r.collectionId),
+      collectionName: String(r.collectionName),
+      artistName: typeof r.artistName === 'string' ? r.artistName : undefined,
+      artistId: typeof r.artistId === 'number' ? r.artistId : undefined,
+      trackCount: typeof r.trackCount === 'number' ? r.trackCount : undefined,
+      releaseYear: itunesYear(r.releaseDate),
+      explicitness: typeof r.collectionExplicitness === 'string' ? r.collectionExplicitness : undefined,
+    }))
+  try {
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(`${a} ${searchTitle(t) || t}`.trim())}&entity=album&limit=50`
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+    if (!res.ok) return { ok: false, editions: [], chosenId: null }
+    const rows = rowsOf(((await res.json()) as { results?: Array<Record<string, unknown>> }).results)
+    // Apple's album SEARCH leaves explicit editions out (The College Dropout comes back
+    // cleaned only); the artist's own album list has them (fetchExplicitAlbumMap's lookup).
+    const artistId = rows.find((r) => r.artistId && r.artistName && recoArtistMatches(a, r.artistName))?.artistId
+    if (artistId) {
+      try {
+        const lr = await fetch(`https://itunes.apple.com/lookup?id=${artistId}&entity=album&limit=200`, { signal: AbortSignal.timeout(6000) })
+        if (lr.ok) rows.push(...rowsOf(((await lr.json()) as { results?: Array<Record<string, unknown>> }).results))
+      } catch { /* the search's rows stand */ }
+    }
+    return chooseAlbumEditions(rows, a, t)
+  } catch {
+    return { ok: false, editions: [], chosenId: null }
   }
 }
 

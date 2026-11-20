@@ -17,7 +17,7 @@ import type { UsageDetail } from './usage-log.ts'
 export type PreflightNo =
   /** Nothing by that artist with that title. */
   | 'not-on-qobuz'
-  /** This edition, but only some of its songs can be had ("6 of 9"). */
+  /** Only a smaller edition, every song of it one of this one's ("6 of 9"). */
   | 'partial'
   /** Another edition of the record (a Deluxe, a 15-song one, a live one). */
   | 'edition-differs'
