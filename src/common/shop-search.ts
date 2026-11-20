@@ -116,6 +116,19 @@ export function albumVariantTag(name: string): string {
 
 /** The plain-title key: the title without its brackets, plus its variant words, so "Tommy" never matches "Tommy (Live)". */
 const baseKey = (name: string): string => `~${key(baseAlbumTitle(name))}#${albumVariantTag(name)}`
+
+/**
+ * A record that is live by nature and whose only variant word is "live":
+ * Apple's "At Folsom Prison (Live)" is his "At Folsom Prison". Its title
+ * already says it is a show ("Alive", "Live", "Concert", "At …"), so
+ * "Tommy (Live)" never falls back to "Tommy".
+ */
+const LIVE_BY_NATURE = /\b(a?live|concert|unplugged)\b|^at /
+function liveFallbackKey(name: string): string | null {
+  if (albumVariantTag(name) !== 'live') return null
+  const base = baseAlbumTitle(name)
+  return LIVE_BY_NATURE.test(nameKey(base)) ? `~${key(base)}#` : null
+}
 const spaced = (s: string): string => nameKey(s)
 const stripThe = (s: string): string => s.replace(/^the /, '')
 
@@ -348,7 +361,7 @@ export type OwnedAlbum = { state: 'all' | 'some'; have: number } | null
  */
 export function ownedAlbum(m: LibraryMarks, artist: string, name: string, trackCount?: number): OwnedAlbum {
   const a = key(artist)
-  const have = m.albums.get(`${key(displayAlbumTitle(name))}|${a}`) ?? m.albums.get(`${key(name)}|${a}`) ?? m.albums.get(`${baseKey(name)}|${a}`) ?? 0
+  const have = m.albums.get(`${key(displayAlbumTitle(name))}|${a}`) ?? m.albums.get(`${key(name)}|${a}`) ?? m.albums.get(`${baseKey(name)}|${a}`) ?? (liveFallbackKey(name) ? m.albums.get(`${liveFallbackKey(name)}|${a}`) : undefined) ?? 0
   if (have <= 0) return null
   return { state: !trackCount || have >= trackCount ? 'all' : 'some', have }
 }
@@ -383,7 +396,8 @@ export function listMarks(recs: ReadonlyArray<{ kind?: string; song?: string; ar
 export const listedSong = (m: ListMarks, artist: string, title: string): boolean => m.songs.has(`${key(title)}|${key(artist)}`)
 export const listedAlbum = (m: ListMarks, artist: string, name: string): boolean => {
   const a = key(artist)
-  return m.albums.has(`${key(displayAlbumTitle(name))}|${a}`) || m.albums.has(`${baseKey(name)}|${a}`)
+  const live = liveFallbackKey(name)
+  return m.albums.has(`${key(displayAlbumTitle(name))}|${a}`) || m.albums.has(`${baseKey(name)}|${a}`) || (live !== null && m.albums.has(`${live}|${a}`))
 }
 export const listedArtist = (m: ListMarks, name: string): boolean => m.artists.has(key(name))
 

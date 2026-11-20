@@ -412,6 +412,20 @@ describe('a plain title never owns a live or remixed record', () => {
     assert.equal(ownedAlbum(m, 'The Who', 'Tommy'), null)
     assert.notEqual(ownedAlbum(m, 'The Who', 'Tommy (Live) [Remastered]'), null)
   })
+  it('a record live by nature still matches Apple\'s "(Live)" name', () => {
+    const m = libraryMarks([
+      { title: 'Show Me the Way', artist: 'Peter Frampton', album: 'Frampton Comes Alive!' },
+      { title: 'Folsom Prison Blues', artist: 'Johnny Cash', album: 'At Folsom Prison' },
+      { title: 'Aces High', artist: 'Iron Maiden', album: 'Live After Death (2015 Remaster)' },
+    ])
+    assert.notEqual(ownedAlbum(m, 'Peter Frampton', 'Frampton Comes Alive! (Live)'), null)
+    assert.notEqual(ownedAlbum(m, 'Johnny Cash', 'At Folsom Prison (Live)'), null)
+    assert.notEqual(ownedAlbum(m, 'Iron Maiden', 'Live After Death (Live; 2015 Remaster)'), null)
+    assert.equal(ownedAlbum(m, 'Johnny Cash', 'At Folsom Prison (Live) [Demos]'), null)
+    assert.equal(ownedAlbum(lib, 'The Who', 'Tommy (Live)'), null)
+    const l = listMarks([{ kind: 'album', artist: 'Johnny Cash', album: 'At Folsom Prison' }])
+    assert.equal(listedAlbum(l, 'Johnny Cash', 'At Folsom Prison (Live)'), true)
+  })
   it('the list follows the same rule', () => {
     const l = listMarks([{ kind: 'album', artist: 'The Who', album: 'Tommy' }])
     assert.equal(listedAlbum(l, 'The Who', 'Tommy (Live)'), false)
