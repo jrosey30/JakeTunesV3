@@ -2190,6 +2190,13 @@ async function runActivitySyncHolding(
       const ride = await rideOutDrop(failed.step, new Error(failed.result.error || 'card step failed'),
         failed.step === 'catalog' ? 'iPod_Control/iTunes/iTunesDB' : `${target} songs, checked across remounts`)
       if (!ride.back) return ride.result
+      if (ride.lost.some((id) => keepIds.has(id))) {
+        // A song the catalog on the card names went missing: not ours to patch here either (as in the copy).
+        return stopAfterTouch(fail({
+          copied, kept, copyErrors, target, landed: writtenById.size - ride.lost.length, shortfall: target - writtenById.size + ride.lost.length,
+          error: `The iPod disconnected and came back missing ${ride.lost.length} song(s) it already had. Not writing a catalog. Sync again.`,
+        }))
+      }
       if (ride.lost.length > 0) console.warn(`activity-sync: after the drop ${ride.lost.length} confirmed song(s) were gone or short on the card — the check copies them again`)
       host.sendProgress(failed.step === 'verify'
         ? { phase: 'verify', current: 1, total: 16, title: DROP_BACK_STEP_LINE.verify }
