@@ -340,6 +340,21 @@ describe('the memory on the scheduler', () => {
     assert.equal(walkCalls.length, 2, 'searched')
     assert.ok(memoryCalls.some((c) => c.startsWith('forget')))
   })
+  it('a group retry (Retry the N that failed) answers from the memory; a row Retry searches', async () => {
+    walk.set('Quarter', async () => ({ ok: false, outcome: 'not-found', primary: 'Not found', detail: 'x' }))
+    enqueue(songJob('Quarter'))
+    await settle(); await sleep(10)
+    assert.equal(walkCalls.length, 1)
+    const it = getQueue().find((q) => q.result.title === 'Quarter')!
+    memoryCalls.length = 0
+    retry(it.key, { askAgain: false })
+    await settle()
+    assert.equal(walkCalls.length, 1, 'not searched again')
+    assert.ok(!memoryCalls.some((c) => c.startsWith('forget')), 'memory kept')
+    retry(it.key)
+    await settle()
+    assert.equal(walkCalls.length, 2, 'a row Retry searches')
+  })
   it('the row’s own Save on a failed song searches again', async () => {
     walk.set('Nickel', async () => ({ ok: false, outcome: 'not-found', primary: 'Not found', detail: 'x' }))
     const r = recoOf('rec-nickel', 'Nickel')

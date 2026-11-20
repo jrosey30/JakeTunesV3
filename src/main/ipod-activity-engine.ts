@@ -1128,7 +1128,9 @@ async function runActivitySyncHolding(
 
   // The record of songs a dropped sync left on the card: obsolete once this run
   // empties the card again, swaps, or seals (Brief 260).
-  const forgetPartial = (): Promise<void> => unlink(join(host.stateDir, PARTIAL_ON_CARD_FILE)).catch(() => {})
+  const forgetPartial = (): Promise<void> => unlink(join(host.stateDir, PARTIAL_ON_CARD_FILE)).catch((err: NodeJS.ErrnoException) => {
+    if (err?.code !== 'ENOENT') console.warn('activity-sync: could not remove the partial-on-card record:', err)
+  })
 
   const rewipeAndStop = async (why: ActivitySyncResult): Promise<ActivitySyncResult> => {
     await forgetPartial()

@@ -38,7 +38,8 @@ export default function ShopAlbumPage({ album, marks, onSave, renderAction, onBa
   album: ShopAlbumRef
   marks: { lib: LibraryMarks; list: ListMarks }
   /** DownloadView's save (an album with a job opens Downloads on it). */
-  onSave: (q: QResult) => void
+  /** `bulk`: one of several saved at once — answered from the not-found memory, never a manual try. */
+  onSave: (q: QResult, opts?: { bulk?: boolean }) => void
   /** DownloadView's per-row lifecycle control (Save / Queued / timer + Cancel / Retry). */
   renderAction: (q: QResult, item: QItem | undefined) => ReactNode
   onBack: () => void
@@ -134,7 +135,7 @@ export default function ShopAlbumPage({ album, marks, onSave, renderAction, onBa
           <span className="shop-page-actions">
             <button type="button" className="download-result-btn" onClick={() => onSave(albumJob())} title={albumItem ? 'Show it in Downloads' : 'Save the album'}>Save album</button>
             {tickedJobs.length > 0 && (
-              <button type="button" className="download-result-btn download-result-btn--sm" onClick={() => { for (const j of tickedJobs) onSave(j); setTicked(new Set()) }}>{saveSongsLabel(tickedJobs.length)}</button>
+              <button type="button" className="download-result-btn download-result-btn--sm" onClick={() => { for (const j of tickedJobs) onSave(j, { bulk: true }); setTicked(new Set()) }}>{saveSongsLabel(tickedJobs.length)}</button>
             )}
             {editions.length >= 2 && (
               <label className="edition-menu" title="Which edition Save album takes">
