@@ -24,6 +24,8 @@ import { safeIpcError } from '../safe-ipc-error'
 import { normalize } from '../normalize'
 import { refuseIpodSyncUnlessUserClick, type IpodSyncOpts } from '../ipod-sync-origin'
 import { refuseUnlessOriginalIpod, resolveIpodState } from '../ipod-identity.ts'
+import { ipodListsCachePath, readListsCache } from '../ipod-lists-gather.ts'
+import type { IpodModel } from '../../common/ipod-covers.ts'
 import type { SyncConvertOptions } from '../ipc/sync-ipc.ts'
 import { bindActivityReplacements, runActivitySync } from '../ipod-activity-engine.ts'
 import { ensureContiguousDb } from '../ipod-db-contiguity.ts'
@@ -357,6 +359,9 @@ export function createSyncEngine(host: SyncEngineHost) {
     let listOnlyIpod = false
     // The iPod's own name, written as the catalog's master title (what the iPod calls itself).
     let ipodName: string | undefined
+    // The model homemini's list names for this iPod (Brief 260 follow-up): paces an old
+    // hard-drive iPod whose SysInfo can't say what it is. This Mac's copy of the lists only.
+    let ipodModel: IpodModel | undefined
     if (gateMount) {
       const ipod = await resolveIpodState(gateMount, STATE_DIR, { forSync: true })
       if (ipod.refusal) {
@@ -366,6 +371,10 @@ export function createSyncEngine(host: SyncEngineHost) {
       syncStateDir = ipod.stateDir
       listOnlyIpod = !!(ipod.device && !ipod.device.primary)
       ipodName = ipod.device?.name
+      if (ipod.device) {
+        const lists = await readListsCache(ipodListsCachePath(STATE_DIR))
+        ipodModel = lists?.find((l) => l.id === ipod.device!.id)?.model
+      }
       if (ipod.device && !ipod.device.primary) console.log(`sync-to-ipod: ${ipod.device.name} — its own sync state lives in ${ipod.stateDir}`)
       // Plays first (2026-10-28): keep a copy of Play Counts/OTG + the pre-sync
       // catalog and manifest, bring the plays home, and confirm they are
@@ -428,7 +437,7 @@ export function createSyncEngine(host: SyncEngineHost) {
         // A list-only iPod gets no library loader at all — its set is its list.
         loadReplacementTracks: listOnlyIpod ? undefined : bindActivityReplacements(getLibraryTracks, getConcertOwnedTrackIds),
         resolveArtworkFile,
-      }, { tracks, playlists, convertOptions, listOnly: listOnlyIpod, ipodName })
+      }, { tracks, playlists, convertOptions, listOnly: listOnlyIpod, ipodName, ipodModel })
     }
     if (syncOpts?.wipeFirst) {
       return { ok: false, copied: 0, error: 'Activity Sync is the dedicated engine, not this copy loop.' }

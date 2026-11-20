@@ -12,15 +12,16 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'child_process'
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { runActivitySync, type ActivitySyncHost, type ActivitySyncResult } from '../ipod-activity-engine.ts'
 import {
-  DROP_BACK_LINE, OLD_IPOD_PAUSE_EVERY_BYTES, PARTIAL_ON_CARD_FILE, adoptFromPartial, buildPartialOnCard, looksLikeDrop,
-  pacesWrites, parsePartialOnCard, sameIpod, waitForSameIpod, type IpodCardIdentity,
+  DROP_BACK_LINE, OLD_IPOD_PAUSE_EVERY_BYTES, PARTIAL_ON_CARD_FILE, adoptFromPartial, buildPartialOnCard, classifyCopyFailure,
+  failureCode, fileReadsWhole, pacesWrites, parsePartialOnCard, pauseUnlessCancelled, probeCardWrites, sameIpod, waitForSameIpod,
+  type IpodCardIdentity,
 } from '../ipod-sync-drop.ts'
-import { DROP_KEPT_MARK, syncFailureCopy, syncOutcome } from '../../common/sync-failure-copy.ts'
+import { DROP_ADOPT_TAIL, DROP_KEPT_MARK, syncFailureCopy, syncOutcome } from '../../common/sync-failure-copy.ts'
 import { parseCatalogPaths } from '../sync-engine/roundtrip.ts'
 
 const REPO = join(import.meta.dirname, '..', '..', '..')
@@ -40,6 +41,8 @@ const songName = (id: number) => `S${String(id).padStart(3, '0')}.m4a`
 const folder = (id: number) => `F${String(id % 5).padStart(2, '0')}`
 const pathOf = (id: number) => `:iPod_Control:Music:${folder(id)}:${songName(id)}`
 const ids = Array.from({ length: N }, (_, i) => i)
+/** A library song that is not on the list: the spare a fill-to-N sync (#47) puts in a missed song's seat. */
+const SPARE = N
 
 function marker(id: string): string {
   return JSON.stringify({ version: 1, id, name: 'Y2KPod', color: null, purpose: null, primary: false, createdAt: '2026-11-01T00:00:00.000Z' })
@@ -92,7 +95,7 @@ async function makeRig(): Promise<Rig> {
     root, card, state, library: new Map(), events: [], clock: 1_800_000_000_000,
     writes: new Map(), dropAt: 0, attempts: 0, mounted: null, whileAway: async () => {}, away: join(root, 'card-away'),
   } as unknown as Rig
-  for (const id of ids) {
+  for (const id of [...ids, SPARE]) {
     const dir = join(lib, 'iPod_Control', 'Music', folder(id))
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, songName(id)), Buffer.alloc(SONG_BYTES, id & 0xff))
@@ -149,6 +152,15 @@ function sync(r: Rig): Promise<ActivitySyncResult> {
   r.events = []
   const tracks = ids.map((id) => ({ ...r.library.get(id)! }))
   return runActivitySync(r.host, { tracks, playlists: [{ name: 'Y2KPod', trackIds: ids }], requestedTarget: N, listOnly: true, ipodName: 'Y2KPod' })
+}
+
+/** The Original's kind of sync: fill to N, the spare in reserve (#47). */
+function syncWithSpare(r: Rig): Promise<ActivitySyncResult> {
+  r.events = []
+  const tracks = ids.map((id) => ({ ...r.library.get(id)! }))
+  return runActivitySync(r.host, {
+    tracks, playlists: [{ name: 'Y2KPod', trackIds: ids }], requestedTarget: N, reserve: [{ ...r.library.get(SPARE)! }], ipodName: 'Y2KPod',
+  })
 }
 
 async function cardFiles(card: string): Promise<Map<string, { size: number; ino: number; mtimeMs: number }>> {
@@ -311,8 +323,13 @@ describe('Activity Sync rides out a USB drop', () => {
   it('a card that never stays (drops again and again) stops after three, and keeps what is confirmed', async () => {
     const r = await makeRig()
     try {
-      // Every write fails with EIO while the card still answers: the card is "back" at once each time.
-      r.host.copyToCard = async () => { r.attempts++; throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }) }
+      // The card really goes every time (renamed away) and is back by the next look.
+      r.host.copyToCard = async () => {
+        r.attempts++
+        await rename(r.card, r.away)
+        throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' })
+      }
+      r.whileAway = async (rr) => { await stat(rr.away).then(() => rename(rr.away, rr.card), () => undefined) }
       const res = await sync(r)
       assert.equal(res.ok, false)
       assert.match(String(res.error), /kept disconnecting/)
@@ -322,6 +339,136 @@ describe('Activity Sync rides out a USB drop', () => {
       assert.deepEqual(lines.map((l) => l.outcome), ['back', 'back', 'back', 'too-many'])
     } finally {
       await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('a bad file on a card that stays (EIO on every write of it): one retry, one miss, the spare takes the seat, sealed', async () => {
+    const r = await makeRig()
+    try {
+      const bad = join(r.card, 'iPod_Control', 'Music', folder(5), songName(5))
+      let badTries = 0
+      const real = r.host.copyToCard!
+      r.host.copyToCard = async (src, dst) => {
+        if (dst === bad) { badTries++; r.attempts++; throw Object.assign(new Error(`EIO: i/o error, copyfile '${src}' -> '${dst}'`), { code: 'EIO' }) }
+        return real(src, dst)
+      }
+      const res = await syncWithSpare(r)
+      assert.equal(res.ok, true, res.error)
+      assert.equal(badTries, 2, 'the bad file is tried once more, never again')
+      assert.equal(res.copyErrors, 1)
+      await assertCardWhole(r.card, N)
+      const paths = parseCatalogPaths(await readFile(join(r.card, 'iPod_Control', 'iTunes', 'iTunesDB'))) || []
+      assert.ok(paths.includes(pathOf(SPARE)), 'the spare is on the card')
+      assert.ok(!paths.includes(pathOf(5)), 'the bad song is not in the catalog')
+      await assert.rejects(stat(join(r.state, 'ipod-drops.jsonl')), 'not a drop')
+      assert.ok(!r.events.some((e) => /disconnected/.test(e.title)), 'the UI never said it disconnected')
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('an EIO reading the SOURCE on the Mac: one miss, no retry, not a drop', async () => {
+    const r = await makeRig()
+    let src5 = ''
+    try {
+      let tries = 0
+      const real = r.host.copyToCard!
+      r.host.copyToCard = async (src, dst) => {
+        if (src.endsWith(songName(5))) {
+          tries++
+          src5 = src
+          await chmod(src, 0o000)   // the Mac's own copy can't be read now
+          throw Object.assign(new Error(`EIO: i/o error, copyfile '${src}' -> '${dst}'`), { code: 'EIO' })
+        }
+        return real(src, dst)
+      }
+      const res = await syncWithSpare(r)
+      assert.equal(res.ok, true, res.error)
+      assert.equal(tries, 1, 'a source that cannot be read is not tried again')
+      assert.equal(res.copyErrors, 1)
+      await assertCardWhole(r.card, N)
+      await assert.rejects(stat(join(r.state, 'ipod-drops.jsonl')), 'not a drop')
+    } finally {
+      if (src5) await chmod(src5, 0o644).catch(() => undefined)
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('a wedged mount (there, but a tiny file won\'t write and read back) is a drop, and only counts as back once the probe passes', async () => {
+    const r = await makeRig()
+    try {
+      let wedged = false
+      let probes = 0
+      const real = r.host.copyToCard!
+      let n = 0
+      r.host.copyToCard = async (src, dst) => {
+        if (++n === 6) { wedged = true; throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }) }
+        return real(src, dst)
+      }
+      r.host.probeCard = async () => { probes++; return !wedged }
+      const goneAt = r.clock
+      r.whileAway = async (rr) => { if (rr.clock - goneAt >= 12_000) wedged = false }
+      const res = await sync(r)
+      assert.equal(res.ok, true, res.error)
+      const [line] = await dropLines(r.state)
+      assert.equal(line.outcome, 'back')
+      assert.ok(line.goneSeconds >= 12, `back only once the probe passed (${line.goneSeconds}s)`)
+      assert.ok(probes > 2)
+      await assertCardWhole(r.card, N)
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('cancel while waiting for the iPod: stops at once, nothing touched, the record kept', async () => {
+    const r = await makeRig()
+    try {
+      r.dropAt = 6
+      let cancel = false
+      r.host.isCancelled = () => cancel
+      const goneAt = r.clock
+      r.whileAway = async (rr) => { if (rr.clock - goneAt >= 4_000) cancel = true }
+      const res = await sync(r)
+      assert.equal(res.ok, false)
+      assert.equal(res.cancelled, true)
+      assert.ok(r.clock - goneAt < 10_000, 'the two-minute wait did not run out')
+      assert.ok(String(res.error).includes(DROP_KEPT_MARK), res.error)
+      const partial = JSON.parse(await readFile(join(r.state, PARTIAL_ON_CARD_FILE), 'utf-8'))
+      assert.equal(partial.rows.length, 5)
+      const [line] = await dropLines(r.state)
+      assert.equal(line.outcome, 'cancelled')
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('never says "copies only the rest" when the next sync can\'t adopt them', async () => {
+    // No identity on the card: the record can never be matched to it.
+    const r = await makeRig()
+    try {
+      r.dropAt = 6
+      r.host.readCardIdentity = async () => ({ markerId: null, firewireGuid: null, serial: null, hardware: 'unknown' })
+      const res = await sync(r)
+      assert.equal(res.ok, false)
+      assert.ok(String(res.error).includes(DROP_KEPT_MARK), res.error)
+      assert.ok(!String(res.error).includes(DROP_ADOPT_TAIL), res.error)
+      const o = syncOutcome({ status: 'failed', seen: 3, step: 'copy', reached: ['prepare', 'wipe', 'copy'], current: 5, total: 12, error: res.error } as never)
+      assert.equal(o?.changed, 'drop-kept')
+      assert.doesNotMatch(String(o?.changedLine), /only the rest/)
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+    // The record couldn't be written (its path is a folder).
+    const r2 = await makeRig()
+    try {
+      r2.dropAt = 6
+      await mkdir(join(r2.state, PARTIAL_ON_CARD_FILE))
+      const res = await sync(r2)
+      assert.equal(res.ok, false)
+      assert.ok(String(res.error).includes(DROP_KEPT_MARK), res.error)
+      assert.ok(!String(res.error).includes(DROP_ADOPT_TAIL), res.error)
+    } finally {
+      await rm(r2.root, { recursive: true, force: true })
     }
   })
 })
@@ -340,12 +487,38 @@ describe('the drop rules', () => {
     assert.equal(sameIpod(id(null, 'G1'), id('a1b2c3', 'G1')), 'same', 'a guid alone is an identity')
   })
 
-  it('EIO is the device; ENOENT is the device only when the card is gone', () => {
-    assert.equal(looksLikeDrop(Object.assign(new Error('x'), { code: 'EIO' }), true), true)
-    assert.equal(looksLikeDrop(Object.assign(new Error('x'), { code: 'ENXIO' }), true), true)
-    assert.equal(looksLikeDrop(Object.assign(new Error('x'), { code: 'ENOENT' }), true), false)
-    assert.equal(looksLikeDrop(Object.assign(new Error('x'), { code: 'ENOENT' }), false), true)
-    assert.equal(looksLikeDrop(Object.assign(new Error('x'), { code: 'ENOSPC' }), true), false)
+  it('an EIO alone is never a drop: only a card that went, another device, or a failed probe', () => {
+    const f = (o: Partial<Parameters<typeof classifyCopyFailure>[0]>) =>
+      classifyCopyFailure({ code: 'EIO', cardThere: true, sameDevice: true, sourceReadable: true, cardProbeOk: true, ...o })
+    assert.equal(f({}), 'card-file', 'a bad sector: the card is fine')
+    assert.equal(f({ cardThere: false }), 'drop')
+    assert.equal(f({ sameDevice: false }), 'drop', 'it reset and came back as another device')
+    assert.equal(f({ cardProbeOk: false }), 'drop', 'a wedged mount')
+    assert.equal(f({ sourceReadable: false }), 'source')
+    assert.equal(f({ code: 'ENOENT' }), 'miss')
+    assert.equal(f({ code: 'ENOENT', cardThere: false }), 'drop')
+    assert.equal(f({ code: 'ENOSPC' }), 'miss')
+    assert.equal(f({ code: null }), 'miss')
+    for (const c of ['ENXIO', 'ENODEV', 'ENOTCONN', 'ESTALE', 'EBADF']) assert.equal(f({ code: c }), 'card-file', c)
+    assert.equal(failureCode(new Error('EIO: i/o error, fsync')), 'EIO', 'a reason string names it')
+    assert.equal(failureCode(Object.assign(new Error('x'), { code: 'ENXIO' })), 'ENXIO')
+    assert.equal(failureCode(new Error('on-card size 1 != source 2')), null)
+  })
+
+  it('the card probe writes, reads back and removes a tiny file; the source check reads the whole file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jt-ipod-probe-'))
+    try {
+      assert.equal(await probeCardWrites(root), false, 'no iPod_Control')
+      await mkdir(join(root, 'iPod_Control'))
+      assert.equal(await probeCardWrites(root), true)
+      assert.deepEqual(await readdir(join(root, 'iPod_Control')), [], 'the probe file is gone')
+      const f = join(root, 'song.m4a')
+      await writeFile(f, Buffer.alloc(3 * 1024 * 1024, 7))
+      assert.equal(await fileReadsWhole(f), true)
+      assert.equal(await fileReadsWhole(join(root, 'nope.m4a')), false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('waits for two same answers in a row, and gives up at two minutes', async () => {
@@ -356,7 +529,7 @@ describe('the drop rules', () => {
       read: async () => id('a1b2c3'), present: async () => answers.shift() ?? true,
       now: () => t, sleep: async (ms) => { t += ms },
     })
-    assert.deepEqual(w, { back: true, goneMs: 4000, mount: '/V/a' })
+    assert.deepEqual(w, { back: true, goneMs: 4000, mount: '/V/a', sawGone: true })
     t = 0
     const never = await waitForSameIpod({
       mount: '/V/a', before: id('a1b2c3'), read: async () => id('a1b2c3'), present: async () => false,
@@ -383,6 +556,35 @@ describe('the drop rules', () => {
     assert.deepEqual(o, { back: false, goneMs: 0, why: 'other-ipod' })
   })
 
+  it('a card answering from cache is not back until a write reads back; cancel ends the wait', async () => {
+    let t = 0
+    const w = await waitForSameIpod({
+      mount: '/V/a', before: id('a1b2c3'), read: async () => id('a1b2c3'), present: async () => true,
+      probe: async () => t >= 10_000,
+      now: () => t, sleep: async (ms) => { t += ms },
+    })
+    assert.equal(w.back, true)
+    assert.ok(w.goneMs >= 10_000, String(w.goneMs))
+    t = 0
+    let cancelled = false
+    const c = await waitForSameIpod({
+      mount: '/V/a', before: id('a1b2c3'), read: async () => id('a1b2c3'), present: async () => false,
+      isCancelled: () => cancelled,
+      now: () => t, sleep: async (ms) => { t += ms; if (t >= 6_000) cancelled = true },
+    })
+    assert.deepEqual(c, { back: false, goneMs: 6000, why: 'cancelled' })
+  })
+
+  it('the breather on an old iPod stops for a cancel', async () => {
+    let t = 0
+    let cancelled = false
+    await pauseUnlessCancelled(1_500, async (ms) => { t += ms; if (t >= 500) cancelled = true }, () => cancelled)
+    assert.equal(t, 500)
+    t = 0
+    await pauseUnlessCancelled(1_500, async (ms) => { t += ms }, () => false)
+    assert.equal(t, 1_500)
+  })
+
   it('a file is adopted only as the exact file that was confirmed', () => {
     const row = { id: 7, destPath: pathOf(7), identity: 'fp:abc', size: 100, sourceSize: 100, mtimeMs: 5000 }
     const c = { id: 7, destPath: pathOf(7), identity: 'fp:abc', copySize: 100, sourceSize: 100 }
@@ -401,6 +603,12 @@ describe('the drop rules', () => {
   it('pauses only the old hard-drive iPods', () => {
     for (const hw of ['3g', '4g', 'mini', 'mini-1g', 'mini-2g'] as const) assert.equal(pacesWrites(hw), true, hw)
     for (const hw of ['classic', 'other', 'unknown'] as const) assert.equal(pacesWrites(hw), false, hw)
+    // SysInfo couldn't say: homemini's list for the iPod can.
+    assert.equal(pacesWrites('unknown', '3g'), true)
+    assert.equal(pacesWrites('unknown', 'mini'), true)
+    assert.equal(pacesWrites('unknown', 'classic'), false)
+    assert.equal(pacesWrites('unknown', 'default'), false)
+    assert.equal(pacesWrites('classic', '3g'), false, 'SysInfo wins when it knows')
     assert.ok(OLD_IPOD_PAUSE_EVERY_BYTES >= 100 * 1024 * 1024)
   })
 
