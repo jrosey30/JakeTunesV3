@@ -1045,3 +1045,4 @@
 }
 .dl-cred-notice-btn:hover { background: linear-gradient(180deg, #e06c47, #c2502f); }
 .dl-cred-notice-close { flex: none; background: transparent; border: 0; color: #7a5a2a; font-size: 12px; padding: 0 4px; }
+.download-retry--failed { max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
