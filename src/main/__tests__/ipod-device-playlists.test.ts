@@ -307,7 +307,7 @@ describe('every sync goes through the rule, and a failure stops it', () => {
     assert.match(between, /\n {6}playlists = own\.playlists\n/, 'the set replaces what was handed in')
     assert.equal([...between.matchAll(/\bplaylists\s*=[^=]/g)].length, 1, 'and is assigned exactly once before the sync runs')
     const handed = engine.slice(run, engine.indexOf('if (syncOpts?.wipeFirst)', run))
-    assert.match(handed, /\}, \{ tracks, playlists, convertOptions, listOnly: listOnlyIpod, ipodName \}\)/, 'the activity sync is handed that same variable')
+    assert.match(handed, /\}, \{ tracks, playlists, convertOptions, listOnly: listOnlyIpod, ipodName, ipodModel \}\)/, 'the activity sync is handed that same variable')
     const fullWrite = engine.slice(engine.indexOf('if (syncOpts?.wipeFirst)', run))
     assert.equal([...fullWrite.matchAll(/\bplaylists\s*=[^=]/g)].length, 0, 'the whole-library sync never reassigns it')
     assert.match(fullWrite, /JSON\.stringify\(\{ tracks, playlists, masterName: ipodName \}\)/, 'and writes that same variable')
