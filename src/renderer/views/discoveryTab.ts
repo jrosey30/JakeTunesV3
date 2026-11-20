@@ -15,10 +15,23 @@ export type DiscoveryTab = 'new-for-you' | 'browse' | 'your-list' | 'bandcamp'
 export const DISCOVERY_TAB_EVENT = 'jaketunes-discovery-tab'
 
 let lastTab: DiscoveryTab = 'new-for-you'
+const watchers = new Set<() => void>()
+function setLast(t: DiscoveryTab): void {
+  if (lastTab === t) return
+  lastTab = t
+  // After the current render: DiscoveryView remembers its first tab while it
+  // renders, and telling the sidebar then is a setState during another render.
+  queueMicrotask(() => { for (const w of watchers) w() })
+}
 export function rememberedDiscoveryTab(): DiscoveryTab { return lastTab }
-export function rememberDiscoveryTab(t: DiscoveryTab): void { lastTab = t }
+export function rememberDiscoveryTab(t: DiscoveryTab): void { setLast(t) }
+/** For the sidebar: its Bandcamp row is lit while the shop shows that tab (2026-11-20). */
+export function subscribeDiscoveryTab(w: () => void): () => void {
+  watchers.add(w)
+  return () => { watchers.delete(w) }
+}
 
 export function requestDiscoveryTab(t: DiscoveryTab): void {
-  lastTab = t
+  setLast(t)
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(DISCOVERY_TAB_EVENT, { detail: t }))
 }
