@@ -14,7 +14,8 @@ import NearEditionTable from './NearEditionTable'
 import { planMatchingTrackGets, omittedTrackLine, type MatchingTrackPlan } from '../../common/near-edition-actions'
 import type { CompareEditionsResult } from '../../common/near-edition-types'
 import { subscribeQueue, getQueue, cancel, retry, clearFinished, enqueue, type QResult } from '../views/DownloadStore/downloadQueue'
-import { downloadsPanelRows, panelSummary, type PanelRow } from '../../common/downloads-panel-model'
+import { downloadsPanelRows, downloadsPanelSections, panelSummary, type PanelRow } from '../../common/downloads-panel-model'
+import NeedsYouSlot, { getNeedsYouFix, subscribeNeedsYouFix } from './NeedsYouSlot'
 import '../styles/downloads-panel.css'
 
 export interface DownloadsPanelHandle { requestClose: () => void }
@@ -86,6 +87,9 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
   const anyActive = queue.some((q) => q.status === 'downloading')
   const now = useNow(anyActive)
   const rows = downloadsPanelRows(queue, now)
+  // Brief 258: one list in three parts — In progress, Done today, Needs you.
+  const sections = downloadsPanelSections(rows, now)
+  const needsYouFix = useSyncExternalStore(subscribeNeedsYouFix, getNeedsYouFix)
   const summary = panelSummary(rows)
   const settled = summary.done + summary.failed + summary.canceled
 
@@ -155,16 +159,18 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
       </div>
       <div className="dlp-summary">{summaryLine}</div>
       <ul className="dlp-list" ref={listRef}>
-        {rows.length === 0 && (
+        {sections.length === 0 && (
           <li className="dlp-empty">Save something in the Record Shop and it shows up here.</li>
         )}
-        {rows.map((row) => {
+        {sections.map((sec) => [
+          <li key={`section-${sec.id}`} className={`dlp-section dlp-section--${sec.id}`} role="presentation">{sec.title}</li>,
+          ...sec.rows.map((row) => {
           const showDetails = open.has(row.key)
           const hasDetails = !!(row.detail || row.alternatives.length || row.completion || row.nearEdition)
           return (
             <li key={row.key} data-row-key={row.key} className={`dlp-row dlp-row--${row.status}${row.key === focusRow ? ' dlp-row--focus' : ''}`}>
               <div className="dlp-row-head">
-                <span className={`dlp-status dlp-status--${row.status}`}>{STATUS_LABEL[row.status]}{row.elapsedSec != null ? ` · ${row.elapsedSec}s` : ''}</span>
+                <span className={`dlp-status dlp-status--${row.status}`}>{STATUS_LABEL[row.status]}{row.progress ? ` · ${row.progress}` : ''}{row.elapsedSec != null ? ` · ${row.elapsedSec}s` : ''}</span>
                 {row.from && <span className="dlp-from">{row.from}</span>}
               </div>
               <div className="dlp-row-title" title={row.title}>{row.title}</div>
@@ -173,6 +179,7 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
               {row.editionNote && <div className="dlp-row-edition dlp-row-edition--note">{row.editionNote}</div>}
               {row.counts && <div className="dlp-row-counts">{row.counts}</div>}
               {row.primary && <div className="dlp-row-primary">{row.primary}</div>}
+              {row.needsYou && (() => { const item = queue.find((q) => q.key === row.key); return item ? <NeedsYouSlot row={row} item={item} fix={needsYouFix} /> : null })()}
               <div className="dlp-row-actions">
                 {row.actions.includes('cancel') && <button onClick={() => void cancel(row.key)}>Cancel</button>}
                 {row.actions.includes('retry') && <button onClick={() => retry(row.key)}>Retry</button>}
@@ -235,7 +242,8 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
               )}
             </li>
           )
-        })}
+        }),
+        ])}
       </ul>
     </div>
   )

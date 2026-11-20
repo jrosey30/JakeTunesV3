@@ -15,6 +15,7 @@ import type { ShopItem, Snapshot } from './record-shop.ts'
 import { nearEditionOf } from './near-edition-detect.ts'
 import type { Alternative } from './acquisition-identity.ts'
 import { differsLine, sourceEditionLabel } from './source-edition.ts'
+import { groupBySection, sectionOf, songProgressLine, type DownloadsSection } from './download-lanes.ts'
 
 export type PanelStatus = 'downloading' | 'queued' | 'done' | 'failed' | 'refused' | 'canceled'
 export type PanelAction = 'cancel' | 'retry' | 'chooseEdition' | 'chooseVersion' | 'nearEdition' | 'retryGroup'
@@ -50,6 +51,18 @@ export interface PanelRow {
   elapsedSec: number | null
   /** What to search for when choosing again (refused rows). */
   choose: { query: string; kind: 'album' | 'song'; artist: string; title: string } | null
+  /** Brief 258: an album's songs landed so far ("7 of 12"), while it downloads. */
+  progress: string | null
+  /** When it finished (for Done today). */
+  endedAt: number | null
+  /** Brief 258: why this job waits on Jake, in one plain line — the Needs you section's reason. Null when it doesn't. */
+  needsYou: NeedsYou | null
+}
+
+/** A job that waits on Jake. `kind` says why; `line` is what the row says. A later phase's one-tap fix renders beside it (renderer NeedsYouSlot). */
+export interface NeedsYou {
+  kind: 'refused' | 'failed'
+  line: string
 }
 
 export interface PanelGroup {
@@ -88,7 +101,7 @@ function provenanceOf(q: QueueItemLike): string | null {
   return null
 }
 
-export function panelRowFor(q: QueueItemLike, now: number): PanelRow {
+export function panelRowFor(q: QueueItemLike & { progress?: { have: number; of: number } }, now: number): PanelRow {
   const r = q.result
   const kind: PanelRow['kind'] = r.kind !== 'query' ? 'link' : r.mediaType === 'album' ? 'album' : 'song'
   const artist = (r.artist || '').trim() || null
@@ -126,7 +139,15 @@ export function panelRowFor(q: QueueItemLike, now: number): PanelRow {
     actions,
     elapsedSec: status === 'downloading' && q.startedAt ? Math.max(0, Math.floor((now - q.startedAt) / 1000)) : null,
     choose: status === 'refused' && artist && chooseTitle ? { query: `${artist} ${chooseTitle}`.trim(), kind: kind === 'album' ? 'album' : 'song', artist, title: chooseTitle } : null,
+    progress: status === 'downloading' && kind === 'album' ? songProgressLine(q.progress) : null,
+    endedAt: q.endedAt ?? null,
+    needsYou: status === 'refused' || status === 'failed' ? { kind: status, line: q.primary || q.error || 'Download failed' } : null,
   }
+}
+
+/** Brief 258: the one Downloads list — In progress, Done today, Needs you. A refused album whose recovered songs are still on the way stays In progress. */
+export function downloadsPanelSections(rows: readonly PanelRow[], now: number): Array<{ id: DownloadsSection; title: string; rows: PanelRow[] }> {
+  return groupBySection(rows, (r) => sectionOf({ status: r.status, endedAt: r.endedAt, groupInFlight: r.group?.inFlight }, now))
 }
 
 /** In-flight first, then what needs a decision, then what's finished — newest first within a group. */

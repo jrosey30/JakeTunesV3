@@ -1205,11 +1205,15 @@ declare global {
       streamripStatus: () => Promise<{ ok: boolean; installed?: boolean; version?: string; reason?: string }>
       streamripDownload: (url: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
       streamripSearch?: (opts: { query: string; source?: string; mediaType?: string; numResults?: number }) => Promise<{ ok: boolean; results?: Array<{ source: string; mediaType: string; id: string; desc: string }>; error?: string }>
-      streamripDownloadId?: (source: string, mediaType: string, id: string, addedVia?: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
+      streamripDownloadId?: (source: string, mediaType: string, id: string, addedVia?: string, jobId?: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
       /** Does Qobuz have this album edition? Asked before an album job downloads (Brief 255). */
       checkQobuzAlbum?: (opts: import('../common/album-preflight').AlbumPreflightRequest) => Promise<import('../common/album-preflight').AlbumPreflight>
-      streamripDownloadByQuery?: (opts: { artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number ; sourceEdition?: import('../common/source-edition').SourceEdition; addedVia?: string }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }>
-      streamripCancelActive?: () => Promise<{ ok: boolean; killed: number }>
+      streamripDownloadByQuery?: (opts: { artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number ; sourceEdition?: import('../common/source-edition').SourceEdition; addedVia?: string; jobId?: string }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }>
+      streamripCancelActive?: (jobId?: string) => Promise<{ ok: boolean; killed: number }>
+      onStreamripJobProgress?: (callback: (p: { jobId: string; have: number; of: number; reset?: boolean }) => void) => () => void
+      onStreamripJobEnded?: (callback: (p: { jobId: string; result: import('../common/download-lanes').JobEndResult }) => void) => () => void
+      downloadQueueLoad?: () => Promise<import('../common/download-lanes').SavedQueueDoc | null>
+      downloadQueueSave?: (jobs: unknown[]) => Promise<{ ok: boolean }>
       streamripGetQobuz?: () => Promise<{ ok: boolean; configured: boolean; email?: string }>
       streamripSetQobuz?: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>
       streamripSetQobuzToken?: (userId: string, token: string) => Promise<{ ok: boolean; error?: string }>

@@ -1026,15 +1026,31 @@ const electronAPI = {
     ipcRenderer.invoke('streamrip:download', url),
   streamripSearch: (opts: { query: string; source?: string; mediaType?: string; numResults?: number }): Promise<{ ok: boolean; results?: Array<{ source: string; mediaType: string; id: string; desc: string }>; error?: string }> =>
     ipcRenderer.invoke('streamrip:search', opts),
-  streamripDownloadId: (source: string, mediaType: string, id: string, addedVia?: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
-    ipcRenderer.invoke('streamrip:download-id', source, mediaType, id, addedVia),
-  streamripDownloadByQuery: (opts: { artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; sourceEdition?: unknown; addedVia?: string }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }> =>
+  streamripDownloadId: (source: string, mediaType: string, id: string, addedVia?: string, jobId?: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
+    ipcRenderer.invoke('streamrip:download-id', source, mediaType, id, addedVia, jobId),
+  streamripDownloadByQuery: (opts: { artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; sourceEdition?: unknown; addedVia?: string; jobId?: string }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }> =>
     ipcRenderer.invoke('streamrip:download-by-query', opts),
   // Does Qobuz have this album edition? Asked before an album job downloads (Brief 255).
   checkQobuzAlbum: (opts: AlbumPreflightRequest): Promise<AlbumPreflight> =>
     ipcRenderer.invoke('check-qobuz-album', opts),
-  streamripCancelActive: (): Promise<{ ok: boolean; killed: number }> =>
-    ipcRenderer.invoke('streamrip:cancel-active'),
+  streamripCancelActive: (jobId?: string): Promise<{ ok: boolean; killed: number }> =>
+    ipcRenderer.invoke('streamrip:cancel-active', jobId),
+  // Brief 258: an album's songs landing ("7 of 12"), and the saved Downloads list.
+  onStreamripJobProgress: (callback: (p: { jobId: string; have: number; of: number; reset?: boolean }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { jobId: string; have: number; of: number; reset?: boolean }) => callback(p)
+    ipcRenderer.on('streamrip:job-progress', handler)
+    return () => { ipcRenderer.removeListener('streamrip:job-progress', handler) }
+  },
+  // A job's end, for a window that reloaded while main kept the job going (it re-attached instead of starting it again).
+  onStreamripJobEnded: (callback: (p: { jobId: string; result: import('../common/download-lanes').JobEndResult }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { jobId: string; result: import('../common/download-lanes').JobEndResult }) => callback(p)
+    ipcRenderer.on('streamrip:job-ended', handler)
+    return () => { ipcRenderer.removeListener('streamrip:job-ended', handler) }
+  },
+  downloadQueueLoad: (): Promise<import('../common/download-lanes').SavedQueueDoc | null> =>
+    ipcRenderer.invoke('download-queue:load'),
+  downloadQueueSave: (jobs: unknown[]): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('download-queue:save', jobs),
   streamripGetQobuz: (): Promise<{ ok: boolean; configured: boolean; email?: string }> =>
     ipcRenderer.invoke('streamrip:get-qobuz'),
   streamripSetQobuz: (email: string, password: string): Promise<{ ok: boolean; error?: string }> =>
