@@ -132,7 +132,9 @@ test('after writing iTunesDB, Play Counts is retired before the Mini can boot on
 test('the iTunesDB is built locally and proven on the CF across two remounts', () => {
   assert.match(engine, /--ipod-root/)
   assert.match(engine, /--template/)
-  assert.match(engine, /copyFile\(localDb, ipodDb\)/)
+  // Written beside the old catalog, confirmed, then renamed over it (Brief 260 part 2).
+  assert.match(engine, /\(localDb, ipodDbNew\)/)
+  assert.match(engine, /await rename\(ipodDbNew, ipodDb\)/)
   assert.match(engine, /catalogOnCardProven/)
   assert.match(engine, /catalogBytesMatch/)
   assert.match(engine, /ensureContiguousDb\(localDb/)
