@@ -1036,10 +1036,16 @@ const electronAPI = {
   streamripCancelActive: (jobId?: string): Promise<{ ok: boolean; killed: number }> =>
     ipcRenderer.invoke('streamrip:cancel-active', jobId),
   // Brief 258: an album's songs landing ("7 of 12"), and the saved Downloads list.
-  onStreamripJobProgress: (callback: (p: { jobId: string; have: number; of: number }) => void) => {
-    const handler = (_e: Electron.IpcRendererEvent, p: { jobId: string; have: number; of: number }) => callback(p)
+  onStreamripJobProgress: (callback: (p: { jobId: string; have: number; of: number; reset?: boolean }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { jobId: string; have: number; of: number; reset?: boolean }) => callback(p)
     ipcRenderer.on('streamrip:job-progress', handler)
     return () => { ipcRenderer.removeListener('streamrip:job-progress', handler) }
+  },
+  // A job's end, for a window that reloaded while main kept the job going (it re-attached instead of starting it again).
+  onStreamripJobEnded: (callback: (p: { jobId: string; result: import('../common/download-lanes').JobEndResult }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { jobId: string; result: import('../common/download-lanes').JobEndResult }) => callback(p)
+    ipcRenderer.on('streamrip:job-ended', handler)
+    return () => { ipcRenderer.removeListener('streamrip:job-ended', handler) }
   },
   downloadQueueLoad: (): Promise<import('../common/download-lanes').SavedQueueDoc | null> =>
     ipcRenderer.invoke('download-queue:load'),

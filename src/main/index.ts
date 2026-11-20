@@ -328,7 +328,8 @@ import { searchItunesSuggestions, itunesAlbumTracks } from './download-search'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { applyDevReview, devReviewWebPreferences, suppressListeningWrites } from './dev-review.ts'
 import { registerStreamripStore } from './streamrip-store'
-import { createDownloadQueueStore, registerDownloadQueueStore } from './download-queue-store.ts'
+import { createDownloadQueueStore, registerDownloadQueueStore, type DownloadQueueStore } from './download-queue-store.ts'
+import { liveJobIds } from './streamrip-store/rip-jobs.ts'
 import { registerGaplessTrimIpc } from './gapless-trim'
 import { registerPlaylistCoverIpc, registerPlaylistCoverProtocol } from './playlist-covers'
 import { registerScotusArchive } from './scotus-archive'
@@ -10084,6 +10085,10 @@ app.whenReady().then(async () => {
   // loads, ipod-audio handler registration). Splash + library load give
   // us ~3s before playback needs ipod-audio://.
   // Usage log (2026-11-14): what happens as Jake uses the app, on disk first, sent to homemini in batches. Module: usage-log-start.ts.
+  // Brief 258: the Downloads waiting list (userData/download-queue.json). Registered BEFORE the window,
+  // so the renderer's first load never meets "no handler" and the list is read before anything is saved.
+  downloadQueueStore = createDownloadQueueStore({ path: join(app.getPath('userData'), 'download-queue.json') })
+  registerDownloadQueueStore(ipc, downloadQueueStore, { liveJobs: liveJobIds })
   const usageLog = startUsageLog({ userData: app.getPath('userData'), build: getBuildProvenance(app.getVersion()).buildSha, version: app.getVersion(), hubBase: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), syncInFlight: () => syncEngine.isSyncInFlight() })
   createWindow()
   registerMediaKeyShortcuts()
@@ -10744,16 +10749,14 @@ app.whenReady().then(async () => {
   // streamrip download store (replaces the dead embedded web-store views —
   // squid/lucida/dab). Shells out to the `rip` CLI and imports the result
   // through the same pipeline Bandcamp uses, tagged source='streamrip'.
-  // Brief 258: the Downloads waiting list survives a restart or an update (userData/download-queue.json).
-  const downloadQueueStore = createDownloadQueueStore({ path: join(app.getPath('userData'), 'download-queue.json') })
-  registerDownloadQueueStore(ipc, downloadQueueStore)
   registerStreamripStore({
     ipc,
     getMainWindow: () => mainWindow,
     importDownloaded: importDownloadedFiles,
     mbThrottle,
     mbUserAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`,
-    onJobFinished: (jobId, f) => downloadQueueStore.markFinished(jobId, f),
+    // Brief 258: the ledger of finished jobs, beside the saved list (registered before createWindow).
+    onJobFinished: (jobId, f) => downloadQueueStore ? downloadQueueStore.markFinished(jobId, f) : Promise.resolve(),
   })
 
   // SCOTUS Archive — Poppy's Supreme Court argument (Beck v. Prupis). A
@@ -10909,6 +10912,8 @@ app.on('window-all-closed', () => {
 // the cache stats instead of vanishing. `quitDeferralStarted` guards
 // re-entry — the second 'before-quit' (our own app.quit()) proceeds.
 let quitDeferralStarted = false
+/** Brief 258: the Downloads list on disk; flushed on quit. */
+let downloadQueueStore: DownloadQueueStore | null = null
 let sidecarFlush: Promise<unknown> = Promise.resolve()
 app.on('before-quit', (e) => {
   unregisterMediaKeyShortcuts()
@@ -10928,6 +10933,8 @@ app.on('before-quit', (e) => {
       flush,
       // Tag edits still owed to files: what finishes in the same 2 s, the rest stays on disk for the next launch.
       tagWriteback.stop(2000).catch(() => undefined),
+      // Brief 258: the Downloads list's last save reaches the disk (bounded like the rest).
+      Promise.race([downloadQueueStore?.flush() ?? Promise.resolve(), new Promise((r) => setTimeout(r, 2000))]).catch(() => undefined),
       // Preserve the 180ms audio-fade deferral alongside the flush wait.
       new Promise((r) => setTimeout(r, hasWin ? 180 : 0)),
     ])

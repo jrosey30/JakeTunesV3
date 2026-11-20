@@ -1210,7 +1210,8 @@ declare global {
       checkQobuzAlbum?: (opts: import('../common/album-preflight').AlbumPreflightRequest) => Promise<import('../common/album-preflight').AlbumPreflight>
       streamripDownloadByQuery?: (opts: { artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number ; sourceEdition?: import('../common/source-edition').SourceEdition; addedVia?: string; jobId?: string }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }>
       streamripCancelActive?: (jobId?: string) => Promise<{ ok: boolean; killed: number }>
-      onStreamripJobProgress?: (callback: (p: { jobId: string; have: number; of: number }) => void) => () => void
+      onStreamripJobProgress?: (callback: (p: { jobId: string; have: number; of: number; reset?: boolean }) => void) => () => void
+      onStreamripJobEnded?: (callback: (p: { jobId: string; result: import('../common/download-lanes').JobEndResult }) => void) => () => void
       downloadQueueLoad?: () => Promise<import('../common/download-lanes').SavedQueueDoc | null>
       downloadQueueSave?: (jobs: unknown[]) => Promise<{ ok: boolean }>
       streamripGetQobuz?: () => Promise<{ ok: boolean; configured: boolean; email?: string }>

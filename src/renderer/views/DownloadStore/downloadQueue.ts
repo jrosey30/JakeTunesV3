@@ -15,7 +15,7 @@
 //  - query: an iTunes-picked song/album resolved on Qobuz at download time
 //    (artist+title or artist+album) — the v2 search flow.
 import { norm } from './downloadKeys.ts'
-import { laneOf, nextInLane, restoreJobs, toSavedJobs, type Lane, type SavedQueueDoc } from '../../../common/download-lanes.ts'
+import { laneOf, nextInLane, nextProgress, restoreJobs, toSavedJobs, type JobEndResult, type Lane, type SavedQueueDoc } from '../../../common/download-lanes.ts'
 import { PREFLIGHT_BUDGET_MS, albumSaveEvent, preflightVerdict, type AlbumPreflight, type AlbumSaveEdition, type AlbumSaveSurface } from '../../../common/album-preflight.ts'
 
 /** Where a job came from (the Record Shop's saved list, a feed shelf…) —
@@ -128,6 +128,9 @@ export interface QItem {
   armId?: string
   /** An album's songs landed so far, from main. */
   progress?: { have: number; of: number }
+  /** Brief 258: main was still running this arm when the window reloaded; it is
+   *  followed (main's end event, main's live list) instead of started again. Not saved. */
+  attached?: boolean
 }
 
 export function queueKey(r: QResult): string {
@@ -151,10 +154,18 @@ function newArmId(): string {
 
 // ── The saved list (Brief 258) ──────────────────────────────────────────
 // Every change is written (main: download-queue-store.ts, atomic, coalesced).
-// Nothing is written until the saved list has been read back, so a fresh
-// start can never overwrite yesterday's waiting list with an empty one.
+// Nothing is written until the saved list has actually been read back, so a
+// fresh start (or a load that failed: main not ready yet, a read error) can
+// never overwrite yesterday's waiting list with an empty one. A failed load is
+// asked again with backoff, for as long as it takes; after a few tries the
+// lanes may start meanwhile, but nothing is saved until a load succeeds.
 let restored = false
+/** The load has failed a few times: downloads run meanwhile, still unsaved. */
+let pumpWithoutList = false
 let saveQueued = false
+let retryBaseMs = 250
+const RETRY_MAX_MS = 15_000
+const PUMP_AFTER_FAILED_LOADS = 5
 function scheduleSave(): void {
   if (!restored || saveQueued) return
   const save = typeof window !== 'undefined' ? window.electronAPI?.downloadQueueSave : undefined
@@ -166,36 +177,126 @@ function scheduleSave(): void {
   })
 }
 
+/** How a job ended, when main said so before the saved list was back (a reload mid-job). */
+const endedEarly = new Map<string, JobEndResult>()
+
 /**
- * Bring the saved list back (app start). A job that was downloading at quit
- * starts again from nothing, first in its lane; one main finished just before
- * the quit is done; everything else keeps its place. Jobs queued before the
- * list came back stay, after it. Album jobs ask their preflight again; none
- * writes a second usage line.
+ * Bring the saved list back (app start, or a window reload while main runs).
+ * A job main is still running (its arm id in `live`) is followed, never
+ * started again: a reload mid-import must not download the album twice. A job
+ * that was downloading and is no longer running starts again from nothing,
+ * first in its lane; one main finished just before is done; everything else
+ * keeps its place. Jobs queued before the list came back stay, after it. Album
+ * jobs ask their preflight again; none writes a second usage line.
  */
 export async function restoreSavedQueue(doc?: SavedQueueDoc | null): Promise<void> {
-  try {
-    const d = doc !== undefined ? doc : await window.electronAPI?.downloadQueueLoad?.()
-    if (d && Array.isArray(d.jobs)) {
-      const have = new Set(queue.map((q) => q.key))
-      const back: QItem[] = []
-      const jobs = restoreJobs(d, Date.now())
-      // A window reload (main still running) leaves the old rips going: stop them before the job starts again.
-      if (jobs.some((j) => j.interrupted)) await window.electronAPI?.streamripCancelActive?.()?.catch(() => {})
-      for (const j of jobs) {
-        if (have.has(j.key)) continue
-        const { interrupted: _i, ...job } = j
-        const it = job as unknown as QItem
-        if (it.status === 'queued') it.armId = newArmId()
-        back.push(it)
+  let d: SavedQueueDoc | null | undefined
+  if (doc !== undefined) d = doc
+  else {
+    const load = window.electronAPI?.downloadQueueLoad
+    for (let attempt = 0; ; attempt++) {
+      try { d = typeof load === 'function' ? await load() : null; break } catch {
+        // main isn't answering yet (or the file couldn't be read): ask again, never save meanwhile.
+        if (attempt + 1 >= PUMP_AFTER_FAILED_LOADS && !pumpWithoutList) { pumpWithoutList = true; void pump() }
+        await new Promise((r) => setTimeout(r, Math.min(RETRY_MAX_MS, retryBaseMs * 2 ** attempt)))
       }
-      queue = [...back, ...queue]
-      for (const it of back) if (it.status === 'queued') { askPreflight(it); it.logged = true }
     }
-  } catch { /* nothing saved, or main away: start with what there is */ }
+  }
+  try { applySaved(d) } catch { /* a list that can't be applied: start with what there is */ }
   restored = true
   emit()
   void pump()
+}
+
+function applySaved(d: SavedQueueDoc | null | undefined): void {
+  if (!d || !Array.isArray(d.jobs)) return
+  const live = new Set(Array.isArray(d.live) ? d.live : [])
+  const have = new Set(queue.map((q) => q.key))
+  const back: QItem[] = []
+  const following = new Set<string>()
+  for (const j of restoreJobs(d, Date.now())) {
+    if (have.has(j.key)) continue
+    const { interrupted: _i, ...job } = j
+    const it = job as unknown as QItem
+    const early = it.armId ? endedEarly.get(it.armId) : undefined
+    if (early && (it.status === 'queued' || it.status === 'downloading')) {
+      // It ended while the window was away: its end, not a second download.
+      endedEarly.delete(it.armId!)
+      it.startedAt = it.startedAt ?? Date.now()
+      applyEnd(it, early)
+      it.endedAt = Date.now()
+    } else if (it.status === 'queued' && it.armId && live.has(it.armId)) {
+      // Main is still on it (mid-rip or mid-import): follow it.
+      it.status = 'downloading'
+      it.attached = true
+      it.startedAt = Date.now()
+      if (laneOf(it.result) === 'album' && (it.result.trackCount ?? 0) > 1) it.progress = { have: 0, of: it.result.trackCount! }
+      following.add(it.armId)
+    } else if (it.status === 'queued') it.armId = newArmId()
+    back.push(it)
+  }
+  // A rip main runs that no job on the list names any more: stop it.
+  for (const id of live) if (!following.has(id)) void window.electronAPI?.streamripCancelActive?.(id)?.catch(() => {})
+  queue = [...back, ...queue]
+  for (const it of back) if (it.status === 'queued') { askPreflight(it); it.logged = true }
+  if (following.size) watchFollowed()
+}
+
+/** Write a job's end onto it (the pump's answer, or main's end event for a followed job). */
+function applyEnd(it: QItem, r: JobEndResult | undefined): void {
+  if (r?.ok) {
+    it.status = 'done'
+    it.imported = r.imported ?? 0
+    it.dupes = r.dupes ?? 0
+    it.matchDesc = r.matchDesc
+    it.completion = r.completion
+  } else {
+    it.status = 'failed'
+    it.error = r?.error || 'Download failed.'
+    it.outcome = r?.outcome
+    it.alternatives = r?.alternatives
+    it.primary = r?.primary || primaryFor(r?.outcome, it.error)
+    it.detail = r?.detail || it.error
+  }
+}
+
+/** A followed job's end arrived from main. */
+function endFollowed(it: QItem, r: JobEndResult | null): void {
+  it.attached = false
+  if (it.status === 'downloading') {
+    if (r) applyEnd(it, r)
+    else { it.status = 'queued'; it.armId = newArmId(); it.startedAt = undefined }   // gone without an end: start it again
+    it.endedAt = r ? Date.now() : undefined
+    it.progress = undefined
+  }
+  emit()
+  void pump()
+}
+
+/**
+ * The safety net under main's end event (it can be lost while the window is
+ * reloading again): every so often ask main which jobs it still runs. A
+ * followed job that isn't running any more is done if main's ledger has it,
+ * otherwise it starts again.
+ */
+let followTimer: ReturnType<typeof setInterval> | null = null
+let followEveryMs = 20_000
+function watchFollowed(): void {
+  if (followTimer) return
+  followTimer = setInterval(() => {
+    const followed = queue.filter((q) => q.attached && q.status === 'downloading')
+    if (!followed.length) { clearInterval(followTimer!); followTimer = null; return }
+    void Promise.resolve(window.electronAPI?.downloadQueueLoad?.()).then((d) => {
+      if (!d) return
+      const live = new Set(Array.isArray(d.live) ? d.live : [])
+      for (const it of followed) {
+        if (!it.attached || it.status !== 'downloading' || live.has(it.armId!)) continue
+        const fin = d.finished?.[it.armId!]
+        endFollowed(it, fin ? { ok: true, imported: fin.imported, dupes: fin.dupes, matchDesc: fin.matchDesc, completion: fin.completion } : null)
+      }
+    }).catch(() => { /* asked again next time */ })
+  }, followEveryMs)
+  ;(followTimer as { unref?: () => void }).unref?.()
 }
 
 
@@ -335,9 +436,12 @@ export async function cancel(key: string): Promise<void> {
   if (it.status === 'downloading') {
     it.status = 'canceled'
     it.endedAt = Date.now()
+    const followed = it.attached
+    it.attached = false
     emit()
     // Only this job: the other lane keeps going.
     await window.electronAPI.streamripCancelActive?.(it.armId).catch(() => {})
+    if (followed) void pump()
   }
 }
 
@@ -391,7 +495,9 @@ async function pumpLane(lane: Lane): Promise<void> {
   running[lane] = true
   try {
     for (;;) {
-      if (!restored) break   // the saved list first, then its order
+      if (!restored && !pumpWithoutList) break   // the saved list first, then its order
+      // A job main kept running through a window reload holds its lane until it ends.
+      if (queue.some((q) => q.attached && q.status === 'downloading' && laneOf(q.result) === lane)) break
       const it = nextInLane(queue, lane)
       if (!it) break
       // An album still asking Qobuz: its answer first (seconds). A "no" ends it there.
@@ -423,20 +529,7 @@ async function pumpLane(lane: Lane): Promise<void> {
         // 'done' or 'failed' and the cancel would appear to do nothing.
         const statusNow = it.status as QStatus
         if (statusNow === 'canceled') { /* user killed it mid-flight — keep that verdict */ }
-        else if (r?.ok) {
-          it.status = 'done'
-          it.imported = r.imported ?? 0
-          it.dupes = r.dupes ?? 0
-          it.matchDesc = r.matchDesc
-          it.completion = r.completion
-        } else {
-          it.status = 'failed'
-          it.error = r?.error || 'Download failed.'
-          it.outcome = r?.outcome
-          it.alternatives = r?.alternatives
-          it.primary = r?.primary || primaryFor(r?.outcome, it.error)
-          it.detail = r?.detail || it.error
-        }
+        else applyEnd(it, r)
       } catch (e) {
         const statusAfterThrow = it.status as QStatus
         if (statusAfterThrow !== 'canceled') {
@@ -449,7 +542,8 @@ async function pumpLane(lane: Lane): Promise<void> {
       it.endedAt = Date.now()
       it.progress = undefined
       // The preflight couldn't tell: the walk's own end is the first answer.
-      if (it.preflight === 'unknown' && (it.status === 'done' || it.status === 'failed')) logAlbumSave(it, it.status, it.preflightAnswer)
+      const ended = it.status as QStatus   // applyEnd set it; TypeScript still sees 'downloading'
+      if (it.preflight === 'unknown' && (ended === 'done' || ended === 'failed')) logAlbumSave(it, ended, it.preflightAnswer)
       emit()
     }
   } finally {
@@ -458,12 +552,17 @@ async function pumpLane(lane: Lane): Promise<void> {
 }
 
 /** Tests: forget the list and both lanes (a quit), then `restoreSavedQueue` brings the saved one back. */
-export function resetQueueForTests(opts: { restored?: boolean } = {}): void {
+export function resetQueueForTests(opts: { restored?: boolean; retryMs?: number; followMs?: number } = {}): void {
   queue = []
   running.album = false
   running.song = false
   asking.clear()
+  endedEarly.clear()
+  if (followTimer) { clearInterval(followTimer); followTimer = null }
   restored = opts.restored ?? true
+  pumpWithoutList = false
+  retryBaseMs = opts.retryMs ?? 250
+  followEveryMs = opts.followMs ?? 20_000
 }
 
 /** The short status for an outcome when main did not send one (older
@@ -487,9 +586,20 @@ if (typeof window !== 'undefined' && window.electronAPI) {
     window.electronAPI.onStreamripJobProgress?.((p) => {
       const it = queue.find((q) => q.armId === p.jobId)
       if (!it || it.status !== 'downloading') return
-      it.progress = { have: p.have, of: p.of }
+      // Never backwards on screen; main's reset (the walk moved to Bandcamp) starts it over.
+      it.progress = nextProgress(it.progress, p)
       queue = [...queue]
       for (const f of subs) f()
+    })
+  } catch { /* observation only */ }
+  try {
+    window.electronAPI.onStreamripJobEnded?.((p) => {
+      const it = queue.find((q) => q.armId === p.jobId)
+      if (it) { if (it.attached) endFollowed(it, p.result); return }   // a job this window started hears its own answer
+      if (!restored) {
+        endedEarly.set(p.jobId, p.result)
+        if (endedEarly.size > 50) endedEarly.delete(endedEarly.keys().next().value!)
+      }
     })
   } catch { /* observation only */ }
   if (typeof window.electronAPI.downloadQueueLoad === 'function') void restoreSavedQueue()

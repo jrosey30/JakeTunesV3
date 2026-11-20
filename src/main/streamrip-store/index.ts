@@ -44,7 +44,7 @@ import { judgeHeardListings } from '../album-preflight.ts'
 import { createAnswerCache, createLimiter } from '../../common/answer-cache.ts'
 import { qobuzHitsOf, losslessScope, LOSSLESS_CONCURRENCY, LOSSLESS_FAIL_QUIET_MS, LOSSLESS_MAX_SCOPES, LOSSLESS_TTL_MS, type QobuzHit } from '../../common/shop-lossless.ts'
 import { PREFLIGHT_BUDGET_MS, type AlbumPreflight, type AlbumPreflightRequest } from '../../common/album-preflight.ts'
-import { cancelJobs, currentJob, importOneAtATime, runInJob, stopAllJobsNow, watchLanding } from './rip-jobs.ts'
+import { cancelJobs, clearLanding, currentJob, importOneAtATime, runInJob, stopAllJobsNow, sweepOrphanedStaging, watchLanding } from './rip-jobs.ts'
 import type { FinishedJob } from '../../common/download-lanes.ts'
 
 export interface StreamripDeps {
@@ -126,10 +126,8 @@ interface RunResult { code: number; stdout: string; stderr: string; enoent: bool
 //
 // 6.0 Phase 4: children are KIND-tagged. Cancel kills only 'download'
 // children — an in-flight suggestion SEARCH no longer dies because Jake
-// canceled a track (the old Set was a global blast radius). The ladder
-// also checks currentJob().canceled between stages, so cancel ends the whole
-// fallback ladder, not just the current process.
-const activeProcs = new Map<ReturnType<typeof execFile>, 'download' | 'search'>()
+// canceled a track. The ladder also checks currentJob().canceled between
+// stages, so cancel ends the whole fallback ladder, not just the current process.
 // Brief 258: the cancel flag and the rip processes are per job (rip-jobs.ts), so two lanes never stop each other.
 function run(bin: string, args: string[], timeoutMs: number, kind: 'download' | 'search' = 'download', stillMoving?: () => Promise<boolean>): Promise<RunResult> {
   return new Promise((resolve) => {
@@ -138,14 +136,12 @@ function run(bin: string, args: string[], timeoutMs: number, kind: 'download' | 
     let timer: ReturnType<typeof setTimeout> | null = null
     const child = execFile(bin, args, { maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (timer) clearTimeout(timer)
-      activeProcs.delete(child)
       job.procs.delete(child)
       const e = err as (Error & { code?: number | string; killed?: boolean }) | null
       const enoent = e?.code === 'ENOENT'
       const code = typeof e?.code === 'number' ? e.code : (e ? 1 : 0)
       resolve({ code, stdout: stdout || '', stderr: stderr || '', enoent, timedOut })
     })
-    activeProcs.set(child, kind)
     const job = currentJob()
     if (kind === 'download') job.procs.add(child)
     const atDeadline = async (): Promise<void> => {
@@ -285,30 +281,6 @@ function writeQobuzFields(cfg: string, fields: Record<string, string>): string {
 
 export interface SearchResult { source: string; mediaType: string; id: string; desc: string }
 
-/** 6.0 Phase 4: orphaned staging dirs from a crash/kill mid-download used
- *  to live in tmpdir forever (cleanup was finally-only, and the same class
- *  left 404 iTunesDB temps totaling 6.3GB on the NAS). Sweep our own
- *  prefixes at boot — anything older than an hour is a corpse. */
-async function sweepOrphanedStaging(): Promise<void> {
-  const prefixes = ['jaketunes-rip-', 'jaketunes-bc-', 'jaketunes-ripsearch-', 'jaketunes-itunesdb-']
-  try {
-    const entries = await readdir(tmpdir(), { withFileTypes: true })
-    let swept = 0
-    for (const e of entries) {
-      if (!prefixes.some((p) => e.name.startsWith(p))) continue
-      const p = join(tmpdir(), e.name)
-      try {
-        const { stat } = await import('fs/promises')
-        const st = await stat(p)
-        if (Date.now() - st.mtimeMs < 3600_000) continue   // possibly live
-        await rm(p, { recursive: true, force: true })
-        swept++
-      } catch { /* raced with its owner — leave it */ }
-    }
-    if (swept) console.log(`[streamrip] swept ${swept} orphaned staging dir(s)`)
-  } catch { /* tmpdir unreadable — nothing to do */ }
-}
-
 /**
  * Brief 258: each download call runs as its own job (rip-jobs.ts) — its own
  * cancel, its own rip processes, an album's "7 of 12" sent to the renderer —
@@ -332,16 +304,30 @@ function jobScopedIpc(deps: StreamripDeps): IpcRegistrar {
       deps.ipc.handle(channel, (e, ...args) => {
         const { id, of } = jobOf(args)
         const jobId = typeof id === 'string' && id ? id : null
-        const progress = jobId ? (have: number, total: number): void => {
+        const send = (channel: string, payload: unknown): void => {
           const win = deps.getMainWindow()
-          if (win && !win.isDestroyed()) win.webContents.send('streamrip:job-progress', { jobId, have, of: total })
+          if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
+        }
+        const progress = jobId ? (have: number, total: number, reset?: boolean): void => {
+          send('streamrip:job-progress', reset ? { jobId, have, of: total, reset: true } : { jobId, have, of: total })
         } : undefined
         return runInJob(jobId, typeof of === 'number' ? of : null, progress, async () => {
-          const r = await (listener as (ev: typeof e, ...rest: unknown[]) => unknown)(e, ...args)
-          const done = r as { ok?: boolean; imported?: number; dupes?: number; matchDesc?: string; completion?: string } | undefined
+          let r: unknown
+          try {
+            r = await (listener as (ev: typeof e, ...rest: unknown[]) => unknown)(e, ...args)
+          } catch (err) {
+            // A window reloaded mid-job is waiting on this end, not on the answer (its caller is gone).
+            if (jobId) send('streamrip:job-ended', { jobId, result: { ok: false, error: err instanceof Error ? err.message : 'Download failed.' } })
+            throw err
+          }
+          const done = r as { ok?: boolean; imported?: number; dupes?: number; error?: string; outcome?: string; alternatives?: unknown; primary?: string; detail?: string; matchDesc?: string; completion?: string } | undefined
           if (jobId && done?.ok && deps.onJobFinished) {
             await deps.onJobFinished(jobId, { imported: done.imported, dupes: done.dupes, matchDesc: done.matchDesc, completion: done.completion })
               .catch(() => quietWarn('download-ledger', '[downloads] could not note a finished job'))
+          }
+          if (jobId) {
+            const d = done ?? { ok: false }
+            send('streamrip:job-ended', { jobId, result: { ok: Boolean(d.ok), imported: d.imported, dupes: d.dupes, error: d.error, outcome: d.outcome, alternatives: d.alternatives, primary: d.primary, detail: d.detail, matchDesc: d.matchDesc, completion: d.completion } })
           }
           return r
         })
@@ -351,7 +337,8 @@ function jobScopedIpc(deps: StreamripDeps): IpcRegistrar {
 }
 
 export function registerStreamripStore(deps: StreamripDeps): void {
-  setTimeout(() => { void sweepOrphanedStaging() }, 30_000).unref()
+  // At boot no rip can be running yet: every download folder a crash or a quit left goes now, whatever its age.
+  void sweepOrphanedStaging({ atBoot: true }).then((n) => { if (n) console.log(`[streamrip] swept ${n} orphaned staging dir(s)`) })
   // Brief 258: a quit stops every rip and removes its temp folder; the saved list restarts the job.
   process.once('exit', stopAllJobsNow)
   const ipc = jobScopedIpc(deps)
@@ -410,9 +397,11 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         if (left < 15000) break
         const here = staging
         const stopWatch = watchLanding(here)
+        let ranClean = false
         try {
           res = await run(rip.bin, ['--folder', staging, '--quality', '4', '--no-db', '--no-progress', ...ripSubcmd], left, 'download', createRipProgress(() => bytesUnder(here)))
-        } finally { stopWatch() }
+          ranClean = res.code === 0 && !res.timedOut
+        } finally { stopWatch(ranClean) }
         // Stopped mid-transfer: what's there is cut off under its final name. Nothing it left counts.
         if (res.timedOut) {
           console.warn(`[streamrip] stopped: no new bytes past the deadline (${Math.round((Date.now() - started) / 60000)} min). Nothing imported.`)
@@ -1360,6 +1349,8 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     for (const bcPick of bcPicks) {
       if (currentJob().canceled) return { ok: false, error: 'canceled', outcome: 'canceled' }
       anyMatched = true
+      // Brief 258: the Qobuz count was for another folder; Bandcamp's starts over.
+      clearLanding()
       const st = await stageBandcamp(bcPick.url)
       if (!st.ok) { trace.push(`bandcamp stage: ${st.error}`); bandcampFailure = st.error; continue }
       const desc = `${bcPick.name} — ${bcPick.band} (Bandcamp stream)`

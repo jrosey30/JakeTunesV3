@@ -11,10 +11,16 @@
  * whose import finished, the moment it finished (streamrip-store calls
  * `markFinished` before it answers the renderer). A quit between the import
  * and the renderer saving "done" therefore never downloads the job again.
+ *
+ * A file it can't read right now (anything but "not there") is not an empty
+ * list: the load fails and the renderer asks again, so a passing read error
+ * can never let a save write over the waiting list. A file written by a newer
+ * app is left exactly as it is: this app starts with an empty list in memory
+ * and never writes it.
  */
 import { readFile } from 'node:fs/promises'
 import { writeJsonAtomic } from './atomic-write.ts'
-import { capSaved, emptyQueueDoc, parseSavedQueue, pruneFinished, toSavedJobs, type FinishedJob, type SavedJob, type SavedQueueDoc } from '../common/download-lanes.ts'
+import { capSaved, emptyQueueDoc, isNewerQueueFile, parseSavedQueue, pruneFinished, toSavedJobs, type FinishedJob, type SavedJob, type SavedQueueDoc } from '../common/download-lanes.ts'
 import type { IpcRegistrar } from './ipc-register.ts'
 import { REFUSED_SENDER } from './ipc-register.ts'
 
@@ -39,22 +45,39 @@ export function createDownloadQueueStore(opts: {
   let loading: Promise<SavedQueueDoc> | null = null
   let writing: Promise<void> | null = null
   let dirty = false
+  /** The file belongs to a newer app: never written by this one. */
+  let frozen = false
 
   async function readDoc(): Promise<SavedQueueDoc> {
+    let text: string
     try {
-      const raw = await readFile(opts.path, 'utf-8')
-      const parsed = parseSavedQueue(JSON.parse(raw))
-      if (parsed) return parsed
-      warn('[downloads] saved list not readable; starting empty')
+      text = await readFile(opts.path, 'utf-8')
     } catch (e) {
-      if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') warn('[downloads] saved list not readable; starting empty')
+      if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') return emptyQueueDoc(now())
+      warn('[downloads] saved list could not be read; will ask again')
+      throw e
     }
+    let raw: unknown = null
+    try { raw = JSON.parse(text) } catch { /* torn: never written by us whole */ }
+    if (isNewerQueueFile(raw)) {
+      frozen = true
+      warn('[downloads] saved list is from a newer JakeTunes; leaving it as it is')
+      return emptyQueueDoc(now())
+    }
+    const parsed = parseSavedQueue(raw)
+    if (parsed) return parsed
+    warn('[downloads] saved list not readable; starting empty')
     return emptyQueueDoc(now())
   }
 
   function load(): Promise<SavedQueueDoc> {
     if (doc) return Promise.resolve(doc)
-    if (!loading) loading = readDoc().then((d) => { doc = doc ?? d; return doc })
+    if (!loading) {
+      loading = readDoc().then(
+        (d) => { doc = doc ?? d; return doc },
+        (e) => { loading = null; throw e },
+      )
+    }
     return loading
   }
 
@@ -66,6 +89,7 @@ export function createDownloadQueueStore(opts: {
         while (dirty) {
           dirty = false
           const d = await load()
+          if (frozen) continue
           d.savedAt = now()
           try { await write(opts.path, d) } catch { warn('[downloads] could not save the list') }
         }
@@ -90,13 +114,17 @@ export function createDownloadQueueStore(opts: {
       await kick()
     },
     async flush() {
-      while (writing) await writing
+      while (writing) await writing.catch(() => { /* said in the log */ })
     },
   }
 }
 
-export function registerDownloadQueueStore(ipc: IpcRegistrar, store: DownloadQueueStore): void {
-  ipc.handle('download-queue:load', async () => store.load(), { refuse: null })
+export function registerDownloadQueueStore(ipc: IpcRegistrar, store: DownloadQueueStore, opts: { liveJobs?: () => string[] } = {}): void {
+  ipc.handle('download-queue:load', async () => {
+    // Who is running FIRST, then the list: a job gone from `live` wrote its ledger line before it left.
+    const live = opts.liveJobs?.() ?? []
+    return { ...(await store.load()), live }
+  }, { refuse: null })
   ipc.handle('download-queue:save', async (_e, jobs: unknown) => {
     if (!Array.isArray(jobs)) return { ok: false }
     await store.saveJobs(jobs as SavedJob[])

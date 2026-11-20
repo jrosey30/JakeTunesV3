@@ -13,17 +13,18 @@
 import { main, type Answer } from './download-lanes-window.ts'
 import { describe, it, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile, mkdir, utimes, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { enqueue, getQueue, cancel, albumQueryId, trackQueryId, resetQueueForTests, restoreSavedQueue, type QResult } from '../../renderer/views/DownloadStore/downloadQueue.ts'
 import { createDownloadQueueStore } from '../download-queue-store.ts'
 import {
-  laneOf, nextInLane, toSavedJob, toSavedJobs, parseSavedQueue, restoreJobs, capSaved, pruneFinished, songProgressLine, landedCount,
+  laneOf, nextInLane, toSavedJob, toSavedJobs, parseSavedQueue, restoreJobs, capSaved, pruneFinished, songProgressLine, landedCount, nextProgress, isNewerQueueFile,
   sectionOf, startOfDay, emptyQueueDoc, MAX_SAVED_JOBS, SAVED_QUEUE_VERSION, type SavedJob, type SavedQueueDoc,
 } from '../../common/download-lanes.ts'
 import { downloadsPanelRows, downloadsPanelSections } from '../../common/downloads-panel-model.ts'
-import { runInJob, currentJob, cancelJobs, importOneAtATime, watchLanding } from '../streamrip-store/rip-jobs.ts'
+import { runInJob, currentJob, cancelJobs, importOneAtATime, watchLanding, clearLanding, liveJobIds, sweepOrphanedStaging } from '../streamrip-store/rip-jobs.ts'
+import { registerDownloadQueueStore } from '../download-queue-store.ts'
 import { waitFor } from './wait-for.ts'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -96,6 +97,10 @@ describe('two lanes', () => {
     main.progress!({ jobId: it.armId!, have: 7, of: 12 })
     const row = downloadsPanelRows(getQueue(), Date.now()).find((r) => r.key === it.key)!
     assert.equal(row.progress, '7 of 12')
+    main.progress!({ jobId: it.armId!, have: 2, of: 12 })
+    assert.deepEqual(job('Twelve')!.progress, { have: 7, of: 12 }, 'a retry’s smaller count never shows')
+    main.progress!({ jobId: it.armId!, have: 0, of: 12, reset: true })
+    assert.deepEqual(job('Twelve')!.progress, { have: 0, of: 12 }, 'Bandcamp starts over')
   })
 
   it('lane rules', () => {
@@ -191,6 +196,47 @@ describe('the saved list', () => {
     const torn = createDownloadQueueStore({ path, warn: () => {} })
     assert.deepEqual((await torn.load()).jobs, [])
   })
+
+  it('a file from a newer app is left exactly as it is, and this app starts empty', async () => {
+    const path = join(dir, 'download-queue.json')
+    const newer = JSON.stringify({ version: SAVED_QUEUE_VERSION + 1, jobs: [{ key: 'future' }], somethingNew: true })
+    await writeFile(path, newer)
+    assert.equal(isNewerQueueFile(JSON.parse(newer)), true)
+    assert.equal(isNewerQueueFile({ version: SAVED_QUEUE_VERSION }), false)
+    let writes = 0
+    const store = createDownloadQueueStore({ path, warn: () => {}, write: async () => { writes++ } })
+    assert.deepEqual((await store.load()).jobs, [])
+    await store.saveJobs([j('a1', 'queued')])
+    await store.markFinished('arm-a1', { imported: 1 })
+    await store.flush()
+    assert.equal(writes, 0, 'never written')
+    assert.equal(await readFile(path, 'utf-8'), newer, 'untouched')
+  })
+
+  it('a file that can’t be read right now is not an empty list: the load fails and is asked again', async () => {
+    const path = join(dir, 'download-queue.json')
+    await mkdir(path)   // EISDIR: a read error that isn't "not there"
+    let writes = 0
+    const store = createDownloadQueueStore({ path, warn: () => {}, write: async () => { writes++ } })
+    await assert.rejects(store.load())
+    await assert.rejects(store.saveJobs([j('a1', 'queued')]))
+    assert.equal(writes, 0)
+    await rm(path, { recursive: true })
+    await writeFile(path, JSON.stringify({ version: SAVED_QUEUE_VERSION, savedAt: 1, jobs: [j('a7', 'queued')], finished: {} }))
+    assert.deepEqual((await store.load()).jobs.map((x) => x.key), ['a7'], 'the next ask reads it')
+  })
+
+  it('main answers a load with who is running, read before the list', async () => {
+    const handlers = new Map<string, (...a: unknown[]) => unknown>()
+    const store = createDownloadQueueStore({ path: join(dir, 'q.json') })
+    const order: string[] = []
+    const origLoad = store.load
+    store.load = () => { order.push('list'); return origLoad() }
+    registerDownloadQueueStore({ handle: (ch: string, fn: (...a: unknown[]) => unknown) => { handlers.set(ch, fn) } } as never, store, { liveJobs: () => { order.push('live'); return ['arm-x'] } })
+    const d = await handlers.get('download-queue:load')!({}) as SavedQueueDoc
+    assert.deepEqual(d.live, ['arm-x'])
+    assert.deepEqual(order, ['live', 'list'])
+  })
 })
 
 describe('done when: a quit in the middle of three album saves loses nothing', () => {
@@ -248,6 +294,36 @@ describe('done when: a quit in the middle of three album saves loses nothing', (
     assert.deepEqual(main.calls.map((c) => c.what), ['Still Waiting'], 'the finished album is not downloaded twice')
   })
 
+  it('a load that fails (main not ready yet) is asked again; nothing is saved until one succeeds', async () => {
+    resetQueueForTests({ restored: false, retryMs: 5 })
+    let asks = 0
+    const saved: SavedQueueDoc = { ...emptyQueueDoc(), jobs: [{ key: 'kept', status: 'queued', result: { mediaType: 'track', kind: 'query', source: 'qobuz', id: 'kept', desc: 'Kept Song', title: 'Kept Song', artist: 'Band' } }] }
+    main.load = async () => { asks++; if (asks < 3) throw new Error('No handler registered for download-queue:load'); return saved }
+    main.answers.set('Kept Song', hang)
+    enqueue(song('Clicked Early'))
+    const restoring = restoreSavedQueue()
+    await sleep(2)
+    assert.equal(main.saved.length, 0, 'a failed load never lets a save through')
+    await restoring
+    assert.equal(asks, 3)
+    assert.deepEqual(names(), ['Kept Song', 'Clicked Early'], 'the saved list came back, not overwritten')
+    await waitFor(() => main.saved.length > 0, 'a save, after the load')
+    assert.ok(main.saved[0].some((x) => x.key === 'kept'))
+  })
+
+  it('a load that keeps failing lets the lanes run, still without saving', async () => {
+    resetQueueForTests({ restored: false, retryMs: 1 })
+    let ok = false
+    main.load = async () => { if (!ok) throw new Error('down'); return null }
+    enqueue(song('Meanwhile'))
+    const restoring = restoreSavedQueue()
+    await waitFor(() => job('Meanwhile')?.status === 'done', 'the song to download meanwhile')
+    assert.equal(main.saved.length, 0)
+    ok = true
+    await restoring
+    await waitFor(() => main.saved.length > 0, 'saves once the list is back')
+  })
+
   it('nothing is saved before the saved list is read back, so a fresh start never overwrites it', async () => {
     resetQueueForTests({ restored: false })
     enqueue(song('Clicked Early'))
@@ -290,12 +366,33 @@ describe('the one list', () => {
     assert.equal(songProgressLine({ have: 15, of: 12 }), '12 of 12')
     assert.equal(songProgressLine({ have: 1, of: 1 }), null)
     assert.equal(songProgressLine(null), null)
-    const a = new Map([['1.flac', 100], ['2.flac', 50]])
-    const b = new Map([['1.flac', 100], ['2.flac', 90], ['3.flac', 10]])
+    const f = (size: number, mtimeMs: number) => ({ size, mtimeMs })
+    const a = new Map([['1.flac', f(100, 1)], ['2.flac', f(50, 2)]])
+    const b = new Map([['1.flac', f(100, 1)], ['2.flac', f(90, 3)], ['3.flac', f(10, 4)]])
     assert.equal(landedCount(new Map(), a, 0, 12), 0, 'a first look proves nothing')
     assert.equal(landedCount(a, b, 0, 12), 1, 'only the file that held still')
     assert.equal(landedCount(b, new Map(), 1, 12), 1, 'a wiped folder never counts down mid-job')
-    assert.equal(landedCount(b, b, 0, 2), 2, 'never more than the album')
+    const c = new Map([['1.flac', f(100, 1)], ['2.flac', f(90, 3)], ['3.flac', f(10, 4)], ['4.flac', f(5, 5)]])
+    assert.equal(landedCount(c, c, 0, 3), 3, 'never more than the album')
+  })
+
+  it('"N of N" never shows while the last song is still arriving', () => {
+    const f = (size: number, mtimeMs: number) => ({ size, mtimeMs })
+    // Two songs of two: the second has paused between writes (same size twice) but is the newest file.
+    const look = new Map([['1.flac', f(100, 1)], ['2.flac', f(40, 9)]])
+    assert.equal(landedCount(look, look, 0, 2), 1, 'the newest file is still arriving: 1 of 2, not 2 of 2')
+    assert.equal(landedCount(look, look, 0, 2, true), 2, 'the rip ended cleanly: now it is 2 of 2')
+    const one = new Map([['1.flac', f(100, 1)]])
+    assert.equal(landedCount(one, one, 0, 12), 0, 'a lone file counts when the next starts')
+    const next = new Map([['1.flac', f(100, 1)], ['2.flac', f(3, 2)]])
+    assert.equal(landedCount(one, next, 0, 12), 1)
+  })
+
+  it('the count on screen never goes back; a move to Bandcamp clears the Qobuz count', () => {
+    assert.deepEqual(nextProgress({ have: 7, of: 12 }, { have: 3, of: 12 }), { have: 7, of: 12 })
+    assert.deepEqual(nextProgress({ have: 7, of: 12 }, { have: 9, of: 12 }), { have: 9, of: 12 })
+    assert.deepEqual(nextProgress({ have: 7, of: 12 }, { have: 0, of: 12, reset: true }), { have: 0, of: 12 })
+    assert.deepEqual(nextProgress(undefined, { have: 2, of: 12 }), { have: 2, of: 12 })
   })
 })
 
@@ -344,10 +441,13 @@ describe('main: each job is its own', () => {
       const stop = watchLanding(join(dir, 'stage'), 15)
       await writeFile(join(stage, '01.flac'), 'x'.repeat(100))
       await writeFile(join(stage, 'cover.jpg'), 'x')
-      await waitFor(() => seen.some(([h]) => h === 1), 'one song landed')
+      await sleep(60)
+      assert.ok(!seen.some(([h]) => h === 1), 'the newest file may still be arriving: not counted yet')
+      await sleep(5)
       await writeFile(join(stage, '02.flac'), 'x'.repeat(100))
-      await waitFor(() => seen.some(([h]) => h === 2), 'two songs landed')
-      stop()
+      await waitFor(() => seen.some(([h]) => h === 1), 'one song landed once the next started')
+      stop(true)
+      await waitFor(() => seen.some(([h]) => h === 2), 'the rip ended: two songs landed')
     })
     assert.deepEqual(seen[0], [0, 3])
     assert.ok(seen.every(([h, o]) => o === 3 && h <= 2))
@@ -356,5 +456,117 @@ describe('main: each job is its own', () => {
     await runInJob('job-d', null, (h) => { none.push(h) }, async () => { watchLanding(dir, 15)(); })
     assert.deepEqual(none, [])
     await rm(join(dir, 'stage'), { recursive: true, force: true })
+  })
+})
+
+describe('a window reload while main keeps a job going', () => {
+  const albumJob = (name: string, armId: string, status: SavedJob['status']): SavedJob => ({ key: `qobuz|album|${albumQueryId('Band', name)}`, status, armId, result: { ...album(name) } })
+
+  it('a job main is still importing is followed, never downloaded again', async () => {
+    resetQueueForTests({ restored: false })
+    main.answers.set('Next Album', hang)
+    await restoreSavedQueue({ ...emptyQueueDoc(), jobs: [albumJob('Importing', 'arm-imp', 'downloading'), albumJob('Next Album', 'arm-next', 'queued')], live: ['arm-imp'] })
+    const it = job('Importing')!
+    assert.equal(it.status, 'downloading')
+    assert.equal(it.armId, 'arm-imp', 'the same arm: main’s job')
+    await sleep(10)
+    assert.equal(main.calls.length, 0, 'not started again, and the album lane waits for it')
+    assert.deepEqual(main.canceled, [], 'and not stopped')
+    main.ended!({ jobId: 'arm-imp', result: { ok: true, imported: 12, dupes: 0 } })
+    assert.equal(job('Importing')!.status, 'done')
+    assert.equal(job('Importing')!.imported, 12)
+    await waitFor(() => main.calls.length === 1, 'the next album, once the lane is free')
+    assert.equal(main.calls[0].what, 'Next Album')
+  })
+
+  it('a job the saved list still called queued, already started by main, is followed too', async () => {
+    resetQueueForTests({ restored: false })
+    await restoreSavedQueue({ ...emptyQueueDoc(), jobs: [albumJob('Just Sent', 'arm-sent', 'queued')], live: ['arm-sent'] })
+    assert.equal(job('Just Sent')!.status, 'downloading')
+    await sleep(10)
+    assert.equal(main.calls.length, 0)
+    main.ended!({ jobId: 'arm-sent', result: { ok: false, error: 'nope', primary: 'Not on Qobuz' } })
+    assert.equal(job('Just Sent')!.status, 'failed')
+    assert.equal(job('Just Sent')!.primary, 'Not on Qobuz')
+  })
+
+  it('an end heard before the list came back is used, not a second download', async () => {
+    resetQueueForTests({ restored: false })
+    main.ended!({ jobId: 'arm-gap', result: { ok: true, imported: 9 } })
+    await restoreSavedQueue({ ...emptyQueueDoc(), jobs: [albumJob('Gap', 'arm-gap', 'downloading')], live: [] })
+    assert.equal(job('Gap')!.status, 'done')
+    assert.equal(job('Gap')!.imported, 9)
+    await sleep(10)
+    assert.equal(main.calls.length, 0)
+  })
+
+  it('a followed job whose end was lost: main’s ledger says done, or it starts again', async () => {
+    resetQueueForTests({ restored: false, followMs: 10 })
+    main.answers.set('Lost B', hang)
+    await restoreSavedQueue({ ...emptyQueueDoc(), jobs: [albumJob('Lost A', 'arm-la', 'downloading'), { key: 'song-lost-b', status: 'downloading', armId: 'arm-lb', result: { ...song('Lost B') } }], live: ['arm-la', 'arm-lb'] })
+    assert.equal(job('Lost A')!.status, 'downloading')
+    main.load = async () => ({ ...emptyQueueDoc(), finished: { 'arm-la': { at: Date.now(), imported: 4 } }, live: [] })
+    await waitFor(() => job('Lost A')!.status === 'done', 'the ledger to answer')
+    assert.equal(job('Lost A')!.imported, 4)
+    await waitFor(() => main.calls.some((c) => c.what === 'Lost B'), 'the unfinished one to start again')
+    assert.notEqual(job('Lost B')!.armId, 'arm-lb', 'with a fresh arm')
+  })
+
+  it('a job main runs that the list no longer names is stopped; one not running starts again', async () => {
+    resetQueueForTests({ restored: false })
+    main.answers.set('Restart Me', hang)
+    await restoreSavedQueue({ ...emptyQueueDoc(), jobs: [albumJob('Restart Me', 'arm-old', 'downloading')], live: ['arm-stray'] })
+    assert.deepEqual(main.canceled, ['arm-stray'])
+    await waitFor(() => main.calls.length === 1, 'the restart')
+    assert.notEqual(job('Restart Me')!.armId, 'arm-old')
+  })
+})
+
+describe('main: the count and the boot sweep', () => {
+  it('two rips of one job: the count never goes back; Bandcamp clears it', async () => {
+    const seen: Array<[number, number, boolean]> = []
+    const s1 = join(dir, 'r1'), s2 = join(dir, 'r2')
+    await mkdir(s1); await mkdir(s2)
+    await runInJob('job-max', 4, (h, o, reset) => { seen.push([h, o, Boolean(reset)]) }, async () => {
+      assert.ok(liveJobIds().includes('job-max'))
+      let stop = watchLanding(s1, 10)
+      await writeFile(join(s1, '01.flac'), 'x'.repeat(10))
+      await sleep(5)
+      await writeFile(join(s1, '02.flac'), 'x'.repeat(10))
+      await waitFor(() => seen.some(([h]) => h === 1), 'one landed')
+      stop(true)
+      await waitFor(() => seen.some(([h]) => h === 2), 'the clean end counts the last file')
+      // The retry: a fresh folder from nothing.
+      stop = watchLanding(s2, 10)
+      await writeFile(join(s2, '01.flac'), 'x'.repeat(10))
+      await writeFile(join(s2, '02.flac'), 'y'.repeat(10))
+      await sleep(40)
+      stop()
+      clearLanding()
+    })
+    const counts = seen.filter(([, , r]) => !r).map(([h]) => h)
+    assert.deepEqual(counts, [...counts].sort((x, y) => x - y), 'never backwards')
+    assert.deepEqual(seen[0], [0, 4, false], 'one 0 at the start, not one per rip')
+    assert.equal(seen.filter(([h, , r]) => h === 0 && !r).length, 1)
+    assert.deepEqual(seen[seen.length - 1], [0, 4, true], 'Bandcamp clears the count')
+    assert.ok(!liveJobIds().includes('job-max'))
+  })
+
+  it('at boot every download folder goes, whatever its age; other temps keep the hour', async () => {
+    const t = join(dir, 'tmp')
+    await mkdir(t)
+    for (const n of ['jaketunes-rip-fresh', 'jaketunes-bc-fresh', 'jaketunes-ripsearch-fresh', 'jaketunes-itunesdb-fresh', 'someone-else', 'jaketunes-rip-owned']) await mkdir(join(t, n))
+    await mkdir(join(t, 'jaketunes-ripsearch-old'))
+    const old = (Date.now() - 2 * 3600_000) / 1000
+    await utimes(join(t, 'jaketunes-ripsearch-old'), old, old)
+    await runInJob('job-owner', null, undefined, async () => {
+      currentJob().stagingDirs.add(join(t, 'jaketunes-rip-owned'))
+      assert.equal(await sweepOrphanedStaging({ atBoot: true, dir: t }), 3)
+    })
+    assert.deepEqual((await readdir(t)).sort(), ['jaketunes-itunesdb-fresh', 'jaketunes-rip-owned', 'jaketunes-ripsearch-fresh', 'someone-else'])
+    // Later (not at boot): a fresh download folder may be live, and stays.
+    await mkdir(join(t, 'jaketunes-rip-later'))
+    assert.equal(await sweepOrphanedStaging({ atBoot: false, dir: t }), 0)
+    assert.ok((await stat(join(t, 'jaketunes-rip-later'))).isDirectory())
   })
 })

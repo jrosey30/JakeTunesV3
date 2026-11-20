@@ -54,11 +54,30 @@ export interface FinishedJob {
   completion?: string
 }
 
+/** How a job ended, as main tells a window that re-attached to it after a reload. */
+export interface JobEndResult {
+  ok: boolean
+  imported?: number
+  dupes?: number
+  error?: string
+  outcome?: string
+  alternatives?: Array<{ provider: string; desc: string; reason: string; tracks?: Array<{ title: string; trackNumber?: number; discNumber?: number; durationSec?: number | null }>; trackCount?: number; url?: string }>
+  primary?: string
+  detail?: string
+  matchDesc?: string
+  completion?: string
+}
+
 export interface SavedQueueDoc {
   version: number
   savedAt: number
   jobs: SavedJob[]
   finished: Record<string, FinishedJob>
+  /** Sent with a load, never written: the arm ids main is running right now
+   *  (read before the list, so a job not in it had already written its
+   *  ledger line). A window reload re-attaches to these instead of starting
+   *  them again. */
+  live?: string[]
 }
 
 export function emptyQueueDoc(now = 0): SavedQueueDoc {
@@ -164,17 +183,41 @@ export function songProgressLine(p: { have: number; of: number } | null | undefi
   return `${Math.max(0, Math.min(p.have, p.of))} of ${p.of}`
 }
 
+/** One audio file in a staging folder, as seen by one look. */
+export interface LandingFile { size: number; mtimeMs: number }
+
 /**
- * Songs that have landed in a staging folder: files whose size held still
- * between two looks (streamrip writes each song under its final name, so a
- * growing file is still arriving). Never more than `of`, never fewer than
- * last time.
+ * Songs that have landed in a staging folder. A file counts once its size
+ * held still between two looks AND it is not the newest file (the newest may
+ * only be paused between two writes; it counts when the next song starts).
+ * `final` (the rip has ended cleanly) counts every file with bytes. Never
+ * more than `of`, never fewer than last time, so "12 of 12" is never shown
+ * while the last song is still arriving.
  */
-export function landedCount(prev: ReadonlyMap<string, number>, now: ReadonlyMap<string, number>, last: number, of: number): number {
+export function landedCount(prev: ReadonlyMap<string, LandingFile>, now: ReadonlyMap<string, LandingFile>, last: number, of: number, final = false): number {
+  let newest: string | null = null
+  let newestAt = -Infinity
+  for (const [f, x] of now) if (x.mtimeMs > newestAt) { newestAt = x.mtimeMs; newest = f }
   let n = 0
-  for (const [f, size] of now) if (size > 0 && prev.get(f) === size) n++
+  for (const [f, x] of now) {
+    if (!(x.size > 0)) continue
+    if (final) { n++; continue }
+    if (f !== newest && prev.get(f)?.size === x.size) n++
+  }
   const cap = of > 0 ? of : n
   return Math.min(cap, Math.max(last, n))
+}
+
+/** The renderer's count for a job: never backwards, except when main says the walk started over somewhere else (Bandcamp). */
+export function nextProgress(prev: { have: number; of: number } | undefined, p: { have: number; of: number; reset?: boolean }): { have: number; of: number } {
+  if (p.reset || !prev || prev.of !== p.of) return { have: Math.max(0, p.have), of: p.of }
+  return { have: Math.max(prev.have, p.have), of: p.of }
+}
+
+/** A saved file written by a newer app: never read as a list, and never written over. */
+export function isNewerQueueFile(raw: unknown): boolean {
+  const v = raw && typeof raw === 'object' ? (raw as { version?: unknown }).version : undefined
+  return typeof v === 'number' && v > SAVED_QUEUE_VERSION
 }
 
 // ── The Downloads list ─────────────────────────────────────────────────

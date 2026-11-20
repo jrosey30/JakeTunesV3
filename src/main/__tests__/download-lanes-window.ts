@@ -14,7 +14,9 @@ export const main = {
   answers: new Map<string, () => Promise<Answer>>(),
   inFlight: new Map<string, (a: Answer) => void>(),
   canceled: [] as Array<string | undefined>,
-  progress: null as null | ((p: { jobId: string; have: number; of: number }) => void),
+  progress: null as null | ((p: { jobId: string; have: number; of: number; reset?: boolean }) => void),
+  /** main's end event for a job (a window that reloaded mid-job follows it). */
+  ended: null as null | ((p: { jobId: string; result: Answer }) => void),
   saved: [] as SavedJob[][],
   load: async (): Promise<SavedQueueDoc | null> => null,
   save: async (jobs: SavedJob[]): Promise<void> => { main.saved.push(jobs) },
@@ -49,7 +51,8 @@ function walk(name: string, kind: 'album' | 'song', jobId: string | undefined, o
       for (const [id, res] of main.inFlight) if (!jobId || id === jobId) res({ ok: false, error: 'canceled', outcome: 'canceled' })
       return { ok: true, killed: 1 }
     },
-    onStreamripJobProgress: (cb: (p: { jobId: string; have: number; of: number }) => void) => { main.progress = cb; return () => {} },
+    onStreamripJobProgress: (cb: (p: { jobId: string; have: number; of: number; reset?: boolean }) => void) => { main.progress = cb; return () => {} },
+    onStreamripJobEnded: (cb: (p: { jobId: string; result: Answer }) => void) => { main.ended = cb; return () => {} },
     downloadQueueLoad: () => main.load(),
     downloadQueueSave: (jobs: SavedJob[]) => main.save(jobs).then(() => ({ ok: true })),
     usageLog: () => {},
