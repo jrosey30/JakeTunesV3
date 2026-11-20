@@ -14,7 +14,8 @@ import { baseAlbumTitle, displayAlbumTitle, listedAlbum, listedSong, markLine, o
 import { losslessOf, losslessTitle } from '../../../common/shop-lossless'
 import { albumJobFor, editionsState, editionsWithCard, loadEditions, saveSongsLabel, songJobsFor, subscribeEditions, type EditionTrack } from './albumEditions'
 import { getQueue, itemFor, subscribeQueue, type QItem, type QResult } from './downloadQueue'
-import { askLossless, losslessFor, losslessVersion, subscribeLossless } from './shopLossless'
+import { askLossless, losslessFor, losslessVersion, notePlanRow, subscribeLossless } from './shopLossless'
+import { planIsSure, planRowOfJob, planTitle } from '../../../common/shop-qobuz-id'
 import OfferButtons from './OfferButtons'
 
 const mmss = (secs: number): string => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
@@ -110,6 +111,8 @@ export default function ShopAlbumPage({ album, marks, onSave, renderAction, onBa
   })
   const albumItem = itemFor(albumJob())
   const songJob = (i: number): QResult | undefined => songJobsFor({ tracks: list, ticked: [i], owned: new Set(), albumName: tracks.albumName ?? shownName })[0]
+  // Brief 261: this album and its songs resolved to their Qobuz ids, in the background (Save then goes by id).
+  const albumPlan = notePlanRow(planRowOfJob(albumJob()), words)
   // songJobsFor reads `owned` as title|artist name keys, the library marks' own keys.
   const tickedJobs = songJobsFor({ tracks: list, ticked, owned: marks.lib.songs, albumName: tracks.albumName ?? shownName })
   const toggle = (i: number) => setTicked((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n })
@@ -130,6 +133,7 @@ export default function ShopAlbumPage({ album, marks, onSave, renderAction, onBa
             {count ? <span>{count} song{count === 1 ? '' : 's'}</span> : null}
             {tracks.genre ?? album.genre ? <span>{tracks.genre ?? album.genre}</span> : null}
             {albumDot ? <span className="shop-dot-label"><span className={`shop-dot shop-dot--${albumDot}`} aria-hidden="true" />{albumDot === 'hires' ? 'Hi-res' : 'Lossless'}</span> : null}
+            {!albumDot && planIsSure(albumPlan) ? <span className="shop-dot-label" title={planTitle(albumPlan)}><span className={`shop-dot shop-dot--${albumPlan.hires ? 'hires' : 'lossless'}`} aria-hidden="true" />On Qobuz</span> : null}
             {mark ? <span className={`shop-mark${mark === 'On your list' ? ' shop-mark--list' : ''}`}>{mark}</span> : null}
           </span>
           <span className="shop-page-actions">
@@ -165,13 +169,14 @@ export default function ShopAlbumPage({ album, marks, onSave, renderAction, onBa
             const have = ownsSong(marks.lib, t.artist, t.song)
             const tickable = !have && (!item || item.status === 'failed' || item.status === 'canceled')
             const dot = losslessOf(idx, 'song', t.artist, t.song)
+            const songPlan = job ? notePlanRow(planRowOfJob(job), words) : null
             const songMark = have ? null : listedSong(marks.list, t.artist, t.song) ? 'On your list' : null
             return (
               <li key={`${i}-${t.song}`} className={`shop-track${have ? ' is-owned' : ''}${item ? ` is-${item.status}` : ''}`}>
                 <input type="checkbox" className="dl-track-tick" aria-label={`Pick ${t.song}`} disabled={!tickable} checked={tickable && ticked.has(i)} onChange={() => toggle(i)} />
                 <span className="shop-track-num">{t.trackNumber ?? i + 1}</span>
                 <span className="shop-track-title" title={t.song}>{t.song}{t.artist !== album.artist ? <span className="shop-track-feat"> · {t.artist}</span> : null}</span>
-                <span className="shop-track-dot">{dot ? <span className={`shop-dot shop-dot--${dot}`} title={losslessTitle(dot)} /> : null}</span>
+                <span className="shop-track-dot">{dot ? <span className={`shop-dot shop-dot--${dot}`} title={losslessTitle(dot)} /> : planIsSure(songPlan) ? <span className={`shop-dot shop-dot--${songPlan.hires ? 'hires' : 'lossless'}`} title={planTitle(songPlan)} /> : null}</span>
                 <span className="shop-track-dur">{t.durationSecs ? mmss(t.durationSecs) : ''}</span>
                 <span className="shop-track-act">
                   {have && !item ? <span className="dl-inlib">In library</span> : job ? <>{songMark && !item ? <span className="shop-mark shop-mark--list">{songMark}</span> : null}{renderAction(job, item)}</> : null}

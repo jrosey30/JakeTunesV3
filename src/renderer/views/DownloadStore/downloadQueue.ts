@@ -19,6 +19,8 @@ import { laneOf, nextInLane, nextProgress, restoreJobs, toSavedJobs, type JobEnd
 import { PREFLIGHT_BUDGET_MS, albumSaveEvent, preflightVerdict, type AlbumPreflight, type AlbumSaveEdition, type AlbumSaveSurface } from '../../../common/album-preflight.ts'
 import { notFoundKey, rememberable, rememberedVerdict } from '../../../common/not-found-memory.ts'
 import type { ShopOfferKind } from '../../../common/closest-edition.ts'
+import { downloadPathEvent, isQobuzId, type ByIdFallback, type PlanHow } from '../../../common/shop-qobuz-id.ts'
+import { planForJob } from './shopLossless.ts'
 
 /** Where a job came from (the Record Shop's saved list, a feed shelf…) —
  *  carried on the job so every presentation can find it by recommendation
@@ -604,6 +606,23 @@ export function clearFinished(): void {
   emit()
 }
 
+// ── By id (Brief 261) ───────────────────────────────────────────────────
+/** The Qobuz id a job may download by: an album's preflight found its listing; otherwise the plan the shop resolved for the row. */
+export function qobuzPlanOf(it: QItem): { id: string; how: PlanHow } | null {
+  const r = it.result
+  if (r.kind !== 'query' || r.sourceEdition || r.lossyOk) return null
+  const p = it.preflightAnswer
+  if (r.mediaType === 'album' && p?.answer === 'found' && isQobuzId(p.id)) return { id: p.id, how: 'preflight' }
+  const plan = planForJob(r)
+  return plan ? { id: plan.id, how: plan.how } : null
+}
+
+/** One `shop.download-path` line per job: by id or the walk (and why it walked), never a word of the request. */
+function logDownloadPath(it: QItem, path: { via: 'id' | 'walk'; how?: PlanHow; fellBack?: ByIdFallback }, ok: boolean): void {
+  const ev = downloadPathEvent({ lane: laneOf(it.result), via: path.via, how: path.how, fellBack: path.fellBack, ok, ms: (it.endedAt ?? Date.now()) - (it.startedAt ?? Date.now()) })
+  try { window.electronAPI.usageLog?.([{ t: new Date().toISOString(), ...ev }]) } catch { /* observation only */ }
+}
+
 /** Start whatever each lane can start: one album and one song at a time, side by side. */
 function pump(): Promise<void> {
   return Promise.all([pumpLane('album'), pumpLane('song')]).then(() => undefined)
@@ -636,10 +655,14 @@ async function pumpLane(lane: Lane): Promise<void> {
       it.progress = laneOf(it.result) === 'album' && (it.result.trackCount ?? 0) > 1 ? { have: 0, of: it.result.trackCount! } : undefined
       if (!it.armId) it.armId = newArmId()
       emit()
+      let path: { via: 'id' | 'walk'; how?: PlanHow; fellBack?: ByIdFallback } | null = null
       try {
-        const r: { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string; tracks?: Array<{ title: string; trackNumber?: number; discNumber?: number; durationSec?: number | null }>; trackCount?: number; url?: string }>; primary?: string; detail?: string; matchDesc?: string; completion?: string } | undefined = it.result.kind === 'query'
-          ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, askedArtist: it.result.askedArtist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs, cleanedSource: it.result.cleanedSource, explicitSource: it.result.explicitSource, releaseYear: it.result.releaseYear, collectionId: it.result.collectionId, trackCount: it.result.trackCount, sourceEdition: it.result.sourceEdition, addedVia: it.result.origin?.addedVia, forIpodList: it.result.origin?.forIpodList, jobId: it.armId })
+        // Brief 261: the Qobuz id the shop resolved, if any: main downloads by it and walks on any doubt.
+        const plan = it.result.kind === 'query' ? qobuzPlanOf(it) : null
+        const r: { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string; tracks?: Array<{ title: string; trackNumber?: number; discNumber?: number; durationSec?: number | null }>; trackCount?: number; url?: string }>; primary?: string; detail?: string; matchDesc?: string; completion?: string; via?: 'id' | 'walk'; how?: PlanHow; fellBack?: ByIdFallback } | undefined = it.result.kind === 'query'
+          ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, askedArtist: it.result.askedArtist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs, cleanedSource: it.result.cleanedSource, explicitSource: it.result.explicitSource, releaseYear: it.result.releaseYear, collectionId: it.result.collectionId, trackCount: it.result.trackCount, sourceEdition: it.result.sourceEdition, addedVia: it.result.origin?.addedVia, forIpodList: it.result.origin?.forIpodList, jobId: it.armId, ...(plan ? { qobuz: { id: plan.id, how: plan.how } } : {}) })
           : await window.electronAPI.streamripDownloadId?.(it.result.source, it.result.mediaType, it.result.id, it.result.origin?.addedVia, it.armId)
+        path = it.result.kind === 'query' ? { via: r?.via ?? 'walk', how: r?.how ?? plan?.how, fellBack: r?.fellBack } : null
         // Read through a widened alias. TypeScript narrows it.status to
         // 'downloading' before the await and cannot see that cancel() mutates
         // it DURING the await, so it calls this comparison unreachable. The
@@ -664,6 +687,7 @@ async function pumpLane(lane: Lane): Promise<void> {
       // The preflight couldn't tell: the walk's own end is the first answer.
       const ended = it.status as QStatus   // applyEnd set it; TypeScript still sees 'downloading'
       if (it.preflight === 'unknown' && (ended === 'done' || ended === 'failed')) logAlbumSave(it, ended, it.preflightAnswer)
+      if (path && (ended === 'done' || ended === 'failed')) logDownloadPath(it, path, ended === 'done')
       emit()
     }
   } finally {

@@ -86,7 +86,7 @@ const listing = (id: string, title: string, tracks: string[], o: { streamable?: 
 
 describe('does Qobuz have this edition?', () => {
   it('found: the edition, every song streamable', () => {
-    assert.deepEqual(judgeQobuzAlbum(reqOf(), { listings: [listing('a', 'Manning Fireworks', nine)] }), { answer: 'found' })
+    assert.deepEqual(judgeQobuzAlbum(reqOf(), { listings: [listing('a', 'Manning Fireworks', nine)] }), { answer: 'found', id: 'a' }, 'Brief 261: the listing that passed, by id')
   })
 
   it('not on Qobuz: nothing ranked, or only other artists and titles', () => {
@@ -142,7 +142,7 @@ describe('does Qobuz have this edition?', () => {
 
   it('explicit-first, as the walk: a clean copy is set aside when the explicit one is this edition', () => {
     const v = judgeQobuzAlbum(reqOf(), { listings: [listing('clean', 'Manning Fireworks', nine.slice(0, 5), { parental: false }), listing('exp', 'Manning Fireworks', nine, { parental: true })] })
-    assert.deepEqual(v, { answer: 'found' })
+    assert.deepEqual(v, { answer: 'found', id: 'exp' }, 'the explicit edition is the one Save downloads')
   })
 
   it('only the first three candidates count, as the walk stages at most three', () => {
@@ -172,7 +172,7 @@ describe('does Qobuz have this edition?', () => {
     const v = judgeHeardListings(req, [...top3Clean, heard('4', 'Manning Fireworks', nine, { parental: true, answered: false })], { explicitSource: true })
     assert.deepEqual(v, { answer: 'unknown', why: 'no-answer' })
     // the same six with #4 listed fine: the walk would take it
-    assert.deepEqual(judgeHeardListings(req, [...top3Clean, heard('4', 'Manning Fireworks', nine, { parental: true })], { explicitSource: true }), { answer: 'found' })
+    assert.deepEqual(judgeHeardListings(req, [...top3Clean, heard('4', 'Manning Fireworks', nine, { parental: true })], { explicitSource: true }), { answer: 'found', id: '4' })
     // answered, but listed no songs: the same "can't tell"
     assert.deepEqual(judgeHeardListings(req, [...top3Clean, { ...heard('4', 'Manning Fireworks', [], { parental: true }) }], { explicitSource: true }), { answer: 'unknown', why: 'no-answer' })
     // a 404 is left out, as the walk leaves it out: only clean copies remain
@@ -181,7 +181,7 @@ describe('does Qobuz have this edition?', () => {
 
   it('a request with no tracklist can’t be refused on one: the walk decides, as before', () => {
     const bare = buildRequestedAlbum({ artist: 'MJ Lenderman', title: 'Manning Fireworks' })
-    assert.deepEqual(judgeQobuzAlbum(bare, { listings: [listing('a', 'Manning Fireworks', nine)] }), { answer: 'found' })
+    assert.deepEqual(judgeQobuzAlbum(bare, { listings: [listing('a', 'Manning Fireworks', nine)] }), { answer: 'found', id: 'a' })
   })
 })
 

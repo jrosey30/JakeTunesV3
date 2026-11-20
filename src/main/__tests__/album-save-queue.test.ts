@@ -18,6 +18,7 @@ import { albumJobFor, resetEditionsForTests, songJobsFor, saveSongsLabel, ownedK
 import { saveRecoAlbum, getLtlDownloadStatus } from '../../renderer/listen-to-the-list/ltlDownload.ts'
 import type { AlbumPreflight, AlbumEditions } from '../../common/album-preflight.ts'
 import type { Recommendation } from '../../renderer/types.ts'
+import { putPlanForTests } from '../../renderer/views/DownloadStore/shopLossless.ts'
 
 type Answer = { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: string }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -222,5 +223,44 @@ describe('a few songs from the album', () => {
     await settle()
     assert.equal(preflightCalls.length, 0)
     assert.deepEqual(walkCalls.map((c) => c.title), ['Zoom 97', '99 BPM'])
+  })
+})
+
+describe('by id (Brief 261)', () => {
+  it('an album the preflight found goes by that listing’s id', async () => {
+    preflight.set('By Id', { answer: 'found', id: 'alb1' })
+    enqueue(album('By Id'))
+    await settle()
+    assert.deepEqual(walkCalls[0].qobuz, { id: 'alb1', how: 'preflight' })
+  })
+
+  it('a song the shop resolved goes by its plan; one it didn’t walks, as before', async () => {
+    putPlanForTests({ kind: 'song', artist: 'A', title: 'Planned' }, { id: '777', kind: 'track', how: 'isrc' })
+    enqueue(song('Planned'))
+    enqueue(song('Unplanned'))
+    await settle()
+    assert.deepEqual(walkCalls.find((c) => c.title === 'Planned')?.qobuz, { id: '777', how: 'isrc' })
+    assert.equal(walkCalls.find((c) => c.title === 'Unplanned')?.qobuz, undefined)
+  })
+
+  it('a lossy pick never goes by id', async () => {
+    preflight.set('Lossy', { answer: 'found', id: 'alb2' })
+    enqueue(album('Lossy', { lossyOk: true }))
+    await settle()
+    assert.equal(walkCalls[0].qobuz, undefined)
+  })
+
+  it('one `shop.download-path` line per job: by id or the walk, and why it walked, never a word of it', async () => {
+    walk.set('Fell Back', async () => ({ ok: true, imported: 1, via: 'walk', how: 'catalog', fellBack: 'judge' } as Answer))
+    walk.set('Went By Id', async () => ({ ok: true, imported: 1, via: 'id', how: 'isrc' } as Answer))
+    enqueue(song('Fell Back'))
+    enqueue(song('Went By Id'))
+    await settle()
+    const lines = usage.filter((u) => u.name === 'shop.download-path')
+    assert.deepEqual(lines.map((l) => l.detail), [
+      { lane: 'song', via: 'walk', how: 'catalog', fell: 'judge' },
+      { lane: 'song', via: 'id', how: 'isrc' },
+    ])
+    assert.ok(!JSON.stringify(lines).includes('Fell Back'))
   })
 })

@@ -913,11 +913,16 @@ export interface QobuzTrackMeta {
   /** Who the album is by: "Various Artists" on a compilation (isCompilationCopy). */
   albumArtist?: string
   version?: string | null
+  /** Who performs the track (track/get's `performer.name`): the item's own artist, where the
+   *  search summary's "by …" is the row's words. */
+  performer?: string
 }
 
 /** A track/get answer, field by field: what is absent or the wrong type stays unknown. */
-export function qobuzTrackMetaOf(d: { title?: unknown; parental_warning?: unknown; duration?: unknown; version?: unknown; album?: { title?: unknown; parental_warning?: unknown; artist?: { name?: unknown } } }): QobuzTrackMeta {
+export function qobuzTrackMetaOf(d: { title?: unknown; parental_warning?: unknown; duration?: unknown; version?: unknown; performer?: { name?: unknown }; album?: { title?: unknown; parental_warning?: unknown; artist?: { name?: unknown } } }): QobuzTrackMeta {
+  const performer = typeof d.performer?.name === 'string' && d.performer.name.trim() ? d.performer.name.trim() : undefined
   return {
+    ...(performer ? { performer } : {}),
     title: typeof d.title === 'string' ? d.title.trim() : undefined,
     parentalWarning: typeof d.parental_warning === 'boolean' ? d.parental_warning : undefined,
     albumParentalWarning: typeof d.album?.parental_warning === 'boolean' ? d.album.parental_warning : undefined,

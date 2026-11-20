@@ -7,6 +7,7 @@ import type { AskResult, AskSubject } from '../common/music-man-packet'
 import type { AlbumEditions, AlbumPreflight, AlbumPreflightRequest } from '../common/album-preflight'
 import type { ShopSearchAnswer, ShopArtistAnswer } from '../common/shop-search'
 import type { QobuzHit } from '../common/shop-lossless'
+import type { PlanRow, QobuzPlan } from '../common/shop-qobuz-id'
 
 const electronAPI = {
   loadTracks: (): Promise<{ tracks: unknown[]; playlists: { name: string; trackIds: number[] }[] }> => ipcRenderer.invoke('load-tracks'),
@@ -279,6 +280,8 @@ const electronAPI = {
   shopSearch: (query: string): Promise<ShopSearchAnswer<Record<string, unknown>>> => ipcRenderer.invoke('shop-search', query),
   shopArtistReleases: (artistId: number, name: string): Promise<ShopArtistAnswer> => ipcRenderer.invoke('shop-artist-releases', artistId, name),
   shopQobuzLossless: (words: string, limit?: number): Promise<{ ok: boolean; hits: QobuzHit[] }> => ipcRenderer.invoke('shop-qobuz-lossless', words, limit),
+  // Brief 261: rows on screen resolved to Qobuz ids, in the background.
+  shopQobuzResolve: (rows: PlanRow[]): Promise<{ ok: boolean; plans: Record<string, QobuzPlan | null> }> => ipcRenderer.invoke('shop-qobuz-resolve', rows),
   // Artist-verified cover art for radar/discovery cards (no wrong covers).
   lookupRecoArtwork: (input: { artist: string; title: string }) => ipcRenderer.invoke('lookup-reco-artwork', input),
   lookupAlbumPreview: (input: { artist: string; album: string }): Promise<{ previewUrl?: string; trackTitle?: string }> => ipcRenderer.invoke('lookup-album-preview', input),
@@ -1028,7 +1031,7 @@ const electronAPI = {
     ipcRenderer.invoke('streamrip:search', opts),
   streamripDownloadId: (source: string, mediaType: string, id: string, addedVia?: string, jobId?: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
     ipcRenderer.invoke('streamrip:download-id', source, mediaType, id, addedVia, jobId),
-  streamripDownloadByQuery: (opts: { artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; sourceEdition?: unknown; addedVia?: string; forIpodList?: string; jobId?: string }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }> =>
+  streamripDownloadByQuery: (opts: { artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; sourceEdition?: unknown; addedVia?: string; forIpodList?: string; jobId?: string; qobuz?: { id: string; how: string } }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }>; via?: 'id' | 'walk'; how?: string; fellBack?: string }> =>
     ipcRenderer.invoke('streamrip:download-by-query', opts),
   // Does Qobuz have this album edition? Asked before an album job downloads (Brief 255).
   checkQobuzAlbum: (opts: AlbumPreflightRequest): Promise<AlbumPreflight> =>

@@ -9,7 +9,8 @@ import { toggleDownloadsPanel, showDownload } from '../../components/DownloadsPa
 import { useLibrary } from '../../context/LibraryContext'
 import { scoreField, scoreResult, releaseKind, displayAlbumTitle, artistArtwork, isArtistQuery, ownedAlbum, ownsArtist, listedAlbum, listedArtist, listedSong, markLine, pickLibraryHits, type ShopAlbum, type ShopArtist } from '../../../common/shop-search'
 import { losslessOf, losslessTitle } from '../../../common/shop-lossless'
-import { askLossless, losslessFor, losslessVersion, subscribeLossless } from './shopLossless'
+import { askLossless, losslessFor, losslessVersion, notePlanRow, subscribeLossless } from './shopLossless'
+import { planIsSure, planRowOfJob, planTitle } from '../../../common/shop-qobuz-id'
 import { useShopMarks } from './useShopMarks'
 import ShopArtistPage from './ShopArtistPage'
 import ShopAlbumPage, { type ShopAlbumRef } from './ShopAlbumPage'
@@ -641,9 +642,13 @@ export default function DownloadView() {
   }
 
   /** The lossless dot for a row (Brief 256): shown only when the page's one Qobuz answer names it. */
-  const dotFor = (kind: 'album' | 'song', artist: string, title: string, scope: { words: string; limit: number }) => {
+  /** Brief 261: the row's job is also resolved to its Qobuz id (in the background), and a sure plan shows the dot where the page's answer didn't. */
+  const dotFor = (kind: 'album' | 'song', artist: string, title: string, scope: { words: string; limit: number }, job?: QResult) => {
     const v = losslessOf(losslessFor(scope.words, scope.limit), kind, artist, title)
-    return v ? <span className={`shop-dot shop-dot--${v}`} title={losslessTitle(v)} aria-label={losslessTitle(v)} /> : null
+    const plan = job ? notePlanRow(planRowOfJob(job), scope.words, scope.limit) : null
+    if (v) return <span className={`shop-dot shop-dot--${v}`} title={losslessTitle(v)} aria-label={losslessTitle(v)} />
+    if (planIsSure(plan)) return <span className={`shop-dot shop-dot--${plan.hires ? 'hires' : 'lossless'}`} title={planTitle(plan)} aria-label={planTitle(plan)} />
+    return null
   }
   const searchScope = { words: query.trim(), limit: 50 }
 
@@ -660,7 +665,7 @@ export default function DownloadView() {
           {s.previewUrl && previewBtn(pid, s.previewUrl, s.title, s.artist, 'dl-song-play')}
         </span>
         {artOr(s.artworkUrl, 'dl-song-art')}
-        <span className="dl-song-title" title={s.title}>{dotFor('song', s.artist, s.title, searchScope)}{s.title}{listed ? <span className="shop-mark shop-mark--list shop-mark--inline">On your list</span> : null}</span>
+        <span className="dl-song-title" title={s.title}>{dotFor('song', s.artist, s.title, searchScope, qres)}{s.title}{listed ? <span className="shop-mark shop-mark--list shop-mark--inline">On your list</span> : null}</span>
         <span className="dl-song-artist" title={s.artist}>{s.artist}</span>
         <span className="dl-song-album" title={s.album || ''}>{s.album ? displayAlbumTitle(s.album) : ''}</span>
         {/* Year on songs too: iTunes returns original, remaster, live and comp
@@ -734,7 +739,7 @@ export default function DownloadView() {
           {clean && <span className="dl-rel-clean" title="Censored edition — iTunes has no explicit version of this release">CLEAN</span>}
           {owned?.state === 'all' && <span className="dl-rel-owned" title="In your library">✓</span>}
         </span>
-        <span className="dl-rel-title" title={a.album}>{dotFor('album', a.artist, a.album, scope)}{displayAlbumTitle(a.album)}</span>
+        <span className="dl-rel-title" title={a.album}>{dotFor('album', a.artist, a.album, scope, qres)}{displayAlbumTitle(a.album)}</span>
         <span className="dl-rel-facts">
           <span className={`download-result-badge download-result-badge--${kind.toLowerCase()}`}>{kind}</span>
           {year ? <span className="download-result-year">{year}</span> : null}

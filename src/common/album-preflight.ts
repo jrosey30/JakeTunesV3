@@ -36,7 +36,8 @@ export type PreflightUnknown =
   | 'bandcamp'      // Qobuz said no, and today's walk would try a Bandcamp page
 
 export type AlbumPreflight =
-  | { answer: 'found' }
+  /** `id` (Brief 261): the Qobuz listing that passed, which the save then downloads by id. Absent when the library already has it. */
+  | { answer: 'found'; id?: string }
   | {
       answer: 'no'
       why: PreflightNo
