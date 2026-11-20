@@ -8,7 +8,7 @@
  * edition's own rows, so each song save pins the recording on this record
  * (albumEditions songJobsFor, the Search tab's song save).
  */
-import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { editionOptionLabel, type AlbumEdition } from '../../../common/album-preflight'
 import { baseAlbumTitle, displayAlbumTitle, listedAlbum, listedSong, markLine, ownedAlbum, ownsSong, releaseKind, type LibraryMarks, type ListMarks } from '../../../common/shop-search'
 import { losslessOf, losslessTitle } from '../../../common/shop-lossless'
@@ -64,7 +64,12 @@ export default function ShopAlbumPage({ album, marks, onSave, renderAction, onBa
 
   const [tracks, setTracks] = useState<{ loading: boolean; list?: EditionTrack[]; albumName?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; error?: string }>({ loading: true })
   const [ticked, setTicked] = useState<Set<number>>(() => new Set())
+  /** Which album and edition the songs on screen are: a by-name page learning its edition keeps its songs and ticks. */
+  const loadedRef = useRef<{ key: string; id: number } | null>(null)
   useEffect(() => {
+    const key = `${album.artist}\u0000${album.name}`
+    if (editionId != null && loadedRef.current?.key === key && loadedRef.current.id === editionId) return
+    loadedRef.current = null
     let live = true
     setTracks({ loading: true }); setTicked(new Set())
     const ref = editionId ?? { artist: album.artist, album: album.name }
@@ -73,7 +78,9 @@ export default function ShopAlbumPage({ album, marks, onSave, renderAction, onBa
         if (!live) return
         if (r?.ok && r.tracks?.length) {
           setTracks({ loading: false, list: r.tracks, albumName: r.album, artworkUrl: r.artworkUrl, releaseYear: r.releaseYear, trackCount: r.trackCount, genre: r.genre })
-          // A by-name page now knows its edition.
+          const id = editionId ?? r.collectionId
+          if (id != null) loadedRef.current = { key, id }
+          // A by-name page now knows its edition (the songs above are its songs: no second load).
           if (editionId == null && r.collectionId) setEditionId(r.collectionId)
         } else setTracks({ loading: false, error: editionId ? 'Couldn’t load the songs.' : 'Couldn’t find this edition. Search it by name to pick one.' })
       })

@@ -44,6 +44,8 @@ export interface ShopSearchAnswer<S> {
   songs: S[]
   artists: ShopArtist[]
   albums: ShopAlbum[]
+  /** The song search's own answer (Apple, or Deezer standing in). False: the screen falls back to Qobuz's song search. */
+  songsOk: boolean
   /** False when Apple's album search didn't answer: the screen then builds albums from the songs, as before. */
   albumsOk: boolean
 }
@@ -89,6 +91,31 @@ export function baseAlbumTitle(name: string): string {
 }
 
 const key = (s: string): string => nameKey(s, '')
+
+/**
+ * Words in a bracket or a trailing " - …" that make another record of the same
+ * title: "Tommy (Live)" is not "Tommy", "Bags (Remix)" is not "Bags". A
+ * remaster, a deluxe, a year or a dated remix ("2018 Remix") is the same record.
+ */
+const VARIANT_WORD = /\b(live|demos?|remix(?:es|ed)?|acoustic|instrumentals?|unplugged|karaoke|a ?cappella|acapella|rehearsals?|outtakes?|sessions?|in concert)\b/g
+
+/** The variant words a title carries in its brackets or trailing " - …", sorted ("" for none). */
+export function albumVariantTag(name: string): string {
+  const shown = displayAlbumTitle(name)
+  const parts = [...shown.matchAll(/[([{]([^()[\]{}]*)[)\]}]/g)].map((m) => m[1])
+  const dash = shown.match(/\s+[-–—]\s+([^-–—]+)$/)
+  if (dash) parts.push(dash[1])
+  const words = new Set<string>()
+  for (const p of parts) {
+    // "Animals (2018 Remix)" is the record mixed again, as a remaster is: a year beside "remix" is the same record.
+    const dated = /\b(19|20)\d\d\b/.test(p)
+    for (const m of nameKey(p).matchAll(VARIANT_WORD)) if (!(dated && m[1].startsWith('remix'))) words.add(m[1].replace(/\s+/g, ''))
+  }
+  return [...words].sort().join('+')
+}
+
+/** The plain-title key: the title without its brackets, plus its variant words, so "Tommy" never matches "Tommy (Live)". */
+const baseKey = (name: string): string => `~${key(baseAlbumTitle(name))}#${albumVariantTag(name)}`
 const spaced = (s: string): string => nameKey(s)
 const stripThe = (s: string): string => s.replace(/^the /, '')
 
@@ -302,10 +329,10 @@ export function libraryMarks(tracks: ReadonlyArray<{ title?: string; artist?: st
     if (t.title) songs.add(`${key(t.title)}|${a}`)
     if (t.album) {
       const full = `${key(t.album)}|${a}`
-      const base = `~${key(baseAlbumTitle(t.album))}|${a}`
+      const base = `${baseKey(t.album)}|${a}`
       bump(full)
       bump(base)
-      if (aa && aa !== a) { bump(`${key(t.album)}|${aa}`); bump(`~${key(baseAlbumTitle(t.album))}|${aa}`) }
+      if (aa && aa !== a) { bump(`${key(t.album)}|${aa}`); bump(`${baseKey(t.album)}|${aa}`) }
     }
   }
   return { songs, albums, artists }
@@ -321,7 +348,7 @@ export type OwnedAlbum = { state: 'all' | 'some'; have: number } | null
  */
 export function ownedAlbum(m: LibraryMarks, artist: string, name: string, trackCount?: number): OwnedAlbum {
   const a = key(artist)
-  const have = m.albums.get(`${key(displayAlbumTitle(name))}|${a}`) ?? m.albums.get(`${key(name)}|${a}`) ?? m.albums.get(`~${key(baseAlbumTitle(name))}|${a}`) ?? 0
+  const have = m.albums.get(`${key(displayAlbumTitle(name))}|${a}`) ?? m.albums.get(`${key(name)}|${a}`) ?? m.albums.get(`${baseKey(name)}|${a}`) ?? 0
   if (have <= 0) return null
   return { state: !trackCount || have >= trackCount ? 'all' : 'some', have }
 }
@@ -347,7 +374,7 @@ export function listMarks(recs: ReadonlyArray<{ kind?: string; song?: string; ar
     const album = (r.album || '').trim()
     if (r.kind === 'artist') { out.artists.add(a); continue }
     if (song && r.kind !== 'album') { out.songs.add(`${key(song)}|${a}`); continue }
-    if (album) { out.albums.add(`${key(album)}|${a}`); out.albums.add(`~${key(baseAlbumTitle(album))}|${a}`); continue }
+    if (album) { out.albums.add(`${key(album)}|${a}`); out.albums.add(`${baseKey(album)}|${a}`); continue }
     if (!song && !album) out.artists.add(a)
   }
   return out
@@ -356,7 +383,7 @@ export function listMarks(recs: ReadonlyArray<{ kind?: string; song?: string; ar
 export const listedSong = (m: ListMarks, artist: string, title: string): boolean => m.songs.has(`${key(title)}|${key(artist)}`)
 export const listedAlbum = (m: ListMarks, artist: string, name: string): boolean => {
   const a = key(artist)
-  return m.albums.has(`${key(displayAlbumTitle(name))}|${a}`) || m.albums.has(`~${key(baseAlbumTitle(name))}|${a}`)
+  return m.albums.has(`${key(displayAlbumTitle(name))}|${a}`) || m.albums.has(`${baseKey(name)}|${a}`)
 }
 export const listedArtist = (m: ListMarks, name: string): boolean => m.artists.has(key(name))
 

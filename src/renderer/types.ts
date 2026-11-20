@@ -798,7 +798,7 @@ declare global {
       /** A record's real editions and the one Save album takes (Brief 255). */
       listAlbumEditions?: (artist: string, album: string) => Promise<import('../common/album-preflight').AlbumEditions>
       /** The Record Shop's grouped search (Brief 256): artists, albums, songs. */
-      shopSearch?: (query: string) => Promise<{ ok: boolean; songs: ItunesSuggestion[]; artists: import('../common/shop-search').ShopArtist[]; albums: import('../common/shop-search').ShopAlbum[]; albumsOk: boolean }>
+      shopSearch?: (query: string) => Promise<{ ok: boolean; songs: ItunesSuggestion[]; artists: import('../common/shop-search').ShopArtist[]; albums: import('../common/shop-search').ShopAlbum[]; songsOk?: boolean; albumsOk: boolean }>
       shopArtistReleases?: (artistId: number, name: string) => Promise<{ ok: boolean; artist?: import('../common/shop-search').ShopArtist; releases: import('../common/shop-search').ArtistReleases }>
       /** One Qobuz catalogue search for a page's lossless dots; the token never leaves main. */
       shopQobuzLossless?: (words: string, limit?: number) => Promise<{ ok: boolean; hits: import('../common/shop-lossless').QobuzHit[] }>

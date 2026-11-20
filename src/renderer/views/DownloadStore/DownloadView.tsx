@@ -495,7 +495,9 @@ export default function DownloadView() {
       // Artists, albums and songs in one answer (Brief 256); the plain song
       // search stands in for an older main.
       const shop = window.electronAPI.shopSearch ? await window.electronAPI.shopSearch(q).catch(() => null) : null
-      const r = shop ? { ok: shop.ok, results: shop.songs } : await window.electronAPI.searchItunes?.(q)
+      // The songs' own answer decides the Qobuz fallback: albums and artists
+      // answering must not leave the song list empty when Apple and Deezer both failed.
+      const r = shop ? { ok: shop.songsOk ?? shop.ok, results: shop.songs } : await window.electronAPI.searchItunes?.(q)
       if (token !== searchTokenRef.current) return
       setGroups(shop ? { artists: shop.artists, albums: shop.albums, albumsOk: shop.albumsOk } : NO_GROUPS)
       let list = r?.ok ? r.results : []

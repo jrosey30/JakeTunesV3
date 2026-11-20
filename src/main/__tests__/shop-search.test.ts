@@ -15,7 +15,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   rankShop, artistReleases, collapseCleanTwins, libraryMarks, ownedAlbum, ownsSong, ownsArtist, listMarks, listedAlbum, listedSong, listedArtist,
-  markLine, pickLibraryHits, isArtistQuery, artistArtwork, releaseKind, displayAlbumTitle, baseAlbumTitle, appleAlbumRows, appleArtistRows,
+  markLine, pickLibraryHits, albumVariantTag, isArtistQuery, artistArtwork, releaseKind, displayAlbumTitle, baseAlbumTitle, appleAlbumRows, appleArtistRows,
   type ShopAlbum, type ShopArtist,
 } from '../../common/shop-search.ts'
 import { qobuzHitsOf, losslessIndex, losslessOf, losslessScope } from '../../common/shop-lossless.ts'
@@ -24,6 +24,7 @@ import { createShopFunnel } from '../../common/shop-funnel.ts'
 import { scrubEvent } from '../../common/usage-log.ts'
 import { editionsWithCard } from '../../renderer/views/DownloadStore/albumEditions.ts'
 import { searchShopCatalog, shopArtistReleases, resetShopSearchCachesForTests } from '../shop-search.ts'
+import { searchItunesSuggestions } from '../download-search.ts'
 
 const album = (o: Partial<ShopAlbum> & { name: string }): ShopAlbum => ({ collectionId: Math.floor(Math.random() * 1e9), artist: 'Pink Floyd', artistId: 1, ...o })
 const FLOYD: ShopArtist = { artistId: 1, name: 'Pink Floyd', genre: 'Rock' }
@@ -363,11 +364,12 @@ describe("main's grouped search", () => {
     const albumAsks = calls.filter((u) => u.includes('entity=album&limit=50')).length
     assert.equal(albumAsks, 2)   // one try and one retry
     throttleAlbums = false
-    // Asked again at once: the half answer was not kept (the songs are asked again)…
+    // Asked again at once: the half answer was not kept, but the questions that
+    // did answer are not asked twice (each Apple question is kept on its own)…
     const songAsks = calls.filter((u) => u.includes('entity=song&limit=60')).length
     const b = await searchShopCatalog('Pink Floyd')
-    assert.ok(calls.filter((u) => u.includes('entity=song&limit=60')).length > songAsks)
-    // …but the album search that just failed is left alone for a few seconds.
+    assert.equal(calls.filter((u) => u.includes('entity=song&limit=60')).length, songAsks)
+    // …and the album search that just failed is left alone for a few seconds.
     assert.equal(calls.filter((u) => u.includes('entity=album&limit=50')).length, albumAsks)
     assert.equal(b.albumsOk, false)
   })
@@ -380,5 +382,132 @@ describe("main's grouped search", () => {
     await shopArtistReleases(1, 'Pink Floyd')
     assert.equal(calls.length, n)
     assert.equal((await shopArtistReleases(0, '')).ok, false)
+  })
+})
+
+describe('a plain title never owns a live or remixed record', () => {
+  const lib = libraryMarks([
+    { title: 'Overture', artist: 'The Who', album: 'Tommy' },
+    { title: 'Pinball Wizard', artist: 'The Who', album: 'Tommy' },
+    { title: 'Young Man Blues', artist: 'The Who', album: 'Live at Leeds (Deluxe Edition)' },
+    { title: 'Shine On', artist: 'Pink Floyd', album: 'Wish You Were Here' },
+  ])
+  it('reads the variant words in brackets and after a dash', () => {
+    assert.equal(albumVariantTag('Tommy (Live)'), 'live')
+    assert.equal(albumVariantTag('Tommy - Live at the Royal Albert Hall'), 'live')
+    assert.equal(albumVariantTag('Bags [Remixes]'), 'remixes')
+    assert.equal(albumVariantTag('Wish You Were Here (2011 Remaster)'), '')
+    assert.equal(albumVariantTag('Live at Leeds'), '')   // the title itself, not a variant of it
+    assert.equal(albumVariantTag('Animals (2018 Remix)'), '')   // a dated remix is the record mixed again
+  })
+  it('"Tommy" does not mark "Tommy (Live)", a demo, a remix or an acoustic edition', () => {
+    for (const n of ['Tommy (Live)', 'Tommy [Demos]', 'Tommy (Remix)', 'Tommy (Acoustic Version)', 'Tommy (Instrumental)', 'Tommy - Live'])
+      assert.equal(ownedAlbum(lib, 'The Who', n), null, n)
+    assert.notEqual(ownedAlbum(lib, 'The Who', 'Tommy (Remastered 2013)'), null)
+    assert.notEqual(ownedAlbum(lib, 'Pink Floyd', 'Wish You Were Here (2011 Remaster)'), null)
+    assert.notEqual(ownedAlbum(lib, 'The Who', 'Live at Leeds'), null)
+  })
+  it('a live record in the library does not mark the studio one', () => {
+    const m = libraryMarks([{ title: 'Pinball Wizard', artist: 'The Who', album: 'Tommy (Live)' }])
+    assert.equal(ownedAlbum(m, 'The Who', 'Tommy'), null)
+    assert.notEqual(ownedAlbum(m, 'The Who', 'Tommy (Live) [Remastered]'), null)
+  })
+  it('the list follows the same rule', () => {
+    const l = listMarks([{ kind: 'album', artist: 'The Who', album: 'Tommy' }])
+    assert.equal(listedAlbum(l, 'The Who', 'Tommy (Live)'), false)
+    assert.equal(listedAlbum(l, 'The Who', 'Tommy (2013 Remaster)'), true)
+  })
+})
+
+describe('Apple requests per shop query', () => {
+  const realFetch = globalThis.fetch
+  let calls: string[] = []
+  let appleSongs: 'ok' | 'refuse' = 'ok'
+  let deezer: 'ok' | 'fail' = 'ok'
+  let explicitTrackCount: number | undefined = 25
+  const json = (o: unknown) => new Response(JSON.stringify(o), { status: 200 })
+  beforeEach(() => {
+    resetShopSearchCachesForTests()
+    calls = []
+    appleSongs = 'ok'
+    deezer = 'ok'
+    explicitTrackCount = 25
+    globalThis.fetch = (async (u: string | URL) => {
+      const url = String(u)
+      calls.push(url)
+      if (url.includes('api.deezer.com')) {
+        if (deezer === 'fail') return new Response('', { status: 500 })
+        return json({ data: [{ title: 'Walk It Talk It', artist: { name: 'Migos' }, album: { title: 'Culture II' } }] })
+      }
+      if (url.includes('entity=musicArtist')) return json({ results: [{ wrapperType: 'artist', artistId: 5, artistName: 'Migos' }] })
+      if (url.includes('entity=album&limit=50')) return json({ results: [
+        { wrapperType: 'collection', collectionId: 200, collectionName: 'Culture II', artistName: 'Migos', artistId: 5, trackCount: 24, collectionExplicitness: 'cleaned', artworkUrl100: 'https://clean/100x100.jpg' },
+      ] })
+      if (url.includes('lookup?id=5&entity=album')) return json({ results: [
+        { wrapperType: 'collection', collectionId: 201, collectionName: 'Culture II', artistName: 'Migos', artistId: 5, trackCount: explicitTrackCount, collectionExplicitness: 'explicit', artworkUrl100: 'https://explicit/100x100.jpg' },
+      ] })
+      if (url.includes('lookup?id=5&entity=song')) return json({ results: [] })
+      if (url.includes('entity=song')) {
+        if (appleSongs === 'refuse') return new Response('', { status: 403 })
+        return json({ results: [
+          { wrapperType: 'track', trackName: 'Walk It Talk It', artistName: 'Migos', artistId: 5, collectionName: 'Culture II', collectionId: 200, trackCount: 24, trackTimeMillis: 276000, trackExplicitness: 'cleaned', collectionExplicitness: 'cleaned' },
+        ] })
+      }
+      return json({ results: [] })
+    }) as typeof fetch
+  })
+  afterEach(() => { globalThis.fetch = realFetch })
+  const apple = () => calls.filter((u) => u.includes('itunes.apple.com'))
+
+  it('costs what the song search alone cost, plus the one album search, and asks the artist once', async () => {
+    await searchItunesSuggestions('Migos')
+    const before = apple().length
+    resetShopSearchCachesForTests()
+    calls = []
+    const a = await searchShopCatalog('Migos')
+    assert.equal(a.songsOk, true)
+    // Never more than the song search alone plus the album search (sharing can make it fewer).
+    assert.ok(apple().length <= before + 1, `${apple().length} > ${before} + 1`)
+    assert.equal(apple().filter((u) => u.includes('entity=musicArtist')).length, 1)
+    // The album rescue and the song search share the artist's explicit lookup.
+    assert.equal(apple().filter((u) => u.includes('lookup?id=5&entity=album')).length, 1)
+    calls = []
+    await searchShopCatalog('migos')
+    assert.equal(calls.length, 0)
+  })
+  it("a rescued album wears the explicit edition's own size and cover", async () => {
+    const a = await searchShopCatalog('Migos')
+    const c = a.albums.find((x) => x.name === 'Culture II')!
+    assert.equal(c.collectionId, 201)
+    assert.equal(c.explicitness, 'explicit')
+    assert.equal(c.trackCount, 25)
+    assert.equal(c.artworkUrl, 'https://explicit/200x200.jpg')
+  })
+  it('leaves the size unset when the explicit lookup gave none', async () => {
+    explicitTrackCount = undefined
+    const a = await searchShopCatalog('Migos')
+    const c = a.albums.find((x) => x.name === 'Culture II')!
+    assert.equal(c.collectionId, 201)
+    assert.equal(c.trackCount, undefined)
+  })
+  it('never keeps an answer whose songs came from Deezer', async () => {
+    appleSongs = 'refuse'
+    const a = await searchShopCatalog('Migos')
+    assert.equal(a.songsOk, true)
+    assert.equal(a.songs[0].song, 'Walk It Talk It')
+    assert.equal(calls.filter((u) => u.includes('api.deezer.com')).length, 1)
+    appleSongs = 'ok'
+    await searchShopCatalog('Migos')
+    // Asked again: the Deezer answer was not kept as the shop's answer.
+    assert.equal(calls.filter((u) => u.includes('api.deezer.com')).length, 2)
+  })
+  it('says the songs failed when Apple and Deezer both did, even with albums and artists answering', async () => {
+    appleSongs = 'refuse'
+    deezer = 'fail'
+    const a = await searchShopCatalog('Migos')
+    assert.equal(a.ok, true)
+    assert.equal(a.albumsOk, true)
+    assert.equal(a.songsOk, false)
+    assert.deepEqual(a.songs, [])
   })
 })
