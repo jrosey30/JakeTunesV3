@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, useMemo, useReducer, useRef, useSyncExternalStore, type CSSProperties } from 'react'
+import { useEffect, useState, useMemo, useReducer, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { useScrollPersistence } from '../../hooks/useScrollPersistence'
 import './download-store.css'
 import CredentialNotice from './CredentialNotice'
@@ -7,12 +7,19 @@ import { qobuzNoticeFor } from '../../../common/qobuz-notice'
 import { nearEditionOf } from '../../../common/near-edition-detect'
 import { toggleDownloadsPanel, showDownload } from '../../components/DownloadsPanel'
 import { useLibrary } from '../../context/LibraryContext'
-import { saveSongsLabel } from './albumEditions'
+import { scoreField, scoreResult, releaseKind, displayAlbumTitle, artistArtwork, isArtistQuery, ownedAlbum, ownsArtist, listedAlbum, listedArtist, listedSong, markLine, pickLibraryHits, type ShopAlbum, type ShopArtist } from '../../../common/shop-search'
+import { losslessOf, losslessTitle } from '../../../common/shop-lossless'
+import { askLossless, losslessFor, losslessVersion, subscribeLossless } from './shopLossless'
+import { useShopMarks } from './useShopMarks'
+import ShopArtistPage from './ShopArtistPage'
+import ShopAlbumPage, { type ShopAlbumRef } from './ShopAlbumPage'
+import { albumKeyOf } from '../../utils/albumKey'
+import { buildIndex, search as searchLibrary, type AlbumRow as LibAlbumRow, type ArtistRow as LibArtistRow, type TrackRow as LibTrackRow } from '../../utils/searchIndex'
+import './shop-search.css'
 import { enqueue, itemFor, subscribeQueue, getQueue, retry, cancel, primaryFor, trackQueryId, albumQueryId, type QItem, type QResult, type QueueOrigin } from './downloadQueue'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
 import type { ItunesSuggestion } from '../../types'
 import { explicitWins } from '../../../common/explicit'
-import { withinEditDistance, typoBudget } from '../../../common/fold-text'
 import { norm, normQ } from './downloadKeys'
 import { createShopFunnel, type ShopFunnelEvent, type ShopSearchHow } from '../../../common/shop-funnel'
 import { usage } from '../../usageLog'
@@ -37,42 +44,9 @@ import { usage } from '../../usageLog'
 // Name keys (any script, accents folded) live in downloadKeys.ts.
 const mmss = (secs: number): string => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
 
-// Relevance scorer — a TWIN of the universal-search ranker in
-// utils/searchIndex.ts (exact > prefix > token-start > substring > all-tokens).
-// normQ (downloadKeys.ts) is the twin of searchIndex's normalize.
-function scoreField(field: string, query: string, qTokens: string[]): number {
-  if (!field || !query) return 0
-  if (field === query) return 100 + Math.min(20, query.length)
-  if (field.startsWith(query)) return 70 + Math.min(20, query.length)
-  if ((' ' + field).includes(' ' + query)) return 50
-  if (field.includes(query)) return 30
-  if (qTokens.length > 1 && qTokens.every((qt) => field.includes(qt))) return 20
-  // TYPO TIER — last, so it never outranks a real match. iTunes already
-  // corrects the spelling ("radiohed" -> Radiohead); this stops us discarding
-  // the correction because it isn't a substring of what was typed.
-  const fTokens = field.split(' ').filter(Boolean)
-  if (qTokens.length && fTokens.length) {
-    const near = qTokens.every((qt) =>
-      fTokens.some((ft) => withinEditDistance(qt, ft, typoBudget(qt.length))))
-    if (near) return 14
-  }
-  return 0
-}
-const stripThe = (s: string): string => s.replace(/^the /, '')
-export function scoreResult(q: string, qTokens: string[], title: string, artist: string): number {
-  const t = scoreField(normQ(title), q, qTokens)
-  const aRaw = normQ(artist)
-  const a = Math.max(scoreField(aRaw, q, qTokens), scoreField(stripThe(aRaw), q, qTokens))
-  // COMBINED match — the most natural query is "song artist" ("when you die
-  // mgmt"), which no SINGLE field contains, so per-field scoring returned 0
-  // and the view filtered every correct result to a blank page (Jake,
-  // 2026-07-16). Score the joined field both ways too.
-  const combo = Math.max(
-    scoreField(`${normQ(title)} ${aRaw}`, q, qTokens),
-    scoreField(`${aRaw} ${normQ(title)}`, q, qTokens),
-  )
-  return Math.max(t * 1.0 + a * 1.15, combo * 1.2)
-}
+// Relevance scoring, release kinds and display titles moved to
+// common/shop-search.ts (Brief 256) so node tests reach them; re-exported here.
+export { scoreResult, releaseKind, displayAlbumTitle }
 
 // Jake, 2026-08-09: "it only shows me a very limited number of things if i
 // search via artist (i think only 7 albums and 9 songs max)." It was 8 albums
@@ -114,48 +88,18 @@ interface AlbumRow {
   genre?: string
   explicitness?: string
 }
-const albumKey = (a: AlbumRow): string => `${norm(a.artist)}|${norm(a.album)}`
 
-/**
- * What kind of release this is, and the title with Apple's suffix removed.
- *
- * Every row used to render a hardcoded "ALBUM" badge, so a 3-track EP and a
- * 14-track LP were indistinguishable. Apple states the kind two ways and they
- * disagree often enough to need an order of precedence:
- *
- *   1. the NAME suffix ("Sundowning - EP", "Bags - Single"). Apple's own
- *      labelling, so it wins — a 7-track "EP" is still an EP if that is what
- *      the artist released it as.
- *   2. trackCount, only when the name says nothing. Deliberately conservative:
- *      1 track is a single, 2-6 is an EP, and anything else stays ALBUM rather
- *      than guessing at the boundary.
- *
- * The suffix is also stripped from the DISPLAY title, so the row reads
- * "Sundowning · EP · 2019" instead of "Sundowning - EP · ALBUM". Display only —
- * albumKey and the Qobuz query keep the raw name, because that is what the
- * matcher and the download path have always resolved against.
- */
-type ReleaseKind = 'ALBUM' | 'EP' | 'SINGLE'
-export function releaseKind(name: string, trackCount?: number): ReleaseKind {
-  if (/\s[-–—]\s*EP$/i.test(name)) return 'EP'
-  if (/\s[-–—]\s*Single$/i.test(name)) return 'SINGLE'
-  if (typeof trackCount === 'number' && trackCount > 0) {
-    if (trackCount === 1) return 'SINGLE'
-    if (trackCount <= 6) return 'EP'
-  }
-  return 'ALBUM'
-}
-export function displayAlbumTitle(name: string): string {
-  // ⚠️ TWIN: src/main/streamrip-match.ts searchTitle — same Apple
-  // " - Single" / " - EP" suffix. Display strips it so the shelf doesn't
-  // read "It's Nearly Over - Single · ALBUM"; search strips it so Qobuz
-  // is asked for the name it actually uses.
-  return name.replace(/\s[-–—]\s*(EP|Single)$/i, '').trim() || name
-}
+/** The catalogue's artists and albums for the search on screen (Brief 256). albumsOk false:
+ *  Apple's album search didn't answer, and the albums are built from the songs, as before. */
+interface ShopGroups { artists: ShopArtist[]; albums: ShopAlbum[]; albumsOk: boolean }
+const NO_GROUPS: ShopGroups = { artists: [], albums: [], albumsOk: false }
+
+/** A page inside the shop, over the search's results (Brief 256). */
+type ShopPage = { kind: 'artist'; artist: ShopArtist; artworkUrl?: string } | { kind: 'album'; album: ShopAlbumRef }
 
 // Page memory — the view unmounts on navigate-away; restore search state on return.
-interface DownloadCache { query: string; results: ItunesSuggestion[]; pasteUrl: string }
-let pageCache: DownloadCache = { query: '', results: [], pasteUrl: '' }
+interface DownloadCache { query: string; results: ItunesSuggestion[]; groups: ShopGroups; pages: ShopPage[]; pasteUrl: string }
+let pageCache: DownloadCache = { query: '', results: [], groups: NO_GROUPS, pages: [], pasteUrl: '' }
 
 // A prefill (Listen List → "Tracks" / Get on an album) is dispatched BEFORE
 // the view that listens for it has mounted — the sender fires the event and
@@ -238,52 +182,25 @@ export default function DownloadView() {
   /** The answer time of a search whose results haven't been counted yet. */
   const funnelPendingRef = useRef<number | null>(null)
 
-  // Album expansion — the search only surfaces a few of an album's songs, so
-  // opening a card fetches its FULL tracklist from iTunes (2026-07-23, Jake:
-  // "there has to be an easier way to see all tracks on this album"). Raw
-  // tracks are cached per album key; owned/preview are computed at render.
-  const [expandedAlbums, setExpandedAlbums] = useState<Set<string>>(() => new Set())
-  /** Songs ticked in an open tracklist, per album, for "Save N songs" (Brief 255). */
-  const [tickedTracks, setTickedTracks] = useState<Record<string, number[]>>({})
-  const toggleTick = (key: string, i: number) => setTickedTracks((m) => {
-    const cur = m[key] ?? []
-    return { ...m, [key]: cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i] }
-  })
   /** Setup drawer: paste-a-link, the Qobuz account and the streamrip check.
    *  Closed by default — these are things you do once, and they used to sit
    *  permanently under the results on the page you use every day. */
   const [setupOpen, setSetupOpen] = useState(false)
-  const [albumTracks, setAlbumTracks] = useState<Record<string, { loading: boolean; tracks?: ItunesSuggestion[]; error?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string; collectionId?: number }>>({})
-
-  const toggleAlbum = (a: AlbumRow) => {
-    const key = albumKey(a)
-    setExpandedAlbums((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) { next.delete(key); return next }
-      next.add(key)
-      // Lazy-fetch the tracklist the first time it's opened — and again
-      // after a failure, so a transient iTunes miss isn't pinned to the
-      // card until restart (2026-09-03).
-      // A row without a collection id (the Deezer failover, when Apple
-      // throttles the search) asks main by NAME; main resolves it only to
-      // one unambiguous edition and the tracklist comes back with that id,
-      // so the Get carries the edition — never a guess (2026-09-05).
-      if (!albumTracks[key] || albumTracks[key].error) {
-        setAlbumTracks((m) => ({ ...m, [key]: { loading: true } }))
-        window.electronAPI.itunesAlbumTracks?.(a.collectionId ?? { artist: a.artist, album: a.album })
-          .then((r) => setAlbumTracks((m) => ({
-            ...m,
-            [key]: r?.ok && r.tracks?.length
-              ? { loading: false, tracks: r.tracks, releaseYear: r.releaseYear, trackCount: r.trackCount, genre: r.genre, explicitness: r.explicitness, collectionId: r.collectionId }
-              : { loading: false, error: a.collectionId ? 'Couldn’t load the tracklist.' : 'Couldn’t pin this edition in the catalogue — search it by name to pick one.' },
-          })))
-          .catch(() => setAlbumTracks((m) => ({ ...m, [key]: { loading: false, error: 'Couldn’t load the tracklist.' } })))
-      }
-      return next
-    })
+  const [groups, setGroups] = useState<ShopGroups>(pageCache.groups)
+  // Artist and album pages over the results (Brief 256): Back pops one.
+  const [pages, setPages] = useState<ShopPage[]>(pageCache.pages)
+  const page = pages[pages.length - 1] ?? null
+  const openPage = (p: ShopPage): void => {
+    usage('action', 'shop.page', { detail: { page: p.kind, depth: pages.length + 1 } })
+    setPages((prev) => [...prev, p])
+    downloadPageRef.current?.scrollTo?.({ top: 0 })
   }
+  const back = (): void => setPages((prev) => prev.slice(0, -1))
+  const openAlbum = (a: AlbumRow): void => openPage({ kind: 'album', album: { artist: a.artist, name: a.album, collectionId: a.collectionId, artworkUrl: a.artworkUrl, releaseYear: a.releaseYear, trackCount: a.trackCount, genre: a.genre, explicitness: a.explicitness } })
+  const marks = useShopMarks()
+  useSyncExternalStore(subscribeLossless, losslessVersion)
 
-  const { state: lib } = useLibrary()
+  const { state: lib, dispatch } = useLibrary()
   const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
   const [, forceRender] = useReducer((x: number) => x + 1, 0)
   useEffect(() => subscribeQueue(forceRender), [])
@@ -341,8 +258,17 @@ export default function DownloadView() {
     songs.push(...songBest.values())
     songs.sort((a, b) => b.score - a.score)
 
+    // Albums come from Apple's album search (Brief 256), ranked in main
+    // (common/shop-search.ts rankShop). Only when that search didn't answer
+    // are they built from the song hits, as before.
+    const fromSearch: AlbumRow[] = groups.albumsOk ? groups.albums.map((a, i) => ({
+      kind: 'album' as const, artist: a.artist, album: a.name, artworkUrl: a.artworkUrl,
+      owned: libIndex.albums.has(norm(a.name) + '|' + norm(a.artist)),
+      score: groups.albums.length - i, songs: 0, collectionId: a.collectionId,
+      releaseYear: a.releaseYear, trackCount: a.trackCount, genre: a.genre, explicitness: a.explicitness,
+    })) : []
     const albumMap = new Map<string, AlbumRow>()
-    for (const s of results) {
+    if (!groups.albumsOk) for (const s of results) {
       if (!s.album) continue
       const key = `${norm(s.artist)}|${norm(s.album)}`
       const albScore = q ? Math.max(
@@ -395,19 +321,29 @@ export default function DownloadView() {
         releaseYear: s.releaseYear, trackCount: s.trackCount, genre: s.genre, explicitness: s.explicitness,
       })
     }
-    const albums = [...albumMap.values()].filter((a) => !q || a.score > 0).sort((a, b) => b.score - a.score).slice(0, MAX_ALBUMS)
+    const albums = groups.albumsOk ? fromSearch : [...albumMap.values()].filter((a) => !q || a.score > 0).sort((a, b) => b.score - a.score).slice(0, MAX_ALBUMS)
 
-    const topSong = songs[0] ?? null
-    const topAlbum = albums[0] ?? null
-    // The hero is whichever type matched harder.
-    const hero: SongRow | AlbumRow | null =
-      topSong && topAlbum ? (topAlbum.score > topSong.score ? topAlbum : topSong) : (topSong || topAlbum)
+    // Three groups, in this order (Brief 256): Artists, Albums, Songs. The
+    // "Top match" hero is gone: an artist named exactly is first by itself.
     return {
-      hero,
-      songs: songs.filter((s) => s !== hero).slice(0, MAX_SONGS),
-      albums: albums.filter((a) => a !== hero),
+      artists: groups.artists,
+      songs: songs.slice(0, MAX_SONGS),
+      albums,
     }
-  }, [results, query, libIndex])
+  }, [results, query, libIndex, groups])
+
+  // Jake's own library, above the catalogue when it matches (Brief 256).
+  const libSearchIndex = useMemo(() => buildIndex(lib.tracks, []), [lib.tracks])
+  const libraryHits = useMemo(() => {
+    const q = query.trim()
+    if (q.length < 2) return []
+    const r = searchLibrary(libSearchIndex, q, { perSectionCap: 3 })
+    return pickLibraryHits({
+      artists: r.artists.map((x) => ({ row: x.row as LibArtistRow, score: x.score })),
+      albums: r.albums.map((x) => ({ row: x.row as LibAlbumRow, score: x.score })),
+      tracks: r.tracks.map((x) => ({ row: x.row as LibTrackRow, score: x.score })),
+    })
+  }, [libSearchIndex, query])
 
   useEffect(() => {
     let cancelled = false
@@ -447,7 +383,8 @@ export default function DownloadView() {
   // providers can answer for a song. Search and previews never ask.
   const startGet = (asked: QResult): void => {
     // An album save is timed from here to Qobuz's first answer (Brief 255, usage log).
-    const q: QResult = asked.mediaType === 'album' ? { ...asked, clickedAt: Date.now(), surface: 'search', editionFrom: asked.collectionId ? 'card' : 'none' } : asked
+    // The album page says how its edition was named (card or picked); a card here is 'card'.
+    const q: QResult = asked.mediaType === 'album' ? { ...asked, clickedAt: asked.clickedAt ?? Date.now(), surface: asked.surface ?? 'search', editionFrom: asked.editionFrom ?? (asked.collectionId ? 'card' : 'none') } : asked
     const n = qobuzNoticeFor(qobuz, 'get', { kind: q.mediaType === 'album' ? 'album' : 'song', title: (q.mediaType === 'album' ? q.album : q.title) || q.desc })
     if (n) showCredentialNotice(n)
     funnel.saved(q.mediaType === 'album' ? 'album' : 'song')
@@ -467,6 +404,8 @@ export default function DownloadView() {
       if (!q) return
       setQuery(q)
       setResults([])
+      setGroups(NO_GROUPS)
+      setPages([])
       setSearchErr(null)
       setNotice(null)
       pendingOriginRef.current = d?.origin ? { query: q, origin: d.origin } : null
@@ -497,21 +436,19 @@ export default function DownloadView() {
   useEffect(() => () => logFunnel(funnel.left()), [])
 
   useEffect(() => {
-    pageCache = { query, results, pasteUrl }
-  }, [query, results, pasteUrl])
+    pageCache = { query, results, groups, pages, pasteUrl }
+  }, [query, results, groups, pages, pasteUrl])
 
   useEffect(() => { runSearchRef.current = runSearch })
 
   // Results have landed — if we arrived here from an ALBUM row on the list,
-  // open that album's tracklist. `ranked` is derived from `results`, so this
+  // open that album's page (its tracklist, editions and saves; Brief 256). `ranked` is derived from `results`, so this
   // fires exactly once per search, and the ref is cleared so a later manual
   // search never re-expands behind the user's back.
   useEffect(() => {
     const want = pendingExpandRef.current
     if (!want) return
-    const all = [ranked.hero, ...ranked.albums].filter(
-      (r): r is AlbumRow => !!r && (r as AlbumRow).kind === 'album',
-    )
+    const all = ranked.albums
     if (all.length === 0) return          // still searching / nothing matched yet
     const wa = norm(want.artist), wl = norm(want.album)
     // Only the album that was asked for opens. The old `|| all[0]` fallback
@@ -521,7 +458,7 @@ export default function DownloadView() {
     const match = all.find((a) => norm(a.artist) === wa && reads(a.album, want.album))
       || all.find((a) => reads(a.album, want.album))
     pendingExpandRef.current = null
-    if (match && !expandedAlbums.has(albumKey(match))) toggleAlbum(match)
+    if (match) openAlbum(match)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ranked])
 
@@ -531,30 +468,38 @@ export default function DownloadView() {
     const answerMs = funnelPendingRef.current
     if (answerMs === null) return
     funnelPendingRef.current = null
-    const heroSong = ranked.hero?.kind === 'song' ? 1 : 0
-    const heroAlbum = ranked.hero?.kind === 'album' ? 1 : 0
     logFunnel(funnel.searched({
       len: query.trim().length, hits: results.length,
-      songs: ranked.songs.length + heroSong, albums: ranked.albums.length + heroAlbum,
+      songs: ranked.songs.length, albums: ranked.albums.length, artists: ranked.artists.length,
       answerMs, how: searchHowRef.current,
     }))
+    // The page's lossless dots: one Qobuz search for all of them (Brief 256).
+    if (results.length || ranked.albums.length) askLossless(query.trim())
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ranked])
 
   // INSTANT search: iTunes answers in ~200ms with art + previews. Newest
   // keystroke wins; Qobuz is only touched when a Get button is clicked.
   const searchTokenRef = useRef(0)
+  /** The words whose results are on screen (pages opened from them survive a re-search of the same words). */
+  const shownQueryRef = useRef(pageCache.query.trim())
   const runSearch = async (raw: string) => {
     const q = raw.trim()
     if (pendingOriginRef.current && pendingOriginRef.current.query !== q) pendingOriginRef.current = null
     const token = ++searchTokenRef.current
-    if (!q) { setResults([]); setSearchErr(null); setSearching(false); return }
+    if (!q) { setResults([]); setGroups(NO_GROUPS); setSearchErr(null); setSearching(false); return }
     setSearching(true)
     setSearchErr(null)
     searchStartRef.current = Date.now()
     try {
-      const r = await window.electronAPI.searchItunes?.(q)
+      // Artists, albums and songs in one answer (Brief 256); the plain song
+      // search stands in for an older main.
+      const shop = window.electronAPI.shopSearch ? await window.electronAPI.shopSearch(q).catch(() => null) : null
+      // The songs' own answer decides the Qobuz fallback: albums and artists
+      // answering must not leave the song list empty when Apple and Deezer both failed.
+      const r = shop ? { ok: shop.songsOk ?? shop.ok, results: shop.songs } : await window.electronAPI.searchItunes?.(q)
       if (token !== searchTokenRef.current) return
+      setGroups(shop ? { artists: shop.artists, albums: shop.albums, albumsOk: shop.albumsOk } : NO_GROUPS)
       let list = r?.ok ? r.results : []
       if (!r?.ok) {
         // iTunes can rate-limit (403). Fall back to the slower Qobuz catalog
@@ -573,7 +518,11 @@ export default function DownloadView() {
         }
       }
       setResults(list)
-      setSearchErr(list.length === 0 ? `No matches for “${q}”.` : null)
+      // A new search shows its results, not the page an old one opened (the same
+      // words searched again on coming back to the tab keep the page).
+      if (q !== shownQueryRef.current) setPages([])
+      shownQueryRef.current = q
+      setSearchErr(list.length === 0 && !shop?.artists.length && !shop?.albums.length ? `No matches for “${q}”.` : null)
       funnelPendingRef.current = Date.now() - searchStartRef.current
     } catch (e) {
       if (token === searchTokenRef.current) setSearchErr(e instanceof Error ? e.message : 'Search failed.')
@@ -584,7 +533,7 @@ export default function DownloadView() {
 
   useEffect(() => {
     const q = query.trim()
-    if (q.length < 2) { setResults([]); setSearchErr(null); setSearching(false); logFunnel(funnel.left()); return }
+    if (q.length < 2) { setResults([]); setGroups(NO_GROUPS); setPages([]); setSearchErr(null); setSearching(false); logFunnel(funnel.left()); return }
     const h = window.setTimeout(() => { void runSearch(q) }, 300)
     return () => window.clearTimeout(h)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -690,11 +639,19 @@ export default function DownloadView() {
     )
   }
 
+  /** The lossless dot for a row (Brief 256): shown only when the page's one Qobuz answer names it. */
+  const dotFor = (kind: 'album' | 'song', artist: string, title: string, scope: { words: string; limit: number }) => {
+    const v = losslessOf(losslessFor(scope.words, scope.limit), kind, artist, title)
+    return v ? <span className={`shop-dot shop-dot--${v}`} title={losslessTitle(v)} aria-label={losslessTitle(v)} /> : null
+  }
+  const searchScope = { words: query.trim(), limit: 50 }
+
   /** A song, as a dense aligned row. */
   const renderSong = (s: SongRow, i = 0) => {
     const qres = songQ(s)
     const item = itemFor(qres)
     const pid = `dl|${qres.id}`
+    const listed = !s.owned && listedSong(marks.list, s.artist, s.title)
     return (
       <li key={qres.id} className={`dl-song${item ? ` is-${item.status}` : ''}`} style={{ '--i': i } as CSSProperties}>
         <span className="dl-song-lead">
@@ -702,7 +659,7 @@ export default function DownloadView() {
           {s.previewUrl && previewBtn(pid, s.previewUrl, s.title, s.artist, 'dl-song-play')}
         </span>
         {artOr(s.artworkUrl, 'dl-song-art')}
-        <span className="dl-song-title" title={s.title}>{s.title}</span>
+        <span className="dl-song-title" title={s.title}>{dotFor('song', s.artist, s.title, searchScope)}{s.title}{listed ? <span className="shop-mark shop-mark--list shop-mark--inline">On your list</span> : null}</span>
         <span className="dl-song-artist" title={s.artist}>{s.artist}</span>
         <span className="dl-song-album" title={s.album || ''}>{s.album ? displayAlbumTitle(s.album) : ''}</span>
         {/* Year on songs too: iTunes returns original, remaster, live and comp
@@ -715,13 +672,6 @@ export default function DownloadView() {
     )
   }
 
-  const asSongRow = (t: ItunesSuggestion): SongRow => ({
-    kind: 'song', artist: t.artist, title: t.song, album: t.album,
-    artworkUrl: t.artworkUrl, previewUrl: t.previewUrl,
-    durationSecs: t.durationSecs, releaseYear: t.releaseYear, explicitness: t.explicitness,
-    owned: libIndex.tracks.has(norm(t.song) + '|' + norm(t.artist)), score: 0,
-  })
-
   // "Save album" ("Get all" until Brief 253) grabs the whole album as ONE Qobuz album download (the same
   // reliable album-id path the header Get uses), NOT a per-track loop. Reason
   // (2026-07-24, the Charli XCX "Music, Fashion, Film" failure): Qobuz indexes
@@ -729,185 +679,102 @@ export default function DownloadView() {
   // "Card Declined" returns junk ("2 die 4" by Addison Rae), which the matcher
   // correctly rejects, so 8/11 tracks "failed" even though the album is right
   // there on Qobuz. One album download gets every track; the importer dedups
-  // the few already owned. asSongRow stays — individual track rows still use it.
+  // the few already owned. A few songs of an album are saved from its page.
 
-  const renderAlbumTrack = (t: ItunesSuggestion, i: number, key: string) => {
-    const s = asSongRow(t)
-    const qres = songQ(s)
-    const item = itemFor(qres)
-    const pid = `dl|${qres.id}`
-    // A song in the library, or one already on its way, can't be ticked.
-    const tickable = !s.owned && (!item || item.status === 'failed' || item.status === 'canceled')
-    return (
-      <li key={qres.id} className={`dl-track${item ? ` is-${item.status}` : ''}`}>
-        <input type="checkbox" className="dl-track-tick" aria-label={`Pick ${t.song}`} disabled={!tickable} checked={tickable && (tickedTracks[key] ?? []).includes(i)} onChange={() => toggleTick(key, i)} />
-        <span className="dl-track-lead">
-          <span className="dl-track-num">{t.trackNumber ?? i + 1}</span>
-          {t.previewUrl && previewBtn(pid, t.previewUrl, t.song, t.artist, 'dl-track-play')}
-        </span>
-        <span className="dl-track-title" title={t.song}>{t.song}</span>
-        <span className="dl-track-dur">{t.durationSecs ? mmss(t.durationSecs) : ''}</span>
-        <span className="dl-track-act">{s.owned && !item ? <span className="dl-inlib">In library</span> : renderAction(qres, item)}</span>
-      </li>
-    )
-  }
+  /** An album search hit (or an artist page's record) as a card row. */
+  const albumRowOf = (a: ShopAlbum): AlbumRow => ({
+    kind: 'album', artist: a.artist, album: a.name, artworkUrl: a.artworkUrl, owned: false, score: 0, songs: 0,
+    collectionId: a.collectionId, releaseYear: a.releaseYear, trackCount: a.trackCount, genre: a.genre, explicitness: a.explicitness,
+  })
 
   /** The facts a release stands on: kind, year, size, genre — whichever of
-   *  them iTunes actually stated. */
+   *  them iTunes actually stated. A CENSORED edition has to announce itself:
+   *  iTunes only carries some albums as "[Amended Version]", and downloading
+   *  one of those silently is how Jake ended up with a radio edit of Mo Money
+   *  Mo Problems. */
   const releaseFacts = (a: AlbumRow) => {
-    const cache = albumTracks[albumKey(a)]
-    const year = cache?.releaseYear ?? a.releaseYear
-    const count = cache?.trackCount ?? a.trackCount
-    const genre = cache?.genre ?? a.genre
-    // A CENSORED edition has to announce itself. iTunes only carries some
-    // albums as "[Amended Version]", and downloading one of those silently is
-    // how Jake ended up with a radio edit of Mo Money Mo Problems.
-    const clean = (cache?.explicitness ?? a.explicitness) === 'cleaned'
-    return { year, count, genre, clean, kind: releaseKind(a.album, count) }
+    const count = a.trackCount
+    return { year: a.releaseYear, count, genre: a.genre, clean: a.explicitness === 'cleaned', kind: releaseKind(a.album, count) }
   }
 
-  /** A release, as a cover card. Art-forward because this is where the year
-   *  and the ALBUM/EP distinction live. */
-  const renderRelease = (a: AlbumRow, i = 0) => {
-    const pinned = albumTracks[albumKey(a)]
-    const qres = albumQ({ ...a, collectionId: a.collectionId ?? pinned?.collectionId, trackCount: a.trackCount ?? pinned?.trackCount, releaseYear: a.releaseYear ?? pinned?.releaseYear })
+  /** A release, as a cover card. Clicking it opens the album's page (Brief 256);
+   *  Save album saves it from here. */
+  const renderRelease = (a: AlbumRow, i = 0, scope: { words: string; limit: number } = searchScope) => {
+    const qres = albumQ(a)
     const item = itemFor(qres)
-    const key = albumKey(a)
-    const isOpen = expandedAlbums.has(key)
-    const cache = albumTracks[key]
     const { year, count, genre, clean, kind } = releaseFacts(a)
+    const owned = ownedAlbum(marks.lib, a.artist, a.album, count)
+    const mark = markLine({ owned, listed: listedAlbum(marks.list, a.artist, a.album) })
     // 'done' is already said by the green check; everything else needs a
     // control (cancel / retry) that must stay reachable without hovering.
     const busy = !!item && item.status !== 'done'
     return (
-      <Fragment key={qres.id}>
-        <div
-          className={`dl-rel${item ? ` is-${item.status}` : ''}${isOpen ? ' is-open' : ''}`}
-          style={{ '--i': i } as CSSProperties}
-          onClick={() => toggleAlbum(a)}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAlbum(a) } }}
-        >
-          <span className="dl-rel-frame">
-            {artOr(a.artworkUrl, 'dl-rel-art')}
-            {/* A release that is DOING something says so on a strip along the
-                bottom, always visible. It used to reuse the hover stack, which
-                put a full-size timer and Cancel pill in the middle of the
-                artwork with "HIDE TRACKS" underneath — unreadable over a photo
-                and, on a busy card, three competing things at once. */}
-            {busy ? (
-              <span className="dl-rel-busy" onClick={(e) => e.stopPropagation()}>{renderAction(qres, item)}</span>
-            ) : (
-              <span className="dl-rel-hover">
-                <span className="dl-rel-get" onClick={(e) => e.stopPropagation()}>{renderAction(qres, item)}</span>
-                <span className="dl-rel-open">{isOpen ? 'Hide tracks' : 'See tracks'}</span>
-              </span>
-            )}
-            {clean && <span className="dl-rel-clean" title="Censored edition — iTunes has no explicit version of this release">CLEAN</span>}
-            {a.owned && <span className="dl-rel-owned" title="In your library">✓</span>}
-          </span>
-          <span className="dl-rel-title" title={a.album}>{displayAlbumTitle(a.album)}</span>
-          <span className="dl-rel-facts">
-            <span className={`download-result-badge download-result-badge--${kind.toLowerCase()}`}>{kind}</span>
-            {year ? <span className="download-result-year">{year}</span> : null}
-            {clean && <span className="dl-clean" title="Censored edition — iTunes has no explicit version of this release">CLEAN</span>}
-            {count ? <span className="dl-rel-count">{count} track{count === 1 ? '' : 's'}</span> : null}
-          </span>
-          <span className="dl-rel-sub" title={a.artist}>{a.artist}{genre ? ` · ${genre}` : ''}</span>
-        </div>
-
-        {isOpen && (
-          <div className="dl-rel-panel">
-            <div className="dl-rel-panel-head">
-              <span className="dl-rel-panel-title">{displayAlbumTitle(a.album)}</span>
-              <span className="dl-rel-panel-meta">
-                {kind}{year ? ` · ${year}` : ''}{genre ? ` · ${genre}` : ''}
-                {cache?.tracks ? ` · ${cache.tracks.length} tracks` : ''}
-              </span>
-              <span className="dl-rel-panel-spacer" />
-              {cache?.tracks && (() => {
-                // A few songs of this edition, each an ordinary song save (Brief 255).
-                const picked = (tickedTracks[key] ?? []).map((ti) => cache.tracks![ti]).filter((t): t is ItunesSuggestion => Boolean(t)).map(asSongRow).filter((sr) => !sr.owned)
-                if (!picked.length) return null
-                return <button type="button" className="download-result-btn download-result-btn--sm" onClick={() => { for (const sr of picked) startGet(songQ(sr)); setTickedTracks((m) => ({ ...m, [key]: [] })) }}>{saveSongsLabel(picked.length)}</button>
-              })()}
-              {cache?.tracks && cache.tracks.length > 0 && (
-                <button type="button" className="download-result-btn download-result-btn--sm" onClick={() => { if (item) showDownload(item.key); else startGet(albumQ({ ...a, collectionId: a.collectionId ?? cache?.collectionId, trackCount: a.trackCount ?? cache?.trackCount, releaseYear: a.releaseYear ?? cache?.releaseYear })) }} title={item ? 'Show it in Downloads' : undefined}>Save album</button>
-              )}
-              <button type="button" className="dl-rel-panel-close" onClick={() => toggleAlbum(a)} title="Close">✕</button>
-            </div>
-            {cache?.loading && <div className="dl-rel-panel-note"><span className="dl-spinner" aria-hidden="true" /> Loading tracklist…</div>}
-            {cache?.error && <div className="dl-rel-panel-note dl-rel-panel-note--err">{cache.error}</div>}
-            {/* Explicit rows + column flow keeps 1-5 / 6-10 reading DOWN each
-                column (what CSS `columns` gave) without CSS columns' fatal
-                flaw here: an overflowing cell bleeds across the gap. "✓ In
-                your library" is far wider than the action cell, so it was
-                landing on top of the next column's track titles. */}
-            {cache?.tracks && cache.tracks.length > 0 && (
-              <ul
-                className="dl-track-list"
-                role="list"
-                style={{ gridTemplateRows: `repeat(${Math.ceil(cache.tracks.length / 2)}, auto)` }}
-              >{cache.tracks.map((t, ti) => renderAlbumTrack(t, ti, key))}</ul>
-            )}
-          </div>
-        )}
-      </Fragment>
-    )
-  }
-
-  /** Top match — the one result that matched hardest, given room to say so. */
-  const renderHero = (h: SongRow | AlbumRow) => {
-    if (h.kind === 'album') {
-      const { year, count, genre, clean, kind } = releaseFacts(h)
-      const qres = albumQ(h)
-      const item = itemFor(qres)
-      return (
-        <div className="dl-hero" onClick={() => toggleAlbum(h)} role="button" tabIndex={0}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAlbum(h) } }}>
-          {artOr(h.artworkUrl, 'dl-hero-art')}
-          <div className="dl-hero-body">
-            <span className="dl-hero-title" title={h.album}>{displayAlbumTitle(h.album)}</span>
-            <span className="dl-hero-artist">{h.artist}</span>
-            <span className="dl-hero-facts">
-              <span className={`download-result-badge download-result-badge--${kind.toLowerCase()}`}>{kind}</span>
-              {year ? <span className="download-result-year">{year}</span> : null}
-              {clean && <span className="dl-clean">CLEAN</span>}
-              {count ? <span className="dl-rel-count">{count} tracks</span> : null}
-              {genre ? <span className="dl-rel-count">{genre}</span> : null}
-              {h.owned && <span className="download-owned">In your library</span>}
+      <div
+        key={qres.id}
+        className={`dl-rel${item ? ` is-${item.status}` : ''}`}
+        style={{ '--i': i } as CSSProperties}
+        onClick={() => openAlbum(a)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAlbum(a) } }}
+      >
+        <span className="dl-rel-frame">
+          {artOr(a.artworkUrl, 'dl-rel-art')}
+          {/* A release that is DOING something says so on a strip along the
+              bottom, always visible. */}
+          {busy ? (
+            <span className="dl-rel-busy" onClick={(e) => e.stopPropagation()}>{renderAction(qres, item)}</span>
+          ) : (
+            <span className="dl-rel-hover">
+              <span className="dl-rel-get" onClick={(e) => e.stopPropagation()}>{renderAction(qres, item)}</span>
+              <span className="dl-rel-open">See songs</span>
             </span>
-          </div>
-          <span className="dl-hero-act" onClick={(e) => e.stopPropagation()}>{renderAction(qres, item)}</span>
-        </div>
-      )
-    }
-    const qres = songQ(h)
-    const item = itemFor(qres)
-    const pid = `dl|${qres.id}`
-    return (
-      <div className="dl-hero">
-        <span className="dl-hero-artwrap">
-          {artOr(h.artworkUrl, 'dl-hero-art')}
-          {h.previewUrl && previewBtn(pid, h.previewUrl, h.title, h.artist, 'dl-hero-play')}
+          )}
+          {clean && <span className="dl-rel-clean" title="Censored edition — iTunes has no explicit version of this release">CLEAN</span>}
+          {owned?.state === 'all' && <span className="dl-rel-owned" title="In your library">✓</span>}
         </span>
-        <div className="dl-hero-body">
-          <span className="dl-hero-title" title={h.title}>{h.title}</span>
-          <span className="dl-hero-artist">{h.artist}</span>
-          <span className="dl-hero-facts">
-            {h.album && <span className="dl-rel-count">{displayAlbumTitle(h.album)}</span>}
-            {h.releaseYear ? <span className="download-result-year">{h.releaseYear}</span> : null}
-            {h.durationSecs ? <span className="dl-rel-count">{mmss(h.durationSecs)}</span> : null}
-            {h.owned && <span className="download-owned">In your library</span>}
-          </span>
-        </div>
-        <span className="dl-hero-act">{renderAction(qres, item)}</span>
+        <span className="dl-rel-title" title={a.album}>{dotFor('album', a.artist, a.album, scope)}{displayAlbumTitle(a.album)}</span>
+        <span className="dl-rel-facts">
+          <span className={`download-result-badge download-result-badge--${kind.toLowerCase()}`}>{kind}</span>
+          {year ? <span className="download-result-year">{year}</span> : null}
+          {clean && <span className="dl-clean" title="Censored edition — iTunes has no explicit version of this release">CLEAN</span>}
+          {count ? <span className="dl-rel-count">{count} track{count === 1 ? '' : 's'}</span> : null}
+        </span>
+        <span className="dl-rel-sub" title={a.artist}>{a.artist}{genre ? ` · ${genre}` : ''}</span>
+        {mark ? <span className={`shop-mark${mark === 'On your list' ? ' shop-mark--list' : ''}`}>{mark}</span> : null}
       </div>
     )
   }
 
-  const hasResults = !!(ranked.hero || ranked.songs.length || ranked.albums.length)
+  /** An artist hit: their picture (an album cover; Apple gives none), name and marks. Opens their page. */
+  const renderArtist = (a: ShopArtist, i: number) => {
+    const art = artistArtwork(a, groups.albums)
+    const mark = markLine({ owned: ownsArtist(marks.lib, a.name), listed: listedArtist(marks.list, a.name) })
+    const named = isArtistQuery(query, a.name)
+    return (
+      <button key={a.artistId} type="button" className={`shop-artist${named ? ' is-named' : ''}`} style={{ '--i': i } as CSSProperties} onClick={() => openPage({ kind: 'artist', artist: a, artworkUrl: art })}>
+        {art ? <img className="shop-artist-art" src={art} alt="" loading="lazy" /> : <span className="shop-artist-art shop-artist-art--ph" aria-hidden="true">{a.name.slice(0, 1).toUpperCase()}</span>}
+        <span className="shop-artist-name" title={a.name}>{a.name}</span>
+        <span className="shop-artist-sub">{a.genre ?? 'Artist'}</span>
+        {mark ? <span className={`shop-mark${mark === 'On your list' ? ' shop-mark--list' : ''}`}>{mark}</span> : null}
+      </button>
+    )
+  }
+
+  /** One of Jake's own matches: opens it in the library (an artist, an album, a song's album). */
+  const openLibraryHit = (h: (typeof libraryHits)[number]): void => {
+    if (h.kind === 'artist') dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: h.row.name })
+    else if (h.kind === 'album') dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: h.row.key })
+    else {
+      const t = lib.tracks.find((x) => x.id === h.row.id)
+      if (t) dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(t) })
+    }
+  }
+
+  /** Saves from the artist and album pages go the Search tab's way. */
+  const savePageJob = (q: QResult): void => { if (q.mediaType === 'album') saveAlbum(q); else startGet(q) }
+
+  const hasResults = !!(ranked.artists.length || ranked.songs.length || ranked.albums.length || libraryHits.length)
 
   return (
     <div className="download-view download-view--browse" ref={downloadPageRef}>
@@ -990,17 +857,57 @@ export default function DownloadView() {
       {searchErr && !searching && <div className="download-result download-result--err dl-inline-err">{searchErr}</div>}
 
       <div className="dl-body">
-        {ranked.hero && (
-          <section className="dl-sec dl-sec--hero">
-            <div className="dl-sec-head"><span className="dl-sec-title dl-sec-title--top">Top match</span><span className="dl-rule" /></div>
-            {renderHero(ranked.hero)}
+        {page?.kind === 'artist' && (
+          <ShopArtistPage
+            artist={page.artist}
+            artworkUrl={page.artworkUrl}
+            marks={marks}
+            renderAlbum={(a, i, scope) => renderRelease(albumRowOf(a), i, scope)}
+            onBack={back}
+            backLabel={pages.length > 1 ? 'Back' : 'Results'}
+          />
+        )}
+        {page?.kind === 'album' && (
+          <ShopAlbumPage
+            album={page.album}
+            marks={marks}
+            onSave={savePageJob}
+            renderAction={renderAction}
+            onBack={back}
+            backLabel={pages.length > 1 ? (pages[pages.length - 2].kind === 'artist' ? (pages[pages.length - 2] as { artist: ShopArtist }).artist.name : 'Back') : 'Results'}
+          />
+        )}
+
+        {!page && libraryHits.length > 0 && (
+          <section className="dl-sec">
+            <div className="dl-sec-head"><span className="dl-sec-title">In your library</span><span className="dl-rule" /></div>
+            <div className="shop-lib">
+              {libraryHits.map((h, i) => (
+                <button key={`${h.kind}-${i}`} type="button" className="shop-lib-hit" onClick={() => openLibraryHit(h)} title="Open in your library">
+                  <span className="shop-lib-kind">{h.kind === 'artist' ? 'Artist' : h.kind === 'album' ? 'Album' : 'Song'}</span>
+                  <span className="shop-lib-name">{h.kind === 'artist' ? h.row.name : h.kind === 'album' ? h.row.album : h.row.title}</span>
+                  {h.kind !== 'artist' ? <span className="shop-lib-sub">{h.row.artist}</span> : null}
+                </button>
+              ))}
+            </div>
           </section>
         )}
 
-        {ranked.albums.length > 0 && (
+        {!page && ranked.artists.length > 0 && (
           <section className="dl-sec">
             <div className="dl-sec-head">
-              <span className="dl-sec-title">Releases</span>
+              <span className="dl-sec-title">Artists</span>
+              <span className="dl-sec-count">{ranked.artists.length}</span>
+              <span className="dl-rule" />
+            </div>
+            <div className="shop-artists">{ranked.artists.map((a, i) => renderArtist(a, i))}</div>
+          </section>
+        )}
+
+        {!page && ranked.albums.length > 0 && (
+          <section className="dl-sec">
+            <div className="dl-sec-head">
+              <span className="dl-sec-title">Albums</span>
               <span className="dl-sec-count">{ranked.albums.length}</span>
               <span className="dl-rule" />
             </div>
@@ -1008,7 +915,7 @@ export default function DownloadView() {
           </section>
         )}
 
-        {ranked.songs.length > 0 && (
+        {!page && ranked.songs.length > 0 && (
           <section className="dl-sec">
             <div className="dl-sec-head">
               <span className="dl-sec-title">Songs</span>
@@ -1019,7 +926,7 @@ export default function DownloadView() {
           </section>
         )}
 
-        {!hasResults && !searching && (
+        {!page && !hasResults && !searching && (
           <div className="dl-empty">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" /></svg>
             <span className="dl-empty-title">{query ? 'Nothing matched that.' : 'Search for songs, albums or artists.'}</span>

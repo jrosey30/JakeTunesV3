@@ -797,6 +797,11 @@ declare global {
       searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
       /** A record's real editions and the one Save album takes (Brief 255). */
       listAlbumEditions?: (artist: string, album: string) => Promise<import('../common/album-preflight').AlbumEditions>
+      /** The Record Shop's grouped search (Brief 256): artists, albums, songs. */
+      shopSearch?: (query: string) => Promise<{ ok: boolean; songs: ItunesSuggestion[]; artists: import('../common/shop-search').ShopArtist[]; albums: import('../common/shop-search').ShopAlbum[]; songsOk?: boolean; albumsOk: boolean }>
+      shopArtistReleases?: (artistId: number, name: string) => Promise<{ ok: boolean; artist?: import('../common/shop-search').ShopArtist; releases: import('../common/shop-search').ArtistReleases }>
+      /** One Qobuz catalogue search for a page's lossless dots; the token never leaves main. */
+      shopQobuzLossless?: (words: string, limit?: number) => Promise<{ ok: boolean; hits: import('../common/shop-lossless').QobuzHit[] }>
       itunesAlbumTracks: (ref: number | { artist?: string; album: string }) => Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string; collectionId?: number }>
       /** Record Shop (6.0): resolve an item's catalogue selection + ownership (src/common/record-shop-live.ts types). */
       recordShop?: { resolve: (req: import('../common/record-shop-live').ShopResolveRequest) => Promise<import('../common/record-shop-live').ShopResolveResult> }
@@ -1200,7 +1205,7 @@ declare global {
       streamripStatus: () => Promise<{ ok: boolean; installed?: boolean; version?: string; reason?: string }>
       streamripDownload: (url: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
       streamripSearch?: (opts: { query: string; source?: string; mediaType?: string; numResults?: number }) => Promise<{ ok: boolean; results?: Array<{ source: string; mediaType: string; id: string; desc: string }>; error?: string }>
-      streamripDownloadId?: (source: string, mediaType: string, id: string, addedVia?: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
+      streamripDownloadId?: (source: string, mediaType: string, id: string, addedVia?: string, jobId?: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
       /** Does Qobuz have this album edition? Asked before an album job downloads (Brief 255). */
       checkQobuzAlbum?: (opts: import('../common/album-preflight').AlbumPreflightRequest) => Promise<import('../common/album-preflight').AlbumPreflight>
       /** A song not found anywhere isn't searched again the same way for a week (Brief 257). */
@@ -1209,8 +1214,12 @@ declare global {
         note: (key: string, outcome: string) => Promise<{ ok: boolean }>
         forget: (key: string) => Promise<{ ok: boolean }>
       }
-      streamripDownloadByQuery?: (opts: { artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number ; sourceEdition?: import('../common/source-edition').SourceEdition; addedVia?: string }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }>
-      streamripCancelActive?: () => Promise<{ ok: boolean; killed: number }>
+      streamripDownloadByQuery?: (opts: { artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number ; sourceEdition?: import('../common/source-edition').SourceEdition; addedVia?: string; jobId?: string }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }>
+      streamripCancelActive?: (jobId?: string) => Promise<{ ok: boolean; killed: number }>
+      onStreamripJobProgress?: (callback: (p: { jobId: string; have: number; of: number; reset?: boolean }) => void) => () => void
+      onStreamripJobEnded?: (callback: (p: { jobId: string; result: import('../common/download-lanes').JobEndResult }) => void) => () => void
+      downloadQueueLoad?: () => Promise<import('../common/download-lanes').SavedQueueDoc | null>
+      downloadQueueSave?: (jobs: unknown[]) => Promise<{ ok: boolean }>
       streamripGetQobuz?: () => Promise<{ ok: boolean; configured: boolean; email?: string }>
       streamripSetQobuz?: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>
       streamripSetQobuzToken?: (userId: string, token: string) => Promise<{ ok: boolean; error?: string }>

@@ -23,8 +23,11 @@ export type PanelQueueItem = QueueItemLike & {
   preflightAnswer?: AlbumPreflight
   offerTaken?: ShopOfferKind
   fromMemory?: boolean
+  /** Brief 258: an album's songs landed so far, from main. */
+  progress?: { have: number; of: number }
   result: QueueItemLike['result'] & { offerOf?: string; lossyOk?: boolean }
 }
+import { groupBySection, sectionOf, songProgressLine, type DownloadsSection } from './download-lanes.ts'
 
 export type PanelStatus = 'downloading' | 'queued' | 'done' | 'failed' | 'refused' | 'canceled'
 export type PanelAction = 'cancel' | 'retry' | 'chooseEdition' | 'chooseVersion' | 'nearEdition' | 'retryGroup' | 'offer'
@@ -67,6 +70,18 @@ export interface PanelRow {
   offerTaken: string | null
   /** Brief 257: a finished save that is a lossy MP3 says so. */
   lossy: string | null
+  /** Brief 258: an album's songs landed so far ("7 of 12"), while it downloads. */
+  progress: string | null
+  /** When it finished (for Done today). */
+  endedAt: number | null
+  /** Brief 258: why this job waits on Jake, in one plain line — the Needs you section's reason. Null when it doesn't. */
+  needsYou: NeedsYou | null
+}
+
+/** A job that waits on Jake. `kind` says why; `line` is what the row says. A later phase's one-tap fix renders beside it (renderer NeedsYouSlot). */
+export interface NeedsYou {
+  kind: 'refused' | 'failed'
+  line: string
 }
 
 export interface PanelGroup {
@@ -177,7 +192,15 @@ export function panelRowFor(q: PanelQueueItem, now: number): PanelRow {
     offerAsk: offers.length ? offerLine(offers[0], { asked: pa?.asked, askedCount: pa?.askedCount }) : null,
     offerTaken: q.offerTaken ? TAKEN_WORDS[q.offerTaken] : null,
     lossy: status === 'done' ? lossyNote(q.matchDesc) : null,
+    progress: status === 'downloading' && kind === 'album' ? songProgressLine(q.progress) : null,
+    endedAt: q.endedAt ?? null,
+    needsYou: status === 'refused' || status === 'failed' ? { kind: status, line: q.primary || q.error || 'Download failed' } : null,
   }
+}
+
+/** Brief 258: the one Downloads list — In progress, Done today, Needs you. A refused album whose recovered songs are still on the way stays In progress. */
+export function downloadsPanelSections(rows: readonly PanelRow[], now: number): Array<{ id: DownloadsSection; title: string; rows: PanelRow[] }> {
+  return groupBySection(rows, (r) => sectionOf({ status: r.status, endedAt: r.endedAt, groupInFlight: r.group?.inFlight }, now))
 }
 
 /** In-flight first, then what needs a decision, then what's finished — newest first within a group. */
