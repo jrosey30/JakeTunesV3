@@ -324,6 +324,25 @@ describe('done when: a quit in the middle of three album saves loses nothing', (
     await waitFor(() => main.saved.length > 0, 'saves once the list is back')
   })
 
+  it('a download started while the list could not be read is not stopped when the list comes back', async () => {
+    resetQueueForTests({ restored: false, retryMs: 1 })
+    let ok = false
+    main.load = async () => {
+      if (!ok) throw new Error('down')
+      const meanwhile = job('Started Meanwhile')!
+      return { ...emptyQueueDoc(), jobs: [], live: [meanwhile.armId!] }
+    }
+    main.answers.set('Started Meanwhile', hang)
+    enqueue(song('Started Meanwhile'))
+    const restoring = restoreSavedQueue()
+    await waitFor(() => job('Started Meanwhile')?.status === 'downloading', 'it to start meanwhile')
+    ok = true
+    await restoring
+    assert.deepEqual(main.canceled, [], 'its own download is never stopped')
+    assert.equal(job('Started Meanwhile')!.status, 'downloading')
+    await finishAll()
+  })
+
   it('nothing is saved before the saved list is read back, so a fresh start never overwrites it', async () => {
     resetQueueForTests({ restored: false })
     enqueue(song('Clicked Early'))

@@ -235,8 +235,11 @@ function applySaved(d: SavedQueueDoc | null | undefined): void {
     } else if (it.status === 'queued') it.armId = newArmId()
     back.push(it)
   }
-  // A rip main runs that no job on the list names any more: stop it.
-  for (const id of live) if (!following.has(id)) void window.electronAPI?.streamripCancelActive?.(id)?.catch(() => {})
+  // A rip main runs that no job here names: stop it. A job this window started
+  // while the list couldn't be read is already in `queue`: it is ours, never stopped.
+  const ours = new Set(following)
+  for (const q of queue) if (q.armId) ours.add(q.armId)
+  for (const id of live) if (!ours.has(id)) void window.electronAPI?.streamripCancelActive?.(id)?.catch(() => {})
   queue = [...back, ...queue]
   for (const it of back) if (it.status === 'queued') { askPreflight(it); it.logged = true }
   if (following.size) watchFollowed()
