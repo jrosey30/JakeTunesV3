@@ -1,4 +1,4 @@
-# Brief 259 — iPod sync survives a USB drop
+# Brief 260 — iPod sync survives a USB drop
 
 **Date:** 2026-11-20
 **Repo:** JakeTunes V3 (desktop)

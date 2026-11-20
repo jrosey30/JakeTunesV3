@@ -1,5 +1,5 @@
 /**
- * An iPod that drops off USB mid-copy (Brief 259, 2026-11-20).
+ * An iPod that drops off USB mid-copy (Brief 260, 2026-11-20).
  *
  * Jake's Y2K iPod (a 3G) reset its USB link eight minutes into an Activity
  * Sync: the rest of the copies failed with EIO, and the engine stopped and took

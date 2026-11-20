@@ -400,9 +400,9 @@ async function runActivitySyncHolding(
     return fail({ copied: 0, error: 'iPod is not mounted' })
   }
   // `let`, not const: a card that drops off USB mid-copy may come back at another
-  // /Volumes path, and every path below follows it there (rebaseCard, Brief 259).
+  // /Volumes path, and every path below follows it there (rebaseCard, Brief 260).
   let IPOD_MOUNT = mount
-  // Who this card is, read once before anything is written (Brief 259): a USB
+  // Who this card is, read once before anything is written (Brief 260): a USB
   // drop mid-copy is ridden out only when the card that comes back is this one.
   const readIdentity = host.readCardIdentity ?? readCardIdentityFromCard
   const cardIdentity = await readIdentity(IPOD_MOUNT)
@@ -485,7 +485,7 @@ async function runActivitySyncHolding(
     try { return JSON.parse(await readFile(join(host.stateDir, name), 'utf-8')) } catch { return null }
   }
   const priorManifestRaw = await readStateJson(LAST_SYNC_MANIFEST_FILE)
-  // What a sync stopped by a USB drop left confirmed on the card (Brief 259).
+  // What a sync stopped by a USB drop left confirmed on the card (Brief 260).
   const priorPartialRaw = await readStateJson(PARTIAL_ON_CARD_FILE)
   const priorSealRaw = await readStateJson(TSA_SEAL_FILE)
 
@@ -960,7 +960,7 @@ async function runActivitySyncHolding(
       for (const id of swap.stay) stayRows.set(id, proof.rows.get(id)!)
     }
   }
-  // A full copy after a sync the iPod dropped out of (Brief 259): the songs
+  // A full copy after a sync the iPod dropped out of (Brief 260): the songs
   // that sync confirmed on the card are adopted, not copied again, when each is
   // the same song this sync would copy (id, card path, identity, both sizes)
   // and the card still holds that exact file (its size and mtime as confirmed).
@@ -1127,7 +1127,7 @@ async function runActivitySyncHolding(
   let verifyAttempts = 0
 
   // The record of songs a dropped sync left on the card: obsolete once this run
-  // empties the card again, swaps, or seals (Brief 259).
+  // empties the card again, swaps, or seals (Brief 260).
   const forgetPartial = (): Promise<void> => unlink(join(host.stateDir, PARTIAL_ON_CARD_FILE)).catch(() => {})
 
   const rewipeAndStop = async (why: ActivitySyncResult): Promise<ActivitySyncResult> => {
@@ -1627,7 +1627,7 @@ async function runActivitySyncHolding(
   // Prepare, never a stopped sync (2026-11-08). Not a full Mac disk: that stops.
   const droppedAtCopy = new Set<number>()
 
-  // ── Riding out a USB drop (Brief 259) ──
+  // ── Riding out a USB drop (Brief 260) ──
   // Each song's outcome is settled once; a drop rewinds the loop to the song
   // it was writing and to any confirmed song the card lost meanwhile.
   const planIndex = new Map(plan.map((e, k) => [e.id, k]))

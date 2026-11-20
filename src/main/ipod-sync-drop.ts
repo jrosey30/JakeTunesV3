@@ -1,5 +1,5 @@
 /**
- * An iPod that drops off USB in the middle of a copy (Brief 259, 2026-11-20).
+ * An iPod that drops off USB in the middle of a copy (Brief 260, 2026-11-20).
  *
  * Jake's Y2K iPod (a 3G, HFS+, 40 GB, plugged straight into the MacBook)
  * copied for eight minutes, then its USB device reset and remounted on its

@@ -73,7 +73,7 @@ const RULES: Rule[] = [
   { test: /swap’s removal step/i, stage: 'wipe', happened: 'Couldn’t remove the old songs.', next: AGAIN_CABLE },
   { test: /activity wipe/i, stage: 'wipe', happened: 'Couldn’t clear the iPod.', next: AGAIN_CABLE },
   { test: /sync cancelled/i, stage: 'copy', happened: 'You stopped the sync.', next: '' },
-  // Brief 259: the iPod's USB reset mid-copy and it never came back, or another iPod did.
+  // Brief 260: the iPod's USB reset mid-copy and it never came back, or another iPod did.
   { test: /disconnected during the copy and didn’t come back|kept disconnecting/i, stage: 'copy', happened: 'The iPod disconnected.', next: AGAIN_CABLE },
   { test: /a different ipod came back/i, stage: 'copy', happened: 'A different iPod was plugged in.', next: 'Plug the first iPod back in and sync again.' },
   { test: /confirmed on the card after copy/i, stage: 'copy', happened: 'Some songs didn’t copy.', next: AGAIN_CABLE },
@@ -139,7 +139,7 @@ export function swapKeptNote(songs: number, restored: boolean): string {
 }
 
 /** Appended by the Activity engine when the iPod dropped off USB mid-copy and
- *  didn't come back (Brief 259, 2026-11-20): nothing was taken off the card,
+ *  didn't come back (Brief 260, 2026-11-20): nothing was taken off the card,
  *  and the next sync adopts what was confirmed instead of copying it again. */
 export const DROP_KEPT_MARK = 'The songs copied so far stay on the iPod'
 export function dropKeptNote(songs: number): string {
