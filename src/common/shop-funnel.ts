@@ -38,6 +38,8 @@ interface OpenSearch {
   hits: number
   songs: number
   albums: number
+  /** Artists shown (Brief 256's grouped search); absent from an older caller. */
+  artists?: number
   answerMs: number
   how: ShopSearchHow
   saves: number
@@ -47,7 +49,7 @@ interface OpenSearch {
 
 export interface ShopFunnel {
   /** A search answered (results on screen). Closes the one before it. */
-  searched(o: { len: number; hits: number; songs: number; albums: number; answerMs: number; how: ShopSearchHow; ok?: boolean }): ShopFunnelEvent | null
+  searched(o: { len: number; hits: number; songs: number; albums: number; artists?: number; answerMs: number; how: ShopSearchHow; ok?: boolean }): ShopFunnelEvent | null
   /** A save from the search's results (song or album). */
   saved(kind: 'song' | 'album'): void
   /** The results were left (box cleared, tab left, window closing). */
@@ -72,6 +74,7 @@ export function createShopFunnel(now: () => number): ShopFunnel {
         hits: s.hits,
         songs: s.songs,
         albums: s.albums,
+        ...(typeof s.artists === 'number' ? { artists: s.artists } : {}),
         how: s.how,
         saves: s.saves,
         albumSaves: s.albumSaves,
@@ -85,7 +88,7 @@ export function createShopFunnel(now: () => number): ShopFunnel {
     searched(o) {
       const ev = close()
       open = {
-        at: now(), len: Math.max(0, Math.round(o.len)), hits: o.hits, songs: o.songs, albums: o.albums,
+        at: now(), len: Math.max(0, Math.round(o.len)), hits: o.hits, songs: o.songs, albums: o.albums, artists: o.artists,
         answerMs: o.answerMs, how: o.how, saves: 0, albumSaves: 0, firstSaveMs: null, ok: o.ok ?? true,
       }
       return ev

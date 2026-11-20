@@ -18,6 +18,7 @@ import { createAlbumPersonnelService, type AlbumPersonnel } from '../album-perso
 import { albumCreditsKey, createAlbumCreditsStore, creditsFromPersonnel, type AlbumCredits } from '../album-credits.ts'
 import { rankLibraryAlbums, startAlbumPersonnelPrefetch, type LibraryAlbum } from '../album-personnel-prefetch.ts'
 import { registerRecordShopIpc } from './record-shop-ipc.ts'
+import { searchShopCatalog, shopArtistReleases } from '../shop-search.ts'
 import { registerNearEditionIpc } from './near-edition-ipc.ts'
 
 /** index.ts ranks the library for `listAlbums` with this (re-exported so its
@@ -226,6 +227,11 @@ export function registerAlbumInfoIpc(ipc: IpcRegistrar, host: AlbumInfoHost = {}
   // A record's real editions and the one a one-click Save album takes (Brief 255).
   ipc.handle('list-album-editions', async (_event, artist: string, album: string) => itunesAlbumEditions(String(artist || ''), String(album || '')),
     { refuse: { ok: false, editions: [], chosenId: null } })
+  // The Record Shop's grouped search (artists, albums, songs) and its artist page (Brief 256).
+  ipc.handle('shop-search', async (_event, query: string) => searchShopCatalog(String(query || '')),
+    { refuse: { ok: false, songs: [], artists: [], albums: [], albumsOk: false } })
+  ipc.handle('shop-artist-releases', async (_event, artistId: number, name: string) => shopArtistReleases(Number(artistId), String(name || '')),
+    { refuse: { ok: false, releases: { albums: [], eps: [], singles: [] } } })
   // The Record Shop's identity + ownership question rides the same catalogue lookup.
   registerRecordShopIpc(ipc)
   registerNearEditionIpc(ipc)

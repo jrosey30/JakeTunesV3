@@ -199,35 +199,51 @@ export function pickItunesAlbumRow<T extends { collectionName?: string; artistNa
   return results.find((r) => nameKey(r.collectionName || '', '') === want) || results[0]
 }
 
-export async function fetchExplicitAlbumMap(artistIds: number[]): Promise<Map<string, { id: number; trackCount?: number }>> {
+/** Apple's JSON for one URL, or null. The Record Shop passes a cached one (shop-search.ts appleJson); `retry` = one more try after a refusal. */
+export type AppleJson = (url: string, timeoutMs: number, o?: { retry?: boolean }) => Promise<{ results?: Array<Record<string, unknown>> } | null>
+
+/** The explicit lookup's URL. 200 is the lookup endpoint's max (see fetchExplicitAlbumMap). */
+export const explicitLookupUrl = (artistId: number): string => `https://itunes.apple.com/lookup?id=${artistId}&entity=album&limit=200`
+
+/** Fold one artist's album lookup into the explicit map (first explicit of a name wins). */
+export function addExplicitAlbums(map: Map<string, { id: number; trackCount?: number }>, results: ReadonlyArray<Record<string, unknown>> | undefined): void {
+  for (const c of results || []) {
+    if (c.wrapperType !== 'collection') continue
+    if (c.collectionExplicitness !== 'explicit') continue
+    const name = explicitMapKey(String(c.collectionName ?? ''))
+    if (!name || !c.collectionId) continue
+    // First explicit wins: Apple lists deluxe/extended variants under
+    // their own names, so a same-name hit is the album.
+    if (!map.has(name)) {
+      map.set(name, {
+        id: Number(c.collectionId),
+        trackCount: typeof c.trackCount === 'number' ? c.trackCount : undefined,
+      })
+    }
+  }
+}
+
+export async function fetchExplicitAlbumMap(artistIds: number[], json?: AppleJson): Promise<Map<string, { id: number; trackCount?: number }>> {
   const map = new Map<string, { id: number; trackCount?: number }>()
   if (artistIds.length === 0) return map
   await Promise.all(artistIds.map(async (artistId) => {
     try {
+      if (json) {
+        const data = await json(explicitLookupUrl(artistId), 6000, { retry: false })
+        if (data) addExplicitAlbums(map, data.results)
+        return
+      }
       const abRes = await fetch(
         // 200 is the lookup endpoint's max, and it matters: Nicki Minaj's
         // catalog holds 200+ collections, and at limit=100 the explicit
         // "Roman Reloaded the Re-Up" simply wasn't in the page — so the
         // rescue coin-flipped on big-catalog artists (measured 2026-08-15:
         // limit=100 → 0 explicit Re-Up editions, limit=200 → 1).
-        `https://itunes.apple.com/lookup?id=${artistId}&entity=album&limit=200`,
+        explicitLookupUrl(artistId),
         { signal: AbortSignal.timeout(6000) })
       if (!abRes.ok) return
       const abData = await abRes.json() as { results?: Array<Record<string, unknown>> }
-      for (const c of abData.results || []) {
-        if (c.wrapperType !== 'collection') continue
-        if (c.collectionExplicitness !== 'explicit') continue
-        const name = explicitMapKey(String(c.collectionName ?? ''))
-        if (!name || !c.collectionId) continue
-        // First explicit wins: Apple lists deluxe/extended variants under
-        // their own names, so a same-name hit is the album.
-        if (!map.has(name)) {
-          map.set(name, {
-            id: Number(c.collectionId),
-            trackCount: typeof c.trackCount === 'number' ? c.trackCount : undefined,
-          })
-        }
-      }
+      addExplicitAlbums(map, abData.results)
     } catch { /* one artist's lookup failing must not sink the others */ }
   }))
   return map
@@ -278,7 +294,22 @@ export function rowSeconds(r: Record<string, unknown>, rescued: boolean): number
   return rescued && r.trackExplicitness === 'cleaned' ? undefined : Math.round(r.trackTimeMillis / 1000)
 }
 
-export async function searchItunesSuggestions(query: string): Promise<{ ok: boolean; results: ItunesSuggestion[] }> {
+/** The artist question the song search asks (and the Record Shop shares). */
+export const shopArtistSearchUrl = (q: string): string => `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=musicArtist&limit=3`
+
+/** One Apple GET with no retry: through `json` when given, else a plain fetch (null on a refusal; a throw is the caller's). */
+async function appleGet(url: string, timeoutMs: number, json?: AppleJson): Promise<{ results?: Array<Record<string, unknown>> } | null> {
+  if (json) return json(url, timeoutMs, { retry: false })
+  const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
+  return res.ok ? await res.json() as { results?: Array<Record<string, unknown>> } : null
+}
+
+/**
+ * `o.json`: ask Apple through this instead of fetch (the Record Shop's cache,
+ * so the shop's own artist question and explicit lookups are one request).
+ * `source` says whose rows these are: Deezer's when Apple didn't answer.
+ */
+export async function searchItunesSuggestions(query: string, o: { json?: AppleJson } = {}): Promise<{ ok: boolean; results: ItunesSuggestion[]; source?: 'apple' | 'deezer' }> {
   const q = (query || '').trim()
   if (q.length < 2) return { ok: true, results: [] }
   try {
@@ -293,13 +324,18 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
       // search looked broken when it had simply been asked too fast. One
       // short retry costs 400ms and recovers most of them.
       const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=60`
-      let res = await fetch(url, { signal: AbortSignal.timeout(4000) })
-      if (!res.ok || res.status === 403) {
-        await new Promise((r) => setTimeout(r, 400))
-        res = await fetch(url, { signal: AbortSignal.timeout(4000) })
+      let data: { results?: Array<Record<string, unknown>> } | null = null
+      if (o.json) {
+        data = await o.json(url, 4000, { retry: true })
+      } else {
+        let res = await fetch(url, { signal: AbortSignal.timeout(4000) })
+        if (!res.ok || res.status === 403) {
+          await new Promise((r) => setTimeout(r, 400))
+          res = await fetch(url, { signal: AbortSignal.timeout(4000) })
+        }
+        if (res.ok) data = (await res.json()) as { results?: Array<Record<string, unknown>> }
       }
-      if (res.ok) {
-        const data = (await res.json()) as { results?: Array<Record<string, unknown>> }
+      if (data) {
         // Jake, 2026-08-15, searching the song title "Shawty Is Da Sh*!" and
         // getting CLEAN-only releases: "WHY IS THE CLEAN VERSION ONLY
         // SHOWING????????"
@@ -317,7 +353,7 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
           .filter((r) => r.trackExplicitness === 'cleaned' || r.collectionExplicitness === 'cleaned')
           .map((r) => Number(r.artistId))
           .filter((id) => Number.isFinite(id) && id > 0))].slice(0, 4)
-        const explicitByAlbum = await fetchExplicitAlbumMap(cleanedArtistIds)
+        const explicitByAlbum = await fetchExplicitAlbumMap(cleanedArtistIds, o.json)
         raw = results
           .filter((r) => !isPreviewLengthResult(rowSeconds(r, false), String(r.trackName ?? '')))
           .map((r) => {
@@ -353,6 +389,7 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
           .filter((s) => s.song && s.artist && !ITUNES_JUNK_ARTIST.test(s.artist) && !ITUNES_JUNK_ARTIST.test(s.album || ''))
       }
     } catch { raw = null }
+    const source: 'apple' | 'deezer' = raw === null ? 'deezer' : 'apple'
     if (raw === null) raw = await fetchDeezerSuggestions(q)
     if (raw === null) return { ok: false, results: [] }
 
@@ -376,17 +413,13 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
     const foldedQ = foldAccents(q).replace(/[^a-z0-9]/g, '')
     if (foldedQ.length >= 3) {
       try {
-        const aRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=musicArtist&limit=3`,
-          { signal: AbortSignal.timeout(3500) })
-        if (aRes.ok) {
-          const aData = await aRes.json() as { results?: Array<{ artistId?: number; artistName?: string }> }
+        const aData = await appleGet(shopArtistSearchUrl(q), 3500, o.json) as { results?: Array<{ artistId?: number; artistName?: string }> } | null
+        if (aData) {
           const hit = (aData.results || []).find((a) =>
             foldAccents(a.artistName || '').replace(/[^a-z0-9]/g, '') === foldedQ)
           if (hit?.artistId) {
-            const lRes = await fetch(`https://itunes.apple.com/lookup?id=${hit.artistId}&entity=song&limit=120`,
-              { signal: AbortSignal.timeout(6000) })
-            if (lRes.ok) {
-              const lData = await lRes.json() as { results?: Array<Record<string, unknown>> }
+            const lData = await appleGet(`https://itunes.apple.com/lookup?id=${hit.artistId}&entity=song&limit=120`, 6000, o.json)
+            if (lData) {
               const canonical = foldAccents(hit.artistName || '').replace(/[^a-z0-9]/g, '')
 
               // ── Find the UNCENSORED edition of each album ──────────────
@@ -422,7 +455,7 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
                 .filter((r) => r.trackExplicitness === 'cleaned' || r.collectionExplicitness === 'cleaned')
                 .map((r) => Number(r.artistId))
                 .filter((id) => Number.isFinite(id) && id > 0 && id !== Number(hit.artistId)))].slice(0, 3)
-              const explicitByAlbum = await fetchExplicitAlbumMap([Number(hit.artistId), ...cleanedIds])
+              const explicitByAlbum = await fetchExplicitAlbumMap([Number(hit.artistId), ...cleanedIds], o.json)
               const own = (lData.results || [])
                 .filter((r) => (r.wrapperType === 'track' || r.kind === 'song') && r.trackName && r.artistName)
                 // PRIMARY artist only. The lookup also returns the guest spots
@@ -493,7 +526,7 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
       } catch { /* the plain search already stands on its own */ }
     }
 
-    return { ok: true, results: rankSuggestions(raw, q) }
+    return { ok: true, results: rankSuggestions(raw, q), source }
   } catch {
     return { ok: false, results: [] }
   }

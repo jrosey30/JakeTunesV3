@@ -294,9 +294,12 @@ describe('FORTIFICATIONS — 2026-08-29 ("IT SPEAKS. fortify fortify fortify.")'
     const store = readFileSync(join(SRC, 'main/streamrip-store/index.ts'), 'utf-8')
     assert.ok(store.includes('cleanedSource: opts?.cleanedSource'), 'the track judge no longer hears the row is clean: the explicit file is held to the censored edit\'s length again')
     assert.ok(!/durationTolSec/.test(store), 'the store chose a tolerance again; exact-recording.ts requestedLength reads it off the row')
-    const view = readFileSync(join(SRC, 'renderer/views/DownloadStore/DownloadView.tsx'), 'utf-8')
-    const asSongRow = view.split('const asSongRow')[1]?.split('})')[0] ?? ''
-    assert.ok(asSongRow.includes('explicitness: t.explicitness'), 'a Get on an expanded album\'s track forgot the row is clean: ±5 s of the censored edit')
+    // An album's songs are saved from its page in the shop (Brief 256), through songJobsFor.
+    const editions = readFileSync(join(SRC, 'renderer/views/DownloadStore/albumEditions.ts'), 'utf-8')
+    const songJobs = editions.split('export function songJobsFor')[1]?.split('\n}\n')[0] ?? ''
+    assert.ok(songJobs.includes("cleanedSource: t.explicitness === 'cleaned'"), 'a Save on an album page\'s song forgot the row is clean: ±5 s of the censored edit')
+    const page = readFileSync(join(SRC, 'renderer/views/DownloadStore/ShopAlbumPage.tsx'), 'utf-8')
+    assert.ok(page.includes('songJobsFor('), 'the album page builds its song saves another way: the clean flag may not ride along')
     for (const file of ['main/streamrip-store/index.ts', 'main/record-shop-resolve.ts', 'main/ipc/near-edition-ipc.ts']) {
       const src = readFileSync(join(SRC, file), 'utf-8')
       assert.ok(src.includes('explicitness: t.explicitness'), `${file} dropped the track's flag: buildRequestedAlbum keeps the clean length`)

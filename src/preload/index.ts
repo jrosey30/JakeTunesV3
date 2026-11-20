@@ -5,6 +5,8 @@ import type { UpdateChoice, UpdateReadyState } from '../common/update-ready'
 import type { DialogueInput, DialogueResult } from '../common/speech'
 import type { AskResult, AskSubject } from '../common/music-man-packet'
 import type { AlbumEditions, AlbumPreflight, AlbumPreflightRequest } from '../common/album-preflight'
+import type { ShopSearchAnswer, ShopArtistAnswer } from '../common/shop-search'
+import type { QobuzHit } from '../common/shop-lossless'
 
 const electronAPI = {
   loadTracks: (): Promise<{ tracks: unknown[]; playlists: { name: string; trackIds: number[] }[] }> => ipcRenderer.invoke('load-tracks'),
@@ -273,6 +275,10 @@ const electronAPI = {
   itunesAlbumTracks: (ref: number | { artist?: string; album: string }) => ipcRenderer.invoke('itunes-album-tracks', ref),
   // A record's real editions, and the one a one-click Save album takes (Brief 255).
   listAlbumEditions: (artist: string, album: string): Promise<AlbumEditions> => ipcRenderer.invoke('list-album-editions', artist, album),
+  // The Record Shop's grouped search, its artist page, and the lossless dot (Brief 256).
+  shopSearch: (query: string): Promise<ShopSearchAnswer<Record<string, unknown>>> => ipcRenderer.invoke('shop-search', query),
+  shopArtistReleases: (artistId: number, name: string): Promise<ShopArtistAnswer> => ipcRenderer.invoke('shop-artist-releases', artistId, name),
+  shopQobuzLossless: (words: string, limit?: number): Promise<{ ok: boolean; hits: QobuzHit[] }> => ipcRenderer.invoke('shop-qobuz-lossless', words, limit),
   // Artist-verified cover art for radar/discovery cards (no wrong covers).
   lookupRecoArtwork: (input: { artist: string; title: string }) => ipcRenderer.invoke('lookup-reco-artwork', input),
   lookupAlbumPreview: (input: { artist: string; album: string }): Promise<{ previewUrl?: string; trackTitle?: string }> => ipcRenderer.invoke('lookup-album-preview', input),

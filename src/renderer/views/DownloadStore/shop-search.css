@@ -1,0 +1,84 @@
+/* The Record Shop's grouped search, artist and album pages (Brief 256). */
+
+/* The lossless dot: shown only when Qobuz's answer names the row. */
+.shop-dot {
+  display: inline-block; flex-shrink: 0;
+  width: 7px; height: 7px; border-radius: 50%;
+  margin-right: 6px; vertical-align: middle;
+  background: #2f9e5b;
+}
+.shop-dot--hires { background: #c9a227; box-shadow: 0 0 0 1px rgba(201, 162, 39, 0.35); }
+.shop-dot-label { display: inline-flex; align-items: center; }
+
+/* In your library / On your list. */
+.shop-mark {
+  display: inline-block; font-size: 11px; font-weight: 600;
+  color: var(--text-secondary, #6b655a);
+}
+.shop-mark--list { color: var(--accent-text, #C14201); }
+.shop-mark--inline { margin-left: 8px; font-weight: 500; }
+.dl-rel .shop-mark { margin-top: 2px; }
+
+/* Artists: round pictures in a row. */
+.shop-artists { display: flex; flex-wrap: wrap; gap: 16px; }
+.shop-artist {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  width: 132px; padding: 8px; border: 0; border-radius: 12px;
+  background: transparent; color: inherit; font: inherit; cursor: pointer; text-align: center;
+}
+.shop-artist:hover, .shop-artist:focus-visible { background: rgba(85, 78, 64, 0.07); }
+.shop-artist.is-named .shop-artist-name { font-weight: 800; }
+.shop-artist-art {
+  width: 104px; height: 104px; border-radius: 50%; object-fit: cover;
+  background: rgba(85, 78, 64, 0.12);
+}
+.shop-artist-art--ph {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 36px; font-weight: 700; color: var(--text-secondary, #6b655a);
+}
+.shop-artist-name { font-size: 13px; font-weight: 700; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shop-artist-sub { font-size: 11px; color: var(--text-secondary, #6b655a); }
+
+/* Jake's own matches, above the catalogue. */
+.shop-lib { display: flex; flex-wrap: wrap; gap: 8px; }
+.shop-lib-hit {
+  display: inline-flex; align-items: baseline; gap: 6px; max-width: 320px;
+  padding: 6px 12px; border: 1px solid rgba(85, 78, 64, 0.2); border-radius: 999px;
+  background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer;
+}
+.shop-lib-hit:hover, .shop-lib-hit:focus-visible { background: rgba(85, 78, 64, 0.07); }
+.shop-lib-kind { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary, #6b655a); }
+.shop-lib-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shop-lib-sub { color: var(--text-secondary, #6b655a); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* An artist or album page inside the shop. */
+.shop-page { display: flex; flex-direction: column; gap: 12px; }
+.shop-back {
+  align-self: flex-start; border: 0; background: transparent; color: var(--text-secondary, #6b655a);
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; padding: 4px 0;
+}
+.shop-back:hover { color: var(--text-primary, #2b2823); }
+.shop-page-head { display: flex; gap: 20px; align-items: flex-end; }
+.shop-album-art { width: 180px; height: 180px; border-radius: 8px; object-fit: cover; background: rgba(85, 78, 64, 0.12); flex-shrink: 0; }
+.shop-album-art--ph { display: flex; align-items: center; justify-content: center; font-size: 48px; color: var(--text-secondary, #6b655a); }
+.shop-page-head .shop-artist-art { width: 160px; height: 160px; flex-shrink: 0; }
+.shop-page-titles { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.shop-page-kind { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary, #6b655a); }
+.shop-page-title { font-size: 28px; font-weight: 800; line-height: 1.1; overflow-wrap: anywhere; }
+.shop-page-sub { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; color: var(--text-secondary, #6b655a); }
+.shop-page-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 4px; }
+
+.shop-tracks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.shop-track {
+  display: grid; grid-template-columns: 20px 28px minmax(0, 1fr) 14px 48px auto;
+  align-items: center; gap: 8px; padding: 6px 4px;
+  border-bottom: 1px solid rgba(85, 78, 64, 0.08);
+}
+.shop-track.is-owned { opacity: 0.7; }
+.shop-track-num { font-size: 12px; color: var(--text-secondary, #6b655a); text-align: right; }
+.shop-track-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shop-track-feat { color: var(--text-secondary, #6b655a); }
+.shop-track-dot { display: flex; justify-content: center; }
+.shop-track-dot .shop-dot { margin-right: 0; }
+.shop-track-dur { font-size: 12px; color: var(--text-secondary, #6b655a); text-align: right; font-variant-numeric: tabular-nums; }
+.shop-track-act { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
