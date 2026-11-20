@@ -53,3 +53,63 @@ The engine treated a vanished card like 50 songs that failed to copy, and the st
 - A streamed song (not on this Mac) is adopted only when its copy size is known up front. The next sync's preflight still probes or converts adopted songs before the wipe: no card writes, just time.
 - With no marker, GUID or serial, a drop is never ridden out: the sync stops and keeps the files.
 - Whether the 3G's resets are the drive, the cable, the port or power can't be fixed in code. `ipod-drops.jsonl` is there to find that out.
+
+---
+
+## Part 2 — a drop after the copy (2026-11-20, evening)
+
+**Branch:** `fix/ipod-sync-keeps-songs-every-step` (from `origin/main` 632f5b7c, which has #459 and #461)
+
+### What happened
+
+On the same Y2K iPod, all 416 songs copied. Then, while the song list was being put on the card, the iPod reset and the mount went stale. The log showed three tries in 40 ms, each `catalog copy onto the card failed: EIO … copyfile …/jaketunes-itunesdb-<pid> → /Volumes/Y2KPod/iPod_Control/iTunes/iTunesDB`. The run stopped with "never committed". It wrote no record, because the partial-on-card record was written only for a drop during the copy. The iPod came back later with all 416 files on it, and the next Sync started from 0. Jake: "it started over from 0 ughhhhhh".
+
+### What changed
+
+- **The steps after the copy ride out a drop too** (`ipod-activity-engine.ts`, §4 and §5 now run in one loop). These steps are the check across remounts, the gap fill, the song list (including artwork), and its proof. When one fails, the card itself decides whether it was a drop (`cardWentAway`). A drop is one of three things:
+  - the card is gone;
+  - another device is at the mount (st_dev);
+  - a tiny file won't write and read back.
+
+  There is no errno to go on at these steps ("never committed" is a sentence). A drop waits for the same iPod with the code the copy uses (`rideOutDrop`, factored out of the copy loop: identity plus probe, two answers in a row, the iPod followed to another `/Volumes` path, the same 3-drop limit per run). When the iPod is back, the loop runs again from the check across remounts. The songs are proven again, and the gap fill copies any song the drop took. Then the song list is written again. The UI says "The iPod reconnected — checking the songs again" or "The iPod reconnected — finishing the song list". A failure that isn't a drop ends the way it always did.
+- **Never back.** The same stop as a copy drop (`dropStop`): no card is touched, and the record covers every confirmed song, which is all of them once the copy has finished. The next sync adopts them all, copies 0 and writes only the song list. The stop message names the step ("disconnected while its song list was being written and didn’t come back"). `sync-failure-copy.ts` maps it to the catalog step (or the verify step) with "The iPod disconnected." Each line in `ipod-drops.jsonl` now carries `step`.
+- **A song list is never half-written.** The new iTunesDB goes onto the card as `iTunesDB.jaketunes-new`, is confirmed there (F_FULLFSYNC, size), and only then is renamed over `iTunesDB`. The firmware reads only `iTunesDB`, and an HFS+ rename is one journaled catalog change. A drop mid-write therefore leaves the old iTunesDB exactly as it was, with the half file next to it under the temporary name, which the next write replaces. `iTunesDB.bak` is still made once per run from the catalog the run started with.
+- **The gap fill never writes into a card that isn't there.** Its `mkdir -p` would have made the card's folders on the Mac. A proof round whose remount fails on a vanished card stops at once, so the drop is seen once instead of four times.
+
+### Adopting with no partial record (goal 3)
+
+The partial record exists only when the run lived to write it. A run can also die with songs on the card and no record: the app quits, the Mac sleeps, or the run stops somewhere this code never reaches. For that case, the in-flight manifest (and the catalogued one that replaces it) now carries `cardRecord`:
+- the iPod's identity (marker id, FireWire GUID, serial);
+- for each song, its card path, identity, the exact size of the file this run copies, and the library master's size.
+
+Songs fetched from homemini at copy time have no size yet and are left out. On the next full copy, a song with no partial-record adoption is adopted from `cardRecord` only when all of these hold:
+1. the record is for this iPod (`sameIpod`; an iPod with no identity never adopts), and the manifest isn't sealed;
+2. it is the same song this sync would copy (`stayVerdict`: id, card path, identity, both sizes);
+3. the card file is exactly the recorded size;
+4. after one cold remount, the card file reads back byte for byte the same as the file this sync would copy (`filesSameBytes`). If the remount fails, nothing is adopted this way.
+
+**Why that is safe, and why size alone is not.** HFS+ journals a file's length, not its data. A file whose last blocks never left the drive's cache when the USB link reset can read back at full size with the wrong bytes, and `confirmWriteOnCard` itself only checks size after F_FULLFSYNC. Comparing every byte after a cold remount (no Mac cache) proves the card holds exactly what a copy would write, which is stronger than what the partial record proves. Reading costs time (one full read of each candidate, no writes); how long on a 3G is unmeasured. The tests corrupt one file at the right size; it is copied again and the rest are adopted. With the compare turned off, that test fails.
+
+### Tests (`ipod-sync-drop.test.ts`)
+
+- **Drop while the song list is written, back:** half the new list lands, then the card goes. The list is written again and sealed, each song is written once, and no temporary file is left. The drop line has `step: 'catalog'` and 12/12 songs.
+- **Same drop, never back:**
+  - the record lists all 12 songs;
+  - the card's `iTunesDB` is still the old template byte for byte, and the half-written one is only under the temporary name;
+  - the next sync is a full copy with 0 copied, 12 kept and every inode unchanged, and it seals.
+- **Drop during the check across remounts, back:** checked again, sealed, nothing re-copied.
+- **No partial record (deleted after a drop):** 4 songs adopted from the in-flight record and 8 copied. The one corrupted at full size is copied again.
+- **In-flight record for another iPod:** nothing adopted, all 12 copied.
+- **Unit tests:**
+  - `cardWentAway`;
+  - `parseInflightCard`: sealed, other iPod, no identity, old manifest;
+  - `adoptFromInflight`: bytes, size, changed library file;
+  - `filesSameBytes`;
+  - the drop line's step.
+- **Mutation-checked:** writing the list straight to `iTunesDB`, or skipping the byte compare, fails the tests.
+
+### Limits
+
+- The swap's interim song list (before anything leaves) and the wipe still stop the old way on a drop.
+- After a drop at the song list, the result screen still says the iPod shows its previous list. That holds unless the rename had already happened when the iPod went: then it is the new list, unproven.
+- Today's card can't be adopted retroactively: its in-flight manifest was written before this change and has no `cardRecord`. Its next Sync copies all 416 once more; after that, both records protect it.

@@ -17,9 +17,10 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { runActivitySync, type ActivitySyncHost, type ActivitySyncResult } from '../ipod-activity-engine.ts'
 import {
-  DROP_BACK_LINE, OLD_IPOD_PAUSE_EVERY_BYTES, PARTIAL_ON_CARD_FILE, adoptFromPartial, buildPartialOnCard, classifyCopyFailure,
-  failureCode, fileReadsWhole, pacesWrites, parsePartialOnCard, pauseUnlessCancelled, probeCardWrites, sameIpod, waitForSameIpod,
-  type IpodCardIdentity,
+  CATALOG_TEMP_NAME, DROP_BACK_LINE, DROP_BACK_STEP_LINE, OLD_IPOD_PAUSE_EVERY_BYTES, PARTIAL_ON_CARD_FILE, adoptFromInflight,
+  adoptFromPartial, buildInflightCard, buildPartialOnCard, cardWentAway, classifyCopyFailure, dropLogLine,
+  failureCode, fileReadsWhole, filesSameBytes, pacesWrites, parseInflightCard, parsePartialOnCard, pauseUnlessCancelled, probeCardWrites,
+  sameIpod, waitForSameIpod, type IpodCardIdentity,
 } from '../ipod-sync-drop.ts'
 import { DROP_ADOPT_TAIL, DROP_KEPT_MARK, syncFailureCopy, syncOutcome } from '../../common/sync-failure-copy.ts'
 import { parseCatalogPaths } from '../sync-engine/roundtrip.ts'
@@ -473,6 +474,177 @@ describe('Activity Sync rides out a USB drop', () => {
   })
 })
 
+describe('Activity Sync rides out a drop after the copy (Brief 260 part 2)', () => {
+  const eio = (what: string) => Object.assign(new Error(`EIO: i/o error, copyfile '${what}'`), { code: 'EIO' })
+  const db = (card: string) => join(card, 'iPod_Control', 'iTunes', 'iTunesDB')
+
+  /** The new song list: half of it lands, then the iPod resets (the 2026-11-20 Y2KPod). */
+  function dropOnFirstCatalogWrite(r: Rig): () => number {
+    let tries = 0
+    r.host.copyCatalogToCard = async (src, dst) => {
+      tries++
+      if (tries === 1) {
+        const bytes = await readFile(src)
+        await writeFile(dst, bytes.subarray(0, bytes.length >> 1))
+        await rename(r.card, r.away)
+        throw eio(`${src}' -> '${dst}`)
+      }
+      await copyFile(src, dst)
+    }
+    return () => tries
+  }
+
+  it('drops while the song list is written, comes back: the list is written again and sealed, no song copied again', async () => {
+    const r = await makeRig()
+    try {
+      const tries = dropOnFirstCatalogWrite(r)
+      let looks = 0
+      r.whileAway = async (rr) => { if (++looks === 5) await rename(rr.away, rr.card) }
+      const res = await sync(r)
+      assert.equal(res.ok, true, res.error)
+      assert.equal(res.copied, N)
+      assert.equal(r.attempts, N, 'each song copied once, none again after the drop')
+      for (const [dst, n] of r.writes) assert.equal(n, 1, `${dst} copied ${n} times`)
+      assert.ok(tries() >= 2)
+      assert.ok(r.events.some((e) => e.title === DROP_BACK_STEP_LINE.catalog), 'the UI was told it is finishing the song list')
+      await assertCardWhole(r.card, N)
+      await assert.rejects(stat(join(r.card, 'iPod_Control', 'iTunes', CATALOG_TEMP_NAME)), 'no temporary song list left behind')
+      const [line] = await dropLines(r.state)
+      assert.equal(line.outcome, 'back')
+      assert.equal(line.step, 'catalog')
+      assert.equal(line.songsDone, N)
+      await assert.rejects(stat(join(r.state, PARTIAL_ON_CARD_FILE)), 'no record once sealed')
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('drops while the song list is written and never comes back: the old list stays whole, every song is recorded, the next sync copies none and writes the list', async () => {
+    const r = await makeRig()
+    try {
+      dropOnFirstCatalogWrite(r)
+      const res = await sync(r)
+      assert.equal(res.ok, false)
+      assert.ok(String(res.error).includes(DROP_KEPT_MARK), res.error)
+      assert.match(String(res.error), /while its song list was being written and didn’t come back/)
+      const copy = syncFailureCopy(String(res.error))
+      assert.equal(copy.happened, 'The iPod disconnected.')
+      assert.equal(copy.stage, 'catalog')
+      const partial = JSON.parse(await readFile(join(r.state, PARTIAL_ON_CARD_FILE), 'utf-8'))
+      assert.equal(partial.rows.length, N, 'every confirmed song is in the record')
+      const [line] = await dropLines(r.state)
+      assert.equal(line.outcome, 'never-back')
+      assert.equal(line.step, 'catalog')
+
+      // Plugged in again: the only iTunesDB is the old one, whole; the half-written one is beside it, never in its place.
+      await rename(r.away, r.card)
+      assert.deepEqual(await readFile(db(r.card)), emptyTemplate(), 'the old song list is untouched')
+      const half = await readFile(join(r.card, 'iPod_Control', 'iTunes', CATALOG_TEMP_NAME))
+      assert.ok(half.length > 0 && !half.equals(emptyTemplate()), 'the half-written list is only ever under its temporary name')
+      const left = await cardFiles(r.card)
+      assert.equal(left.size, N)
+
+      r.host.copyCatalogToCard = undefined
+      r.writes.clear()
+      const before = r.attempts
+      const again = await sync(r)
+      assert.equal(again.ok, true, again.error)
+      assert.equal(again.mode, 'full')
+      assert.equal(again.copied, 0)
+      assert.equal(again.kept, N)
+      assert.equal(r.attempts, before, 'no song copied')
+      const after = await cardFiles(r.card)
+      for (const id of ids) assert.equal(after.get(pathOf(id))?.ino, left.get(pathOf(id))?.ino, `song ${id} rewritten`)
+      await assertCardWhole(r.card, N)
+      await assert.rejects(stat(join(r.state, PARTIAL_ON_CARD_FILE)), 'the record is gone once sealed')
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('drops while the songs are checked across remounts, comes back: checked again and sealed', async () => {
+    const r = await makeRig()
+    try {
+      let remounts = 0
+      r.host.remountVolume = async (m: string) => {
+        if (++remounts === 2) {
+          await rename(r.card, r.away)
+          return { ok: false, error: 'the volume went away' }
+        }
+        return { ok: true, mountPoint: m }
+      }
+      let looks = 0
+      r.whileAway = async (rr) => { if (++looks === 3) await rename(rr.away, rr.card) }
+      const res = await sync(r)
+      assert.equal(res.ok, true, res.error)
+      assert.equal(r.attempts, N, 'no song copied again')
+      assert.ok(r.events.some((e) => e.title === DROP_BACK_STEP_LINE.verify))
+      const [line] = await dropLines(r.state)
+      assert.equal(line.step, 'verify')
+      await assertCardWhole(r.card, N)
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  /** A run that died with songs on the card and no partial record (the app quit): copy 5, drop, then lose the record. */
+  async function cardWithNoRecord(r: Rig): Promise<void> {
+    r.dropAt = 6
+    const res = await sync(r)
+    assert.equal(res.ok, false)
+    await rm(join(r.state, PARTIAL_ON_CARD_FILE))
+    await rename(r.away, r.card)
+    r.dropAt = 0
+    r.writes.clear()
+    const man = JSON.parse(await readFile(join(r.state, 'last-sync-manifest.json'), 'utf-8'))
+    assert.equal(man.status, 'in-flight')
+    assert.equal(man.cardRecord.ipod.markerId, MARKER)
+    assert.equal(man.cardRecord.rows.length, N)
+  }
+
+  it('no partial record: adopts from the in-flight record what reads back byte for byte, copies the rest', async () => {
+    const r = await makeRig()
+    try {
+      await cardWithNoRecord(r)
+      // Song 2 reads back at full size but its bytes never made it: the size alone would have adopted it.
+      const two = join(r.card, 'iPod_Control', 'Music', folder(2), songName(2))
+      await writeFile(two, Buffer.alloc(SONG_BYTES, 0))
+      const left = await cardFiles(r.card)
+      const again = await sync(r)
+      assert.equal(again.ok, true, again.error)
+      assert.equal(again.kept, 4)
+      assert.equal(again.copied, N - 4)
+      assert.ok(r.writes.has(two), 'the file whose bytes differ is copied again')
+      for (const id of [0, 1, 3, 4]) {
+        assert.ok(!r.writes.has(join(r.card, 'iPod_Control', 'Music', folder(id), songName(id))), `song ${id} copied again`)
+        assert.equal((await cardFiles(r.card)).get(pathOf(id))?.ino, left.get(pathOf(id))?.ino)
+      }
+      assert.ok(r.events.some((e) => e.title === 'Checking the songs already on the iPod…'))
+      await assertCardWhole(r.card, N)
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('no partial record, and the in-flight record is another iPod\'s: nothing adopted', async () => {
+    const r = await makeRig()
+    try {
+      await cardWithNoRecord(r)
+      const p = join(r.state, 'last-sync-manifest.json')
+      const man = JSON.parse(await readFile(p, 'utf-8'))
+      man.cardRecord.ipod.markerId = 'another-ipod-9'
+      await writeFile(p, JSON.stringify(man))
+      const again = await sync(r)
+      assert.equal(again.ok, true, again.error)
+      assert.equal(again.kept, 0)
+      assert.equal(again.copied, N)
+      assert.ok(!r.events.some((e) => e.title === 'Checking the songs already on the iPod…'))
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('the drop rules', () => {
   const id = (markerId: string | null, guid: string | null = null, serial: string | null = null): IpodCardIdentity =>
     ({ markerId, firewireGuid: guid, serial, hardware: 'unknown' })
@@ -619,5 +791,43 @@ describe('the drop rules', () => {
     } as never)
     assert.equal(o?.changed, 'drop-kept')
     assert.match(String(o?.changedLine), /copies only the rest/)
+  })
+  it('after the copy, only the card decides a drop: gone, another device, or a failed probe', () => {
+    assert.equal(cardWentAway({ cardThere: true, sameDevice: true, cardProbeOk: true }), false)
+    assert.equal(cardWentAway({ cardThere: false, sameDevice: true, cardProbeOk: true }), true)
+    assert.equal(cardWentAway({ cardThere: true, sameDevice: false, cardProbeOk: true }), true)
+    assert.equal(cardWentAway({ cardThere: true, sameDevice: true, cardProbeOk: false }), true)
+    assert.match(dropLogLine({ at: 'x', ipod: 'Y2KPod', hardware: '3g', step: 'catalog', songsDone: 416, songsTotal: 416, bytesWritten: 1, secondsIn: 1, file: 'f', error: 'EIO', goneSeconds: null, outcome: 'never-back' }), /at the catalog step/)
+  })
+
+  it('the in-flight record: this iPod only, never a sealed manifest, and adopted only with the same bytes', async () => {
+    const me: IpodCardIdentity = { markerId: MARKER, firewireGuid: null, serial: null, hardware: '3g' }
+    const row = { id: 1, destPath: pathOf(1), identity: 'fp:sha1:1|9', size: 9, sourceSize: 9 }
+    const rec = buildInflightCard(me, [row, { ...row, id: 2, size: 0 }])
+    assert.equal(rec.rows.length, 1, 'a row with no size is left out')
+    assert.equal(parseInflightCard({ status: 'in-flight', cardRecord: rec }, me)?.get(1)?.size, 9)
+    assert.equal(parseInflightCard({ status: 'catalogued', sealed: false, cardRecord: rec }, me)?.size, 1)
+    assert.equal(parseInflightCard({ sealed: true, cardRecord: rec }, me), null)
+    assert.equal(parseInflightCard({ cardRecord: rec }, { ...me, markerId: 'another-ipod-9' }), null)
+    assert.equal(parseInflightCard({ cardRecord: buildInflightCard({ ...me, markerId: null }, [row]) }, me), null, 'no identity, no adoption')
+    assert.equal(parseInflightCard({ status: 'in-flight', tracks: [] }, me), null, 'an old manifest has no record')
+    const c = { id: 1, destPath: pathOf(1), identity: 'fp:sha1:1|9', copySize: 9, sourceSize: 9 }
+    assert.equal(adoptFromInflight(c, row, { size: 9 }, true), true)
+    assert.equal(adoptFromInflight(c, row, { size: 9 }, false), false, 'the right size with the wrong bytes')
+    assert.equal(adoptFromInflight(c, row, { size: 8 }, true), false)
+    assert.equal(adoptFromInflight(c, row, null, true), false)
+    assert.equal(adoptFromInflight({ ...c, copySize: 10 }, row, { size: 9 }, true), false, 'the library file changed')
+    const dir = await mkdtemp(join(tmpdir(), 'jt-same-bytes-'))
+    try {
+      await writeFile(join(dir, 'a'), Buffer.alloc(3 * 1024 * 1024 + 7, 5))
+      await writeFile(join(dir, 'b'), Buffer.alloc(3 * 1024 * 1024 + 7, 5))
+      const c2 = Buffer.alloc(3 * 1024 * 1024 + 7, 5); c2[3 * 1024 * 1024 + 3] = 6
+      await writeFile(join(dir, 'c'), c2)
+      assert.equal(await filesSameBytes(join(dir, 'a'), join(dir, 'b')), true)
+      assert.equal(await filesSameBytes(join(dir, 'a'), join(dir, 'c')), false)
+      assert.equal(await filesSameBytes(join(dir, 'a'), join(dir, 'missing')), false)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })

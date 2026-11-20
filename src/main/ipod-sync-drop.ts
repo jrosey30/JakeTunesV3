@@ -243,6 +243,8 @@ export interface DropFacts {
   at: string
   ipod: string
   hardware: IpodHardware
+  /** Which step the card went at: the copy, or a step after it (Brief 260 part 2). Absent in old lines = the copy. */
+  step?: 'copy' | 'verify' | 'catalog'
   songsDone: number
   songsTotal: number
   bytesWritten: number
@@ -256,7 +258,7 @@ export interface DropFacts {
 export function dropLogLine(d: DropFacts): string {
   const mb = (d.bytesWritten / 1e6).toFixed(0)
   const gone = d.goneSeconds === null ? '?' : `${d.goneSeconds.toFixed(1)}s`
-  return `activity-sync: DROP at ${d.at} — ${d.ipod} (${d.hardware}) after ${d.songsDone}/${d.songsTotal} songs, ${mb} MB, ${d.secondsIn.toFixed(0)}s into the copy; writing "${d.file}" (${d.error}); gone ${gone}; ${d.outcome}`
+  return `activity-sync: DROP at ${d.at} — ${d.ipod} (${d.hardware}) after ${d.songsDone}/${d.songsTotal} songs, ${mb} MB, ${d.secondsIn.toFixed(0)}s into the copy${d.step && d.step !== 'copy' ? `, at the ${d.step} step` : ''}; writing "${d.file}" (${d.error}); gone ${gone}; ${d.outcome}`
 }
 
 /** UI lines, plain. */
@@ -355,4 +357,145 @@ export function pacesWrites(hw: IpodHardware, listModel?: IpodModel | null): boo
 export async function pauseUnlessCancelled(ms: number, sleep: (ms: number) => Promise<void>, isCancelled: () => boolean): Promise<void> {
   const slice = 250
   for (let left = ms; left > 0 && !isCancelled(); left -= slice) await sleep(Math.min(slice, left))
+}
+
+// ── After the copy: the steps that still write to the card (Brief 260, part 2) ──
+//
+// 2026-11-20, the same Y2K iPod: all 416 songs copied, then the iPod reset while
+// its song list (iTunesDB) was being put on the card. Three tries in 40 ms failed
+// with EIO, the run stopped with no record of the songs, and the next Sync copied
+// all 416 again. Jake: "it started over from 0 ughhhhhh".
+
+/** The steps after the copy that touch the card. */
+export type CardStep = 'verify' | 'catalog'
+
+/**
+ * A step after the copy failed: did the card go? No errno to go on here (a
+ * catalog that "never committed" is a sentence), so only the card itself
+ * decides: gone, another device at the mount, or a tiny file that won't write
+ * and read back.
+ */
+export function cardWentAway(f: { cardThere: boolean; sameDevice: boolean; cardProbeOk: boolean }): boolean {
+  return !f.cardThere || !f.sameDevice || !f.cardProbeOk
+}
+
+/** UI lines when the iPod is back at a step after the copy. */
+export const DROP_BACK_STEP_LINE: Record<CardStep, string> = {
+  verify: 'The iPod reconnected — checking the songs again',
+  catalog: 'The iPod reconnected — finishing the song list',
+}
+
+/** How a stop names the step it was at (sync-failure-copy maps these). */
+export const DROP_STEP_WORDS: Record<CardStep | 'copy', string> = {
+  copy: 'during the copy',
+  verify: 'while its songs were being checked',
+  catalog: 'while its song list was being written',
+}
+
+/**
+ * The new iTunesDB lands under this name next to the old one and is renamed
+ * over it only once it is on the card whole. A drop mid-write leaves this file
+ * half-written and the old iTunesDB untouched: the firmware reads only
+ * "iTunesDB", and a rename on HFS+ is one journaled catalog change, never half.
+ */
+export const CATALOG_TEMP_NAME = 'iTunesDB.jaketunes-new'
+
+// ── The in-flight card record (adopting without a partial record) ──
+//
+// The partial record is written only when a run stops on a drop it saw. A run
+// that died some other way (the app quit, the Mac slept, a stop this code
+// never reached) leaves its songs on the card and no record. The in-flight
+// manifest now carries what each song's card file will be (path, identity,
+// both sizes) and which iPod it is for, and the next full copy may adopt a file
+// from it only when, after a cold remount, the card file reads back byte for
+// byte the same as the file this sync would copy. Size alone is never enough:
+// HFS+ journals the file's length, not its data, so a file the drive never
+// finished writing can read back at full size.
+
+export const INFLIGHT_CARD_FORMAT = 1
+
+export interface InflightCard {
+  format: typeof INFLIGHT_CARD_FORMAT
+  ipod: { markerId: string | null; firewireGuid: string | null; serial: string | null }
+  rows: SwapManifestRow[]
+}
+
+export function buildInflightCard(id: IpodCardIdentity, rows: SwapManifestRow[]): InflightCard {
+  return {
+    format: INFLIGHT_CARD_FORMAT,
+    ipod: { markerId: id.markerId, firewireGuid: id.firewireGuid, serial: id.serial },
+    rows: rows.filter((r) => r.size > 0 && r.identity && r.destPath),
+  }
+}
+
+/**
+ * The rows of the last run's in-flight record, or null: no record, a sealed
+ * manifest (a sealed card goes by the swap proof), a malformed record, or a
+ * record for another iPod (or one with no identity to check).
+ */
+export function parseInflightCard(manifestRaw: unknown, card: IpodCardIdentity): Map<number, SwapManifestRow> | null {
+  if (!manifestRaw || typeof manifestRaw !== 'object') return null
+  const m = manifestRaw as Record<string, unknown>
+  if (m.sealed === true) return null
+  const rec = m.cardRecord as Record<string, unknown> | undefined
+  if (!rec || typeof rec !== 'object' || rec.format !== INFLIGHT_CARD_FORMAT || !Array.isArray(rec.rows)) return null
+  const ip = (rec.ipod ?? {}) as Record<string, unknown>
+  const recorded: IpodCardIdentity = {
+    markerId: typeof ip.markerId === 'string' ? ip.markerId : null,
+    firewireGuid: typeof ip.firewireGuid === 'string' ? ip.firewireGuid : null,
+    serial: typeof ip.serial === 'string' ? ip.serial : null,
+    hardware: 'unknown',
+  }
+  if (sameIpod(recorded, card) !== 'same') return null
+  const out = new Map<number, SwapManifestRow>()
+  for (const row of rec.rows as Array<Record<string, unknown>>) {
+    const id = Number(row?.id)
+    const destPath = tsaNormalizeColonPath(String(row?.destPath ?? ''))
+    const identity = String(row?.identity ?? '')
+    const size = Number(row?.size)
+    const sourceSize = Number(row?.sourceSize ?? 0)
+    if (!Number.isInteger(id) || id < 0 || !destPath || !identity) return null
+    if (!(size > 0) || !(sourceSize >= 0)) return null
+    if (out.has(id)) return null
+    out.set(id, { id, destPath, identity, size, sourceSize })
+  }
+  return out
+}
+
+/**
+ * Adopt a file a run left on the card with no partial record? The same song
+ * this sync would copy (stayVerdict), at exactly the recorded size, and its
+ * bytes the same as the file this sync would copy, read after a cold remount.
+ */
+export function adoptFromInflight(c: SwapCandidate, row: SwapManifestRow, onCard: { size: number } | null, sameBytes: boolean): boolean {
+  if (!onCard || !sameBytes) return false
+  if (stayVerdict(c, row) !== 'stay') return false
+  return onCard.size === row.size
+}
+
+/** Two files, byte for byte. Throws nothing: any read failure is false. */
+export async function filesSameBytes(a: string, b: string): Promise<boolean> {
+  let fa: Awaited<ReturnType<typeof open>> | null = null
+  let fb: Awaited<ReturnType<typeof open>> | null = null
+  try {
+    fa = await open(a, 'r')
+    fb = await open(b, 'r')
+    const [sa, sb] = await Promise.all([fa.stat(), fb.stat()])
+    if (sa.size !== sb.size) return false
+    const CHUNK = 1024 * 1024
+    const ba = Buffer.alloc(CHUNK)
+    const bb = Buffer.alloc(CHUNK)
+    for (let pos = 0; pos < sa.size;) {
+      const [ra, rb] = await Promise.all([fa.read(ba, 0, CHUNK, pos), fb.read(bb, 0, CHUNK, pos)])
+      if (ra.bytesRead !== rb.bytesRead || ra.bytesRead === 0) return false
+      if (!ba.subarray(0, ra.bytesRead).equals(bb.subarray(0, rb.bytesRead))) return false
+      pos += ra.bytesRead
+    }
+    return true
+  } catch {
+    return false
+  } finally {
+    await fa?.close().catch(() => undefined)
+    await fb?.close().catch(() => undefined)
+  }
 }

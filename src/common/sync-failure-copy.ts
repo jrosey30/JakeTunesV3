@@ -74,6 +74,10 @@ const RULES: Rule[] = [
   { test: /activity wipe/i, stage: 'wipe', happened: 'Couldn’t clear the iPod.', next: AGAIN_CABLE },
   { test: /sync cancelled/i, stage: 'copy', happened: 'You stopped the sync.', next: '' },
   // Brief 260: the iPod's USB reset mid-copy and it never came back, or another iPod did.
+  // Brief 260 part 2: the same, at a step after the copy (all the songs may be on it).
+  { test: /disconnected while its song list was being written and didn’t come back|kept disconnecting while its song list/i, stage: 'catalog', happened: 'The iPod disconnected.', next: AGAIN_CABLE },
+  { test: /disconnected while its songs were being checked and didn’t come back|kept disconnecting while its songs/i, stage: 'verify', happened: 'The iPod disconnected.', next: AGAIN_CABLE },
+  { test: /disconnected and came back missing \d+ song/i, stage: 'verify', happened: 'The iPod disconnected and lost some songs.', next: AGAIN_CABLE },
   { test: /disconnected during the copy and didn’t come back|kept disconnecting/i, stage: 'copy', happened: 'The iPod disconnected.', next: AGAIN_CABLE },
   { test: /a different ipod came back/i, stage: 'copy', happened: 'A different iPod was plugged in.', next: 'Plug the first iPod back in and sync again.' },
   { test: /confirmed on the card after copy/i, stage: 'copy', happened: 'Some songs didn’t copy.', next: AGAIN_CABLE },
