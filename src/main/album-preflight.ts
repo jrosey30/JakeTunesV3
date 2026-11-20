@@ -136,7 +136,8 @@ export function judgeQobuzAlbum(req: RequestedAlbum, o: { listings: readonly Pre
   for (const { l, v } of judged) {
     if (v.verdict === 'reject') continue
     if (l.listed > 0 && l.streamable < l.listed) { shortOnly = true; continue }
-    return { answer: 'found' }
+    // Brief 261: the listing that passed is the one Save downloads, by its id.
+    return l.cand.id ? { answer: 'found', id: l.cand.id } : { answer: 'found' }
   }
   if (shortOnly) return { answer: 'unknown', why: 'unsure' }
   const alternatives = judged.filter(({ v }) => v.verdict === 'reject').map(({ l, v }) => alternativeOf(l.cand, (v as { reason: string }).reason))

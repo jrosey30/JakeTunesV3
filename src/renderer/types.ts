@@ -802,6 +802,7 @@ declare global {
       shopArtistReleases?: (artistId: number, name: string) => Promise<{ ok: boolean; artist?: import('../common/shop-search').ShopArtist; releases: import('../common/shop-search').ArtistReleases }>
       /** One Qobuz catalogue search for a page's lossless dots; the token never leaves main. */
       shopQobuzLossless?: (words: string, limit?: number) => Promise<{ ok: boolean; hits: import('../common/shop-lossless').QobuzHit[] }>
+      shopQobuzResolve?: (rows: import('../common/shop-qobuz-id').PlanRow[]) => Promise<{ ok: boolean; plans: Record<string, import('../common/shop-qobuz-id').QobuzPlan | null> }>
       itunesAlbumTracks: (ref: number | { artist?: string; album: string }) => Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string; collectionId?: number }>
       /** Record Shop (6.0): resolve an item's catalogue selection + ownership (src/common/record-shop-live.ts types). */
       recordShop?: { resolve: (req: import('../common/record-shop-live').ShopResolveRequest) => Promise<import('../common/record-shop-live').ShopResolveResult> }
@@ -1214,7 +1215,7 @@ declare global {
         note: (key: string, outcome: string) => Promise<{ ok: boolean }>
         forget: (key: string) => Promise<{ ok: boolean }>
       }
-      streamripDownloadByQuery?: (opts: { artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number ; sourceEdition?: import('../common/source-edition').SourceEdition; addedVia?: string; forIpodList?: string; jobId?: string }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }>
+      streamripDownloadByQuery?: (opts: { artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number ; sourceEdition?: import('../common/source-edition').SourceEdition; addedVia?: string; forIpodList?: string; jobId?: string; qobuz?: { id: string; how: import('../common/shop-qobuz-id').PlanHow } }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }>; via?: 'id' | 'walk'; how?: import('../common/shop-qobuz-id').PlanHow; fellBack?: import('../common/shop-qobuz-id').ByIdFallback }>
       streamripCancelActive?: (jobId?: string) => Promise<{ ok: boolean; killed: number }>
       onStreamripJobProgress?: (callback: (p: { jobId: string; have: number; of: number; reset?: boolean }) => void) => () => void
       onStreamripJobEnded?: (callback: (p: { jobId: string; result: import('../common/download-lanes').JobEndResult }) => void) => () => void

@@ -48,6 +48,8 @@ import { isShelfListId } from '../ipod-shelf-joins.ts'
 import { createAnswerCache, createLimiter } from '../../common/answer-cache.ts'
 import { qobuzHitsOf, losslessScope, LOSSLESS_CONCURRENCY, LOSSLESS_FAIL_QUIET_MS, LOSSLESS_MAX_SCOPES, LOSSLESS_TTL_MS, type QobuzHit } from '../../common/shop-lossless.ts'
 import { PREFLIGHT_BUDGET_MS, type AlbumPreflight, type AlbumPreflightRequest } from '../../common/album-preflight.ts'
+import { createRateWindow, deezerIsrc, deezerSearchPath, deezerUpc, isQobuzId, pickDeezer, planKey, planRowFrom, resolvePlan, DEEZER_MAX_PER_WINDOW, DEEZER_WINDOW_MS, PLAN_CONCURRENCY, PLAN_FAIL_QUIET_MS, PLAN_MAX_ENTRIES, PLAN_ROWS_PER_ASK, PLAN_TTL_MS, type ByIdFallback, type PlanHow, type PlanRow, type QobuzPlan } from '../../common/shop-qobuz-id.ts'
+import { displayAlbumTitle } from '../../common/shop-search.ts'
 import { cancelJobs, clearLanding, currentJob, importOneAtATime, markShelfSave, runInJob, stopAllJobsNow, sweepOrphanedStaging, watchLanding } from './rip-jobs.ts'
 import type { FinishedJob } from '../../common/download-lanes.ts'
 
@@ -744,19 +746,98 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   // stays here; the renderer gets titles and artists. Nothing is logged.
   const losslessAnswers = createAnswerCache<QobuzHit[]>({ ttlMs: LOSSLESS_TTL_MS, failQuietMs: LOSSLESS_FAIL_QUIET_MS, maxEntries: LOSSLESS_MAX_SCOPES, now: () => Date.now() })
   const losslessTurn = createLimiter(LOSSLESS_CONCURRENCY)
+  /** The page's one catalogue question (also the plan resolver's, below): the same answer cache. */
+  const askCatalog = (words: string, n: number): Promise<QobuzHit[] | null> =>
+    losslessAnswers.ask(`${n}|${losslessScope(words)}`, () => losslessTurn(async () => {
+      const creds = await readQobuzCreds()
+      if (!creds) return null
+      const answer = await qobuzGet(`catalog/search?query=${encodeURIComponent(words)}&limit=${n}`, creds, 8000)
+      if (!answer || answer === 'gone') return null
+      return qobuzHitsOf(answer.body)
+    }))
   ipc.handle('shop-qobuz-lossless', async (_e, words: string, limit?: number): Promise<{ ok: boolean; hits: QobuzHit[] }> => {
     const w = String(words || '').trim().slice(0, 120)
     if (w.length < 2) return { ok: false, hits: [] }
     const n = Math.min(Math.max(Math.round(Number(limit) || 50), 10), 100)
-    const hits = await losslessAnswers.ask(`${n}|${losslessScope(w)}`, () => losslessTurn(async () => {
-      const creds = await readQobuzCreds()
-      if (!creds) return null
-      const answer = await qobuzGet(`catalog/search?query=${encodeURIComponent(w)}&limit=${n}`, creds, 8000)
-      if (!answer || answer === 'gone') return null
-      return qobuzHitsOf(answer.body)
-    }))
+    const hits = await askCatalog(w, n)
     return hits ? { ok: true, hits } : { ok: false, hits: [] }
   }, { refuse: { ok: false, hits: [] } })
+
+  // ── The store assumes it's on Qobuz (Brief 261) ─────────────────────
+  // A shop row the page's own answer couldn't pin to one Qobuz id is resolved
+  // here, in the background, for rows on screen only: the row's own words on
+  // Qobuz, then for a song its ISRC (Deezer's match of the row, by title,
+  // artist and length) on Qobuz's catalogue search, held to track/get's own
+  // ISRC; for an album its UPC (Deezer's) among Qobuz's album hits. Kept six
+  // hours, "no plan" too; a question with no answer is left alone ten minutes.
+  // Deezer is asked at most 45 times in 5 s (its limit is 50). The rules are
+  // common/shop-qobuz-id.ts. Nothing is logged: no titles, never the token.
+  const planAnswers = createAnswerCache<{ plan: QobuzPlan | null }>({ ttlMs: PLAN_TTL_MS, failQuietMs: PLAN_FAIL_QUIET_MS, maxEntries: PLAN_MAX_ENTRIES, now: () => Date.now() })
+  const planTurn = createLimiter(PLAN_CONCURRENCY)
+  const deezerWindow = createRateWindow(DEEZER_MAX_PER_WINDOW, DEEZER_WINDOW_MS, () => Date.now())
+  /** One Deezer call (public, keyless). Its quota answer ({ error }) and any trouble are no answer. */
+  async function deezerGet(path: string): Promise<unknown | null> {
+    const wait = deezerWindow.wait()
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait))
+    try {
+      const res = await fetch('https://api.deezer.com/' + path, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(6000), redirect: 'error' })
+      if (!res.ok) return null
+      const body = await res.json() as { error?: unknown }
+      return body && typeof body === 'object' && !body.error ? body : null
+    } catch { return null }
+  }
+  /** One row's plan: `{ plan }` (a plan, or none), or null when something didn't answer. */
+  async function resolveRowPlan(row: PlanRow): Promise<{ plan: QobuzPlan | null } | null> {
+    const creds = await readQobuzCreds()
+    if (!creds) return null
+    if (row.kind === 'song') {
+      // Apple's cleaned row is the clean edit's length: nothing here can prove the explicit recording.
+      if (row.cleaned || !row.durationMs) return { plan: null }
+      const words = await askCatalog(`${row.artist} ${row.title}`.slice(0, 120), 50)
+      const byWords = words ? resolvePlan(row, words) : null
+      if (byWords) return { plan: byWords }
+      const found = await deezerGet(deezerSearchPath(row))
+      if (!found) return null
+      const dz = pickDeezer(row, found)
+      if (!dz) return { plan: null }
+      const isrc = deezerIsrc(await deezerGet('track/' + encodeURIComponent(dz)))
+      if (!isrc) return null
+      const byCode = await qobuzGet(`catalog/search?query=${encodeURIComponent(isrc)}&limit=10`, creds, 8000)
+      if (!byCode || byCode === 'gone') return null
+      const plan = resolvePlan(row, qobuzHitsOf(byCode.body), { isrc })
+      if (!plan) return { plan: null }
+      // Qobuz's own listing of the track must carry that very ISRC.
+      const got = await qobuzGet('track/get?track_id=' + encodeURIComponent(plan.id), creds, 6000)
+      if (got === 'gone') return { plan: null }
+      if (!got) return null
+      const isrcThere = String((got.body as { isrc?: unknown }).isrc ?? '').toUpperCase()
+      return { plan: isrcThere === isrc ? plan : null }
+    }
+    const words = await askCatalog(`${row.artist} ${displayAlbumTitle(row.title)}`.slice(0, 120), 50)
+    if (!words) return null
+    const plain = resolvePlan(row, words)
+    if (plain) return { plan: plain }
+    // Several editions by name (or none of this size): the release's barcode picks, never overruling the size.
+    if (!words.some((h) => h.kind === 'album')) return { plan: null }
+    const found = await deezerGet(deezerSearchPath(row))
+    if (!found) return null
+    const dz = pickDeezer(row, found)
+    if (!dz) return { plan: null }
+    const upc = deezerUpc(await deezerGet('album/' + encodeURIComponent(dz)))
+    if (!upc) return null
+    return { plan: resolvePlan(row, words, { upc }) }
+  }
+  ipc.handle('shop-qobuz-resolve', async (_e, rows: unknown): Promise<{ ok: boolean; plans: Record<string, QobuzPlan | null> }> => {
+    const plans: Record<string, QobuzPlan | null> = {}
+    const list = (Array.isArray(rows) ? rows : []).slice(0, PLAN_ROWS_PER_ASK).map(planRowFrom).filter((r): r is PlanRow => r !== null)
+    await Promise.all(list.map(async (row) => {
+      const key = planKey(row)
+      const got = await planAnswers.ask(key, () => planTurn(() => resolveRowPlan(row).catch(() => null)))
+      // No answer stays unsaid: the renderer asks again later. "No plan" is said.
+      if (got) plans[key] = got.plan
+    }))
+    return { ok: true, plans }
+  }, { refuse: { ok: false, plans: {} } })
 
   async function searchCatalog(opts: {
     query: string
@@ -819,7 +900,10 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   // file's own clock is the only trustworthy witness. A clean row has no clock. A row
   // with no `durationMs`, every Listen List row among them, asks Apple for one first.
   const fmtDur = (s: number | null): string => s == null ? 'unknown length' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
-  ipc.handle('streamrip:download-by-query', async (_e, opts: { sourceEdition?: SourceEdition; artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; addedVia?: string; forIpodList?: string }): Promise<DownloadResult & { matchDesc?: string }> => {
+  type ByQueryOpts = { sourceEdition?: SourceEdition; artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; addedVia?: string; forIpodList?: string; qobuz?: { id?: unknown; how?: unknown } }
+  type ByQueryResult = DownloadResult & { matchDesc?: string; via?: 'id' | 'walk'; how?: PlanHow; fellBack?: ByIdFallback }
+  const PLAN_HOWS: readonly PlanHow[] = ['catalog', 'isrc', 'upc', 'preflight']
+  const downloadByQuery = async (opts: ByQueryOpts): Promise<ByQueryResult> => {
     // A new job is a clean slate (rip-jobs.ts runInJob): its own cancel flag, its own last rip error.
     const addedVia = shareSourceKey(opts?.addedVia)   // every import below lands with it
     const artist = (opts?.artist || '').trim()
@@ -853,15 +937,22 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     const query = [artist, searchQueryTitle(title) || lookFor].filter(Boolean).join(' ')
     const mediaType = wantAlbum ? 'album' : 'track'
 
+    // ── Brief 261: the shop already knows the Qobuz id. Save goes the way a pasted link goes,
+    // `rip id qobuz <type> <id>`, with no search and no guesses downloaded to be judged. The
+    // checks stay (the explicit rule, the album's listing against the edition, the files' own
+    // tags and clock), and any doubt walks exactly as before (below), with no second click.
+    const plan = !opts?.sourceEdition && opts?.qobuz && isQobuzId(opts.qobuz.id) && PLAN_HOWS.includes(opts.qobuz.how as PlanHow)
+      ? { id: opts.qobuz.id, how: opts.qobuz.how as PlanHow } : null
     // ── Qobuz first (lossless when it has the track) ──
-    let qsearch = await searchCatalog({ query, source: 'qobuz', mediaType, numResults: 25 })
-    trace.push(`qobuz search “${query}”: ${qsearch.ok ? `${qsearch.results?.length ?? 0} results` : `ERR ${qsearch.error}`}`)
+    // With an id in hand the search is not asked: the walk asks it if the id doesn't hold.
+    let qsearch: Awaited<ReturnType<typeof searchCatalog>> = plan ? { ok: true, results: [] } : await searchCatalog({ query, source: 'qobuz', mediaType, numResults: 25 })
+    trace.push(plan ? `qobuz id ${plan.id} (${plan.how}): no search` : `qobuz search “${query}”: ${qsearch.ok ? `${qsearch.results?.length ?? 0} results` : `ERR ${qsearch.error}`}`)
     // Second chance (2026-09-04, XTC "Drums and Wires (Bonus Track Version)"):
     // a packaging label the stripper did not know left the query too literal
     // and Qobuz answered nothing. Ask again with every bracket dropped — the
     // candidates that come back are still ranked and judged like any other.
     const bare = [artist, (searchQueryTitle(title) || lookFor).replace(/\s*[([{][^)\]}]*[)\]}]/g, '').replace(/\s{2,}/g, ' ').trim()].filter(Boolean).join(' ')
-    if (qsearch.ok && (qsearch.results?.length ?? 0) === 0 && bare && bare !== query) {
+    if (!plan && qsearch.ok && (qsearch.results?.length ?? 0) === 0 && bare && bare !== query) {
       qsearch = await searchCatalog({ query: bare, source: 'qobuz', mediaType, numResults: 25 })
       trace.push(`qobuz retry “${bare}”: ${qsearch.ok ? `${qsearch.results?.length ?? 0} results` : `ERR ${qsearch.error}`}`)
     }
@@ -1166,6 +1257,72 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         releaseYear: tl.releaseYear, upc: tl.upc, parentalWarning: tl.parentalWarning ?? meta?.parentalWarning,
       }
     }
+    // ── Brief 261: by id. Every check the walk would make of this one item, before and after it
+    // downloads; the first doubt ends it, the staged files go, and the walk runs as it always has.
+    if (plan) {
+      const byId = async (): Promise<{ result: ByQueryResult } | { why: ByIdFallback }> => {
+        if (currentJob().canceled) return { why: 'canceled' }
+        if (reqAlbum) {
+          const heard = { answered: false, gone: false }
+          const tl = await qobuzAlbumTrackList(plan.id, heard)
+          if (heard.gone) return { why: 'gone' }
+          if (!heard.answered || tl.tracks.length === 0) return { why: 'no-answer' }
+          const desc = `${tl.title ?? title} by ${tl.artist ?? artist}`
+          const listing = listingCandidate({ id: plan.id, desc }, tl).cand
+          // The explicit rule: an explicit row takes no copy Qobuz marks clean, and Apple's cleaned
+          // edition of an explicit record takes only the explicit one (explicit wins by default).
+          if (opts?.explicitSource && listing.parentalWarning === false) return { why: 'explicit' }
+          if (opts?.cleanedSource && listing.parentalWarning !== true) return { why: 'explicit' }
+          const pre = verifyAlbumCandidate(reqAlbum, listing)
+          trace.push(`by id: album listing “${desc}”: ${pre.verdict}${pre.verdict === 'exact' ? '' : ` — ${pre.reason}`}`)
+          if (pre.verdict === 'reject') return { why: 'listing' }
+          const ast = await stageRip(['id', 'qobuz', 'album', plan.id], clock.remaining())
+          if (!ast.ok) { trace.push(`by id: stage: ${ast.error}`); return { why: currentJob().canceled ? 'canceled' : 'stage' } }
+          const stagedAlbum = await albumFromStaged('qobuz', ast.staged, desc)
+          stagedAlbum.upc = listing.upc; stagedAlbum.releaseYear = listing.releaseYear; stagedAlbum.parentalWarning = listing.parentalWarning
+          const post = verifyAlbumCandidate(reqAlbum, stagedAlbum)
+          if (post.verdict !== 'exact') { await discardStaged(ast.staged); trace.push(`by id: staged edition: ${post.verdict} — ${post.reason}`); return { why: 'judge' } }
+          return { result: await finishAlbum(ast.staged, stagedAlbum, desc, [...pre.verdict === 'exact' ? pre.evidence : [], ...post.evidence, `qobuz id (${plan.how})`]) }
+        }
+        // A song is held to its clock: a row with no length (Apple's cleaned one) walks.
+        if (!req.durationSec) return { why: 'no-clock' }
+        const gone = new Set<string>()
+        const meta = await qobuzTrackMeta([plan.id], gone)
+        if (gone.has(plan.id)) return { why: 'gone' }
+        const m = meta.get(plan.id)
+        if (!m) return { why: 'no-answer' }
+        const desc = `${m.title ?? title} by ${artist}`
+        const v = judgeHitsByMeta(req, [{ id: plan.id, desc }], meta, gone)
+        if (v.wrongRecording.length) { trace.push(`by id: ${v.wrongRecording[0].verdict.reason}`); return { why: 'wrong-recording' } }
+        if (v.kept.length === 0) return { why: 'explicit' }
+        if ((opts?.explicitSource || opts?.cleanedSource) && m.parentalWarning !== true) return { why: 'explicit' }
+        // The song's own album, and not a compilation: anything else is the walk's to weigh (Brief 231).
+        if (isCompilationCopy(req, m)) return { why: 'compilation' }
+        if (req.album && !onWantedAlbum(req.album, m.album)) return { why: 'other-album' }
+        const st = await stageRip(['id', 'qobuz', 'track', plan.id], clock.remaining())
+        if (!st.ok) { trace.push(`by id: stage: ${st.error}`); return { why: currentJob().canceled ? 'canceled' : 'stage' } }
+        const verdict = await judgeStaged('qobuz', st.staged, desc, { parentalWarning: flagToJudge(m, v.explicitOnQobuz), version: m.version ?? undefined })
+        if (verdict.verdict !== 'exact' || !verdict.albumMatches) {
+          await discardStaged(st.staged)
+          trace.push(`by id: staged file: ${verdict.verdict === 'exact' ? 'another album' : `${verdict.verdict} — ${verdict.reason}`}`)
+          return { why: 'judge' }
+        }
+        const dl = await importStaged(st.staged, { addedVia })
+        return { result: { ...dl, matchDesc: desc, outcome: dl.ok ? 'imported' : 'provider-failed' } }
+      }
+      const tried = await byId()
+      if ('result' in tried) {
+        console.warn(`[download] by id “${title}” — ${artist}: ${tried.result.ok ? 'imported' : tried.result.outcome ?? 'failed'} (${plan.how})`)
+        return { ...tried.result, via: 'id', how: plan.how }
+      }
+      if (tried.why === 'canceled') return { ok: false, error: 'canceled', outcome: 'canceled', via: 'id', how: plan.how }
+      // The count on screen starts over for the walk's own folder.
+      clearLanding()
+      console.warn(`[download] by id “${title}” — ${artist}: ${tried.why}, walking instead | ${trace.join(' | ')}`)
+      const walked = await downloadByQuery({ ...opts, qobuz: undefined })
+      return { ...walked, via: 'walk', how: plan.how, fellBack: tried.why }
+    }
+
     // Explicit-first for a record (2026-09-04), and the same rule as for a song: only
     // this edition can prove a clean one is censored. A Deluxe flagged explicit threw
     // out the edition Jake picked and then failed the contract itself: Ants From Up
@@ -1460,6 +1617,10 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     const { primary, detail } = describeOutcome(outcome, { title, artist, query, alternatives, ripFailure, loginlessRipFailure: ripFailureIsBandcamp, searchFailure, otherVersions: rejectedVersions, wantAlbum, unasked, laneNotes })
     console.warn(`[download] ${primary.toUpperCase()} “${title}” — ${artist}: ${detail.replace(/\n/g, ' | ')}`)
     return { ok: false, outcome, alternatives, primary, detail, error: `${primary}: ${detail.split('\n')[0]}` }
+  }
+  ipc.handle('streamrip:download-by-query', async (_e, opts: ByQueryOpts): Promise<ByQueryResult> => {
+    const r = await downloadByQuery(opts ?? {})
+    return r.via ? r : { ...r, via: 'walk' }
   }, { refuse: REFUSED_SENDER })
 
   // ── The album preflight (Brief 255, Record Shop Phase 2): before an album
