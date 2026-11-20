@@ -8,8 +8,9 @@
  * Jake: "this cant keep happening".
  *
  * What this file decides, so the engine can:
- *   • tell a vanished card (EIO / ENXIO / the mount gone) from a song that
- *     simply didn't copy;
+ *   • tell a vanished card (iPod_Control gone, another device at the mount,
+ *     or a tiny file that won't write and read back) from a song that simply
+ *     didn't copy: an EIO alone is a bad sector as often as a drop;
  *   • wait for the SAME iPod to come back, by identity (the JakeTunes marker
  *     on the card, and SysInfo's FireWire GUID and serial when the card has
  *     them), never by the volume's name; another iPod plugged in is never
@@ -21,26 +22,103 @@
  *
  * Pure apart from the default card reader, so node --test drives it.
  */
-import { readFile, stat } from 'fs/promises'
+import { createReadStream } from 'fs'
+import { open, readFile, stat, unlink } from 'fs/promises'
 import { join } from 'path'
+import type { IpodModel } from '../common/ipod-covers.ts'
 import { IPOD_MARKER_REL, parseDeviceMarker } from '../common/ipod-identity.ts'
 import { detectHardware, parseSysInfo, type IpodHardware } from '../common/ipod-onboarding.ts'
 import { stayVerdict, type SwapCandidate, type SwapManifestRow } from './ipod-swap-sync.ts'
 import { tsaNormalizeColonPath } from './ipod-sync-tsa.ts'
 
-/** Errors that mean the device went away, not that one file failed. */
+/** Errors that MAY mean the device went away; alone they never prove it (a bad sector answers EIO too). */
 const DROP_CODES = new Set(['EIO', 'ENXIO', 'ENODEV', 'ENOTCONN', 'ESTALE', 'EBADF'])
+const DROP_CODE_IN_TEXT = /\b(EIO|ENXIO|ENODEV|ENOTCONN|ESTALE|EBADF)\b/
 
 export function errnoCode(err: unknown): string | null {
   const c = (err as { code?: unknown } | null)?.code
   return typeof c === 'string' ? c : null
 }
 
-/** EIO and friends are the device; ENOENT is the device only when the card itself is gone. */
-export function looksLikeDrop(err: unknown, cardThere: boolean): boolean {
-  if (!cardThere) return true
-  const code = errnoCode(err)
-  return code !== null && DROP_CODES.has(code)
+/** The errno of a failure: its code, or one named in its message (confirmWriteOnCard gives a reason string). */
+export function failureCode(err: unknown): string | null {
+  const c = errnoCode(err)
+  if (c) return c
+  const text = err instanceof Error ? err.message : typeof err === 'string' ? err : ''
+  return DROP_CODE_IN_TEXT.exec(text)?.[1] ?? null
+}
+
+/**
+ * What a failed copy was (2026-11-20, the review of #459). An EIO alone is not
+ * a drop: a bad sector on one file of an old hard-drive iPod, or a read error
+ * on the Mac's own copy of the song, answers EIO while the iPod sits there.
+ * Before this, four of those ended the whole sync with "try another cable".
+ *   'drop'      the card really went: iPod_Control gone, the mount is another
+ *               device now, or a tiny file can't be written and read back.
+ *   'source'    the Mac's own file can't be read: one copy miss, no retry.
+ *   'card-file' the card is fine but this file failed: one retry, then a miss.
+ *   'miss'      anything else: the old copy-miss path (#47), no retry.
+ */
+export type CopyFailure = 'drop' | 'source' | 'card-file' | 'miss'
+
+export function classifyCopyFailure(f: {
+  code: string | null
+  cardThere: boolean
+  /** The mount answers as the same device it was (st_dev). False = it went and came back as another. */
+  sameDevice: boolean
+  /** The song's source file reads whole on the Mac. */
+  sourceReadable: boolean
+  /** A tiny file on the card was written, flushed, read back and removed. */
+  cardProbeOk: boolean
+}): CopyFailure {
+  if (!f.cardThere || !f.sameDevice) return 'drop'
+  if (f.code === null || !DROP_CODES.has(f.code)) return 'miss'
+  if (!f.sourceReadable) return 'source'
+  if (!f.cardProbeOk) return 'drop'
+  return 'card-file'
+}
+
+/** Reads the whole file and throws nothing: true when every byte came back. */
+export async function fileReadsWhole(abs: string): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    try {
+      const s = createReadStream(abs, { highWaterMark: 1024 * 1024 })
+      s.on('data', () => {})
+      s.on('end', () => resolve(true))
+      s.on('error', () => resolve(false))
+    } catch {
+      resolve(false)
+    }
+  })
+}
+
+/**
+ * Is the card really answering? A wedged mount can answer stat from cache, so
+ * write a tiny file under iPod_Control, flush it to the device, read it back
+ * and remove it. Any step failing is false.
+ */
+export async function probeCardWrites(mount: string): Promise<boolean> {
+  const p = join(mount, 'iPod_Control', `.jt-probe-${process.pid}-${Date.now()}`)
+  const want = Buffer.from(`jaketunes ${Date.now()} ${Math.random()}`)
+  let ok = false
+  try {
+    const fh = await open(p, 'w')
+    try {
+      await fh.writeFile(want)
+      await fh.sync()
+    } finally {
+      await fh.close()
+    }
+    ok = (await readFile(p)).equals(want)
+  } catch {
+    ok = false
+  }
+  try {
+    await unlink(p)
+  } catch (err) {
+    if (errnoCode(err) !== 'ENOENT') ok = false
+  }
+  return ok
 }
 
 /** Who this card is. Every field present before a drop must read the same after it. */
@@ -100,8 +178,8 @@ export const DROP_POLL_MS = 2_000
 export const MAX_DROPS_PER_RUN = 3
 
 export type DropWait =
-  | { back: true; goneMs: number; mount: string }
-  | { back: false; goneMs: number; why: 'timeout' | 'other-ipod' }
+  | { back: true; goneMs: number; mount: string; sawGone: boolean }
+  | { back: false; goneMs: number; why: 'timeout' | 'other-ipod' | 'cancelled' }
 
 /**
  * Poll until this iPod answers again, at its old mount or at another one
@@ -116,6 +194,10 @@ export async function waitForSameIpod(opts: {
   present: (mount: string) => Promise<boolean>
   /** Other mounted iPods to look at, besides `mount`. */
   others?: () => Promise<string[]>
+  /** The write-and-read check a card must pass before it counts as back (probeCardWrites). */
+  probe?: (mount: string) => Promise<boolean>
+  /** Cancel ends the wait at the next look. */
+  isCancelled?: () => boolean
   now: () => number
   sleep: (ms: number) => Promise<void>
   waitMs?: number
@@ -128,21 +210,30 @@ export async function waitForSameIpod(opts: {
   const unread: IpodCardIdentity = { markerId: null, firewireGuid: null, serial: null, hardware: 'unknown' }
   // Twice in a row at the same place: a volume still mounting can answer once and vanish again.
   const streak = new Map<string, number>()
+  let sawGone = false
   for (;;) {
+    if (opts.isCancelled?.()) return { back: false, goneMs: opts.now() - start, why: 'cancelled' }
     const places = [opts.mount, ...((await opts.others?.().catch(() => [] as string[])) ?? []).filter((m) => m !== opts.mount)]
     for (const m of places) {
-      if (!(await opts.present(m).catch(() => false))) { streak.delete(m); continue }
+      if (!(await opts.present(m).catch(() => false))) {
+        if (m === opts.mount) sawGone = true
+        streak.delete(m)
+        continue
+      }
       const verdict = sameIpod(opts.before, await opts.read(m).catch(() => unread))
       if (verdict === 'other') {
         streak.delete(m)
         if (m === opts.mount) return { back: false, goneMs: opts.now() - start, why: 'other-ipod' }
         continue
       }
-      const n = verdict === 'same' ? (streak.get(m) ?? 0) + 1 : 0
+      let n = verdict === 'same' ? (streak.get(m) ?? 0) + 1 : 0
+      // Answering from a cache is not back: it must take a write and give it back.
+      if (n >= 2 && opts.probe && !(await opts.probe(m).catch(() => false))) n = 0
       streak.set(m, n)
-      if (n >= 2) return { back: true, goneMs: opts.now() - start, mount: m }
+      if (n >= 2) return { back: true, goneMs: opts.now() - start, mount: m, sawGone }
     }
     if (opts.now() - start >= waitMs) return { back: false, goneMs: opts.now() - start, why: 'timeout' }
+    if (opts.isCancelled?.()) return { back: false, goneMs: opts.now() - start, why: 'cancelled' }
     await opts.sleep(pollMs)
   }
 }
@@ -159,7 +250,7 @@ export interface DropFacts {
   file: string
   error: string
   goneSeconds: number | null
-  outcome: 'back' | 'never-back' | 'other-ipod' | 'too-many'
+  outcome: 'back' | 'never-back' | 'other-ipod' | 'too-many' | 'cancelled'
 }
 
 export function dropLogLine(d: DropFacts): string {
@@ -250,6 +341,18 @@ export async function cardFileFacts(abs: string): Promise<{ size: number; mtimeM
 export const OLD_IPOD_PAUSE_EVERY_BYTES = 200 * 1024 * 1024
 export const OLD_IPOD_PAUSE_MS = 1_500
 
-export function pacesWrites(hw: IpodHardware): boolean {
-  return hw === '3g' || hw === '4g' || hw === 'mini' || hw === 'mini-1g' || hw === 'mini-2g'
+/**
+ * `listModel`: the model homemini's iPod list says this iPod is (ipod-lists'
+ * `model`), used only when SysInfo alone can't tell (a 3G's SysInfo can be
+ * sparse). 'classic' and 'default' never pace.
+ */
+export function pacesWrites(hw: IpodHardware, listModel?: IpodModel | null): boolean {
+  if (hw === '3g' || hw === '4g' || hw === 'mini' || hw === 'mini-1g' || hw === 'mini-2g') return true
+  return hw === 'unknown' && (listModel === '3g' || listModel === 'mini')
+}
+
+/** The pause, in slices, so a cancel is heard within a quarter second. */
+export async function pauseUnlessCancelled(ms: number, sleep: (ms: number) => Promise<void>, isCancelled: () => boolean): Promise<void> {
+  const slice = 250
+  for (let left = ms; left > 0 && !isCancelled(); left -= slice) await sleep(Math.min(slice, left))
 }

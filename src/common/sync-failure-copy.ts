@@ -142,9 +142,14 @@ export function swapKeptNote(songs: number, restored: boolean): string {
  *  didn't come back (Brief 260, 2026-11-20): nothing was taken off the card,
  *  and the next sync adopts what was confirmed instead of copying it again. */
 export const DROP_KEPT_MARK = 'The songs copied so far stay on the iPod'
-export function dropKeptNote(songs: number): string {
-  return `${DROP_KEPT_MARK} (${songs.toLocaleString('en-US')}); the next sync copies only the rest.`
+/** `adoptable`: the record of them was written and names this iPod, so the next
+ *  sync can take them as they are. Otherwise it copies them again, and says nothing more. */
+export const DROP_ADOPT_TAIL = 'the next sync copies only the rest.'
+export function dropKeptNote(songs: number, adoptable = true): string {
+  const n = songs.toLocaleString('en-US')
+  return adoptable ? `${DROP_KEPT_MARK} (${n}); ${DROP_ADOPT_TAIL}` : `${DROP_KEPT_MARK} (${n}).`
 }
+const DROP_KEPT_AGAIN_LINE = 'The songs copied so far stay on the iPod. Sync again to finish.'
 
 /** The claims, from what actually happened. */
 export function syncOutcome(t: SyncTimeline): SyncOutcome | null {
@@ -175,7 +180,8 @@ export function syncOutcome(t: SyncTimeline): SyncOutcome | null {
     changed = untouched ? 'no' : 'swap-kept'
     catalog = untouched ? 'previous' : 'unknown'
   }
-  return { ...copy, stoppedAt, changed, catalog, changedLine: CHANGED_LINE[changed], fromEvidence: evidence }
+  const changedLine = changed === 'drop-kept' && !(t.error || '').includes(DROP_ADOPT_TAIL) ? DROP_KEPT_AGAIN_LINE : CHANGED_LINE[changed]
+  return { ...copy, stoppedAt, changed, catalog, changedLine, fromEvidence: evidence }
 }
 
 /** "Sync stopped" — the lead of the result line. The step it stopped at is the strip's
