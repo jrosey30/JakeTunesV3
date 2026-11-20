@@ -41,7 +41,7 @@ import { lookupArtworkOneShot } from '../utils/artworkLookup'
 import {
   getLtlDownloadSnapshot, subscribeLtlDownload, queueRecoDownload, prefillDownloadView, openBrowse, saveRecoAlbum, saveAlbumNamed, recoFields, recoOrigin,
 } from '../listen-to-the-list/ltlDownload'
-import EditionMenu from './DownloadStore/EditionMenu'
+import EditionMenu, { askEditions } from './DownloadStore/EditionMenu'
 import AlbumTracklistSheet from './DownloadStore/AlbumTracklistSheet'
 import { showDownload } from '../components/DownloadsPanel'
 import '../styles/discover-feed.css'
@@ -339,8 +339,12 @@ export default function NewForYouView() {
     const isPlaying = preview.playingId === id
     const isAdded = added.has(id)
     const sampleUrl = c.type === 'album' ? c.hookPreviewUrl : c.previewUrl
+    // An album on the list: hovering or focusing the card asks for its editions (in turn),
+    // so the Edition menu is there, or never is, by the time the pointer reaches the foot.
+    const listed = c.type === 'album' && isAdded ? addedRecs.get(id) : undefined
+    const askAlbum = listed ? () => { const f = recoFields(listed); askEditions(f.artist, f.album || f.title) } : undefined
     return (
-      <div key={id} ref={seenRef(id, c)} className="store-card store-card--reco">
+      <div key={id} ref={seenRef(id, c)} className="store-card store-card--reco" onPointerEnter={askAlbum} onFocus={askAlbum}>
         <div className="store-art">
           <div className="df-art-ph" aria-hidden="true">♪</div>
           {c.artUrl && <img className="store-art-img" src={c.artUrl} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none' }} />}
@@ -385,7 +389,8 @@ export default function NewForYouView() {
           return (
             <>
               {albumOf && <button type="button" className="store-songs" onClick={() => setSongsOf(c)} title="See the songs and pick a few">Songs</button>}
-              {albumOf && <EditionMenu artist={albumOf.artist} album={albumOf.album || albumOf.title} onMore={() => pickInSearch(rec)} className="edition-menu--card" />}
+              {/* Its place is held, so its appearing never moves Songs or Save album. */}
+              {albumOf && <EditionMenu artist={albumOf.artist} album={albumOf.album || albumOf.title} onMore={() => pickInSearch(rec)} className="edition-menu--card" reserve />}
               <button type="button" className="store-add" onClick={() => getReco(rec)}
                 title={failed ? (dlMap.get(rec.id)?.error || 'Download failed — try again') : c.type === 'song' ? 'Save to your library' : c.type === 'album' ? 'Save the album' : 'Find their records in Search'}>
                 {/* One word per action (Brief 253): Save / Save album. */}

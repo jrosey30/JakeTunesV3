@@ -8,10 +8,10 @@
  * edition's row; "Save album" saves the whole record. Songs already in the
  * library say so and can't be ticked.
  */
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
 import { enqueue, getQueue, itemFor, subscribeQueue, type QueueOrigin } from './downloadQueue'
-import { editionsState, loadEditions, ownedKey, saveSongsLabel, songJobsFor, subscribeEditions, type EditionTrack } from './albumEditions'
+import { editionsState, loadEditions, ownedKey, saveSongsLabel, songJobsFor, subscribeEditions, tracklistSource, type EditionTrack } from './albumEditions'
 import EditionMenu from './EditionMenu'
 import './edition-menu.css'
 
@@ -38,20 +38,26 @@ export default function AlbumTracklistSheet({ artist, album, origin, onSaveAlbum
 
   // Opening the songs is Jake waiting on them: the edition lookup goes to the front of the line.
   useEffect(() => { void loadEditions(artist, album, { front: true }) }, [artist, album])
-  // The edition's own tracklist; again when the Edition menu changes it. A lookup that
-  // got no answer falls back to the record by name, as the songs always loaded.
-  const editionId = eds.state === 'ready' ? eds.chosenId : undefined
-  const settled = eds.state === 'ready' || eds.state === 'failed'
+  // The edition's own tracklist; again only when the edition itself changes (Jake's pick
+  // from the Edition menu). A lookup that got no answer falls back to the record by name,
+  // as the songs always loaded, and a later answer to a re-ask never swaps the songs (and
+  // the ticks) from under him (tracklistSource).
+  const loaded = useRef<{ key: string; source: number | 'name' | null }>({ key: '', source: null })
+  const albumKey = `${artist}\u0000${album}`
+  if (loaded.current.key !== albumKey) loaded.current = { key: albumKey, source: null }
+  const source = tracklistSource(loaded.current.source, eds)
   useEffect(() => {
-    if (!settled) return
+    // Runs only when the source changes (its deps), so the ticks clear only then.
+    if (source == null) return
+    loaded.current = { key: albumKey, source }
     let live = true
     setTracks({ loading: true }); setTicked(new Set())
-    const ref = editionId ?? { artist, album }
+    const ref = source === 'name' ? { artist, album } : source
     window.electronAPI.itunesAlbumTracks?.(ref)
       .then((r) => { if (live) setTracks(r?.ok && r.tracks?.length ? { loading: false, list: r.tracks, albumName: r.album } : { loading: false, error: 'Couldn’t load the songs.' }) })
       .catch(() => { if (live) setTracks({ loading: false, error: 'Couldn’t load the songs.' }) })
     return () => { live = false }
-  }, [artist, album, editionId, settled])
+  }, [artist, album, albumKey, source])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }

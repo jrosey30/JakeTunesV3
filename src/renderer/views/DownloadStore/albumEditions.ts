@@ -9,16 +9,17 @@
  *
  * One lookup at a time, a little apart: a Listen List with forty albums must
  * not burst Apple's search (it answers 403 to a burst). Nothing is asked on
- * mount: a card's Edition menu asks when it is hovered or focused (in turn),
- * and opening it, opening the songs, or a Save album click asks at the front
- * of the line, ahead of every lookup still waiting.
+ * mount: hovering or focusing an album card or row asks (in turn), and opening
+ * the menu, opening the songs, or a Save album click asks at the front of the
+ * line, ahead of every lookup still waiting. A lookup that failed is not asked
+ * again by a hover for a minute (FAILED_QUIET_MS); a click still asks.
  */
 import { albumQueryId, trackQueryId, type QResult, type QueueOrigin } from './downloadQueue.ts'
 import { norm } from './downloadKeys.ts'
 import type { AlbumEdition, AlbumEditions, AlbumSaveEdition, AlbumSaveSurface } from '../../../common/album-preflight.ts'
 
 export interface EditionsState {
-  /** failed: the last lookup got no answer. Not kept: the next look asks again. */
+  /** failed: the last lookup got no answer. Not kept: a click asks again at once, a hover after a minute. */
   state: 'idle' | 'loading' | 'ready' | 'failed'
   editions: AlbumEdition[]
   /** Jake's pick from the menu, else main's choice, else null (no edition named). */
@@ -27,12 +28,16 @@ export interface EditionsState {
 }
 
 const SPACING_MS = 250
+/** A failed lookup: hovers leave it alone this long (a click, Save album or the songs still ask). */
+export const FAILED_QUIET_MS = 60_000
+let now: () => number = () => Date.now()
 const IDLE: EditionsState = { state: 'idle', editions: [], chosenId: null, picked: false }
 
 const answers = new Map<string, AlbumEditions>()
 const inflight = new Map<string, Promise<AlbumEditions>>()
 const picks = new Map<string, number>()
-const failed = new Set<string>()
+/** A failed lookup's key → when it failed. */
+const failed = new Map<string, number>()
 const states = new Map<string, EditionsState>()
 const subs = new Set<() => void>()
 
@@ -45,7 +50,10 @@ async function pump(): Promise<void> {
   if (running) return
   running = true
   try {
-    for (let next = waiting.shift(); next; next = waiting.shift()) await next.run()
+    for (let next = waiting.shift(); next; next = waiting.shift()) {
+      // A subscriber that throws must not stop the line.
+      try { await next.run() } catch { await new Promise((r) => setTimeout(r, SPACING_MS)) }
+    }
   } finally { running = false }
 }
 
@@ -56,7 +64,10 @@ function toFront(key: string): void {
 }
 
 const keyOf = (artist: string, album: string): string => albumQueryId(artist, album)
-const emit = (): void => { for (const f of subs) f() }
+/** Every subscriber hears; one that throws is logged and never stops the others or the caller. */
+const emit = (): void => {
+  for (const f of subs) { try { f() } catch (err) { console.error('[album-editions] subscriber threw', err) } }
+}
 
 function rebuild(key: string): void {
   const a = answers.get(key)
@@ -96,9 +107,13 @@ export function loadEditions(artist: string, album: string, o: { front?: boolean
     if (o.front) toFront(key)
     return inFlight
   }
+  const failedAt = failed.get(key)
+  if (!o.front && failedAt != null && now() - failedAt < FAILED_QUIET_MS) {
+    return Promise.resolve({ ok: false, editions: [], chosenId: null })
+  }
   const api = typeof window !== 'undefined' ? window.electronAPI?.listAlbumEditions : undefined
   if (!api) {
-    failed.add(key)
+    failed.set(key, now())
     rebuild(key); emit()
     return Promise.resolve({ ok: false, editions: [], chosenId: null })
   }
@@ -107,14 +122,19 @@ export function loadEditions(artist: string, album: string, o: { front?: boolean
     const task: Waiting = {
       key,
       run: async () => {
-        let out: AlbumEditions
-        try { out = (await api(artist, album)) ?? { ok: false, editions: [], chosenId: null } } catch { out = { ok: false, editions: [], chosenId: null } }
-        inflight.delete(key)
-        // A failed lookup is not kept: the next look asks again.
-        if (out.ok) answers.set(key, out)
-        else failed.add(key)
-        rebuild(key); emit()
-        resolve(out)
+        let out: AlbumEditions = { ok: false, editions: [], chosenId: null }
+        try {
+          try { out = (await api(artist, album)) ?? out } catch { /* no answer: failed */ }
+          inflight.delete(key)
+          // A failed lookup is not kept: a click asks again, a hover after FAILED_QUIET_MS.
+          if (out.ok) answers.set(key, out)
+          else failed.set(key, now())
+          rebuild(key); emit()
+        } finally {
+          // A subscriber that throws must not leave Save album (or the line) waiting.
+          inflight.delete(key)
+          resolve(out)
+        }
         await new Promise((r) => setTimeout(r, SPACING_MS))
       },
     }
@@ -125,6 +145,28 @@ export function loadEditions(artist: string, album: string, o: { front?: boolean
   rebuild(key); emit()
   void pump()
   return p
+}
+
+/**
+ * The Edition menu shows only once Apple has answered with two or more
+ * editions: never a placeholder that later disappears and slides the buttons
+ * beside it under the pointer. Pure.
+ */
+export const showEditionMenu = (s: EditionsState): boolean => s.state === 'ready' && s.editions.length >= 2
+
+/**
+ * Which tracklist the songs sheet should show: an edition's id, 'name' (the
+ * record by name, when no edition is named or the lookup failed), or null
+ * (still looking, nothing loaded). `loaded` is what the sheet has loaded. It
+ * changes only when the edition actually changes: a lookup asked again after
+ * a failure (loading, then an answer) never swaps the songs, and the ticks,
+ * from under Jake; only his pick from the menu does. Pure.
+ */
+export function tracklistSource(loaded: number | 'name' | null, s: EditionsState): number | 'name' | null {
+  const resolved = s.state === 'ready' ? (s.chosenId ?? 'name') : s.state === 'failed' ? 'name' : null
+  if (resolved == null) return loaded
+  if (loaded === 'name' && resolved !== 'name' && !s.picked) return loaded
+  return resolved
 }
 
 /** The Edition menu's pick. */
@@ -229,4 +271,8 @@ export function songJobsFor(o: { tracks: readonly EditionTrack[]; ticked: Iterab
 /** Tests only. */
 export function resetEditionsForTests(): void {
   answers.clear(); inflight.clear(); picks.clear(); states.clear(); failed.clear(); waiting = []
+  now = () => Date.now()
 }
+
+/** Tests only: the clock the failure memory reads. */
+export function setEditionsClockForTests(clock: () => number): void { now = clock }

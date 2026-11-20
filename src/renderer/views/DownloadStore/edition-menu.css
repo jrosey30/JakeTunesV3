@@ -12,11 +12,15 @@
   background: transparent; border: 1px solid rgba(85, 78, 64, 0.22); border-radius: 6px;
   padding: 2px 4px; cursor: pointer; text-overflow: ellipsis;
 }
+/* A held place: the menu's size, invisible and unclickable until it shows. */
+.edition-menu--held { visibility: hidden; pointer-events: none; }
 .edition-menu-select:focus-visible { outline: 2px solid rgb(var(--brand-orange-rgb, 253 86 1)); outline-offset: 1px; }
 /* For You card: the menu sits at the foot of the card, right above Save album. */
 .edition-menu--card { margin-top: auto; padding-top: 8px; }
 .edition-menu--card + .store-add { margin-top: 4px; padding-top: 0; }
-/* Listen List row: beside Save album, never wider than the actions column allows. */
+/* Listen List row: first in the actions column, so its appearing moves nothing
+   to its right (Songs, Save album, toss stay where they were); never wider than
+   the actions column allows. */
 .edition-menu--row { max-width: 220px; }
 
 /* An album's songs, opened in place (Brief 255). */

@@ -33,7 +33,7 @@ import {
   canDownloadReco, getLtlDownloadSnapshot, prefillDownloadView, openBrowse,
   queueRecoDownload, recoFields, recoOrigin, saveRecoAlbum, subscribeLtlDownload, type LtlDownloadStatus,
 } from '../listen-to-the-list/ltlDownload'
-import EditionMenu from './DownloadStore/EditionMenu'
+import EditionMenu, { askEditions } from './DownloadStore/EditionMenu'
 import AlbumTracklistSheet from './DownloadStore/AlbumTracklistSheet'
 import { showDownload } from '../components/DownloadsPanel'
 import '../styles/listen-to-the-list.css'
@@ -321,12 +321,18 @@ export default function ListenToTheListView() {
     const dl = dlOf(r.id)
     // An artist or a playlist a friend sent: the link is the thing to open.
     const sentLink = isLinkKind(r) ? linkOf(r) : null
+    // An album row: hovering or focusing it asks for its editions (in turn), never on mount.
+    const askAlbum = isAlbum && r.kind !== 'concert' && dl.state !== 'queued' && dl.state !== 'downloading' && dl.state !== 'error'
+      ? () => { const f = recoFields(r); askEditions(f.artist, f.album || f.title) }
+      : undefined
     return (
       <div
         key={r.id}
         ref={selected ? selRef : undefined}
         className={`ltl-tri${selected ? ' is-selected' : ''}`}
         onClick={() => setSel(i)}
+        onPointerEnter={askAlbum}
+        onFocus={askAlbum}
         role="button"
         tabIndex={-1}
       >
@@ -379,8 +385,9 @@ export default function ListenToTheListView() {
               <button type="button" className="ltl-tri-get" onClick={() => openDownloadForReco(r)} title="Find it in Search">Save album</button>
             ) : (
               <>
-                <button type="button" className="ltl-tri-songs" onClick={() => setSongsOf(r)} title="See the songs and pick a few">Songs</button>
+                {/* First in the column: appearing, it moves nothing to its right. */}
                 <EditionMenu artist={recoFields(r).artist} album={recoFields(r).album || recoFields(r).title} onMore={() => openDownloadForReco(r)} className="edition-menu--row" />
+                <button type="button" className="ltl-tri-songs" onClick={() => setSongsOf(r)} title="See the songs and pick a few">Songs</button>
                 <button type="button" className="ltl-tri-get" onClick={() => getReco(r)} title="Save the album (Enter)">Save album</button>
               </>
             )
