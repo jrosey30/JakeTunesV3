@@ -38,6 +38,7 @@ import { artistIdentityKey, canonicalArtist, subscribeAliases, getAliasVersion }
 import { GENRES } from '../../common/genre-vocab'
 import { playsEverywhere } from '../../common/plays-elsewhere'
 import { usePlaysElsewhere } from '../playsElsewhere'
+import { getPageFilter, setPageFilter, subscribePageFilter } from '../utils/pageFilter'
 import '../styles/artists.css'
 import '../styles/artists-grid.css'
 
@@ -135,7 +136,12 @@ export default function ArtistsView(): JSX.Element {
   const [fans, setFans] = useState<Record<string, number>>({})   // ListenBrainz listeners, for Depth
   const [heavy, setHeavy] = useState<Array<{ artist: string; plays: number }>>(lastHeavy)
   const [groupingOpen, setGroupingOpen] = useState(false)
-  const [listFilter, setListFilter] = useState('')
+  // One filter (Brief 254): this box and the toolbar search in "This page"
+  // mode write the same value (utils/pageFilter.ts); cleared when the page
+  // unmounts (not under an artist or album page, which keep it mounted).
+  const listFilter = useSyncExternalStore(subscribePageFilter, () => getPageFilter('artists'))
+  const setListFilter = useCallback((v: string) => setPageFilter('artists', v), [])
+  useEffect(() => () => setPageFilter('artists', ''), [])
   const aliasVersion = useSyncExternalStore(subscribeAliases, getAliasVersion)
   const regularTracks = useRegularLibraryTracks(lib.tracks)
   // 2026-10-20 — "Most played" counts the phone's and workmini's plays too. Display only.
@@ -177,13 +183,13 @@ export default function ArtistsView(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [regularTracks, aliasVersion, elsewhere])
 
-  // The toolbar search pill + the in-view filter (name, genre, family or country).
-  const q = (lib.searchQuery || '').trim().toLowerCase()
-  const lf = listFilter.trim().toLowerCase()
-  const visible = useMemo(() => artists.filter((a) => {
-    if (q && !(a.name.toLowerCase().includes(q) || a.tracks.some((t) => (t.album || '').toLowerCase().includes(q) || (t.title || '').toLowerCase().includes(q)))) return false
-    return !lf || a.name.toLowerCase().includes(lf) || a.genre.toLowerCase().includes(lf) || a.family.toLowerCase().includes(lf) || a.origin.toLowerCase().includes(lf)
-  }), [artists, q, lf])
+  // The one filter: name, genre, family, country, or one of their albums or songs
+  // (what the toolbar pill and the box each matched before Brief 254).
+  const q = listFilter.trim().toLowerCase()
+  const visible = useMemo(() => !q ? artists : artists.filter((a) =>
+    a.name.toLowerCase().includes(q) || a.genre.toLowerCase().includes(q) || a.family.toLowerCase().includes(q) || a.origin.toLowerCase().includes(q) ||
+    a.tracks.some((t) => (t.album || '').toLowerCase().includes(q) || (t.title || '').toLowerCase().includes(q))
+  ), [artists, q])
 
   // Heavy rotation: the last 30 days of plays (listening memory), mapped onto cards.
   useEffect(() => {
@@ -202,12 +208,12 @@ export default function ArtistsView(): JSX.Element {
   const byKey = useMemo(() => new Map(artists.map((a) => [artistIdentityKey(a.name), a])), [artists])
   const favCandidates = useMemo((): FavoriteCandidate[] => artists.map((a) => ({ name: a.name, albums: a.albums, songs: a.tracks.length })), [artists])
   const shelves = useMemo(() => {
-    if (sort !== 'az' || q || lf) return null
+    if (sort !== 'az' || q) return null
     const rotation = heavy.map((h) => ({ card: byKey.get(artistIdentityKey(canonicalArtist(h.artist))), plays: h.plays }))
       .filter((x): x is { card: ArtistCard; plays: number } => !!x.card).slice(0, 12)
     const fresh = artists.filter((a) => a.added).sort((a, b) => b.added.localeCompare(a.added)).slice(0, 12)
     return { rotation, fresh }
-  }, [sort, q, lf, heavy, byKey, artists])
+  }, [sort, q, heavy, byKey, artists])
 
   const sections = useMemo((): Array<{ id?: string; title: string; sub?: string; items: ArtistCard[]; chip?: (a: ArtistCard) => string }> => {
     const group = (key: (a: ArtistCard) => string): Map<string, ArtistCard[]> => {
@@ -440,7 +446,7 @@ export default function ArtistsView(): JSX.Element {
         <FindBar query={find.query} onQuery={find.setQuery} current={find.cursor} total={findMatches.length}
           onNext={() => stepFind(1)} onPrev={() => stepFind(-1)} onClose={find.close} placeholder="Find artist…" />
       )}
-      {visible.length === 0 && <EmptyState query={lib.searchQuery} noun="artists" />}
+      {visible.length === 0 && <EmptyState query={listFilter} noun="artists" />}
       {sort === 'az' && visible.length > 0 && (
         <div className="artists-az-anchor">
           <div className="artists-az-rail">
@@ -452,7 +458,7 @@ export default function ArtistsView(): JSX.Element {
         </div>
       )}
       {/* Top of the page in every sort; hidden only while a filter narrows it. */}
-      {!q && !lf && (
+      {!q && (
         <FavoriteArtistsRow artists={favCandidates} onOpenArtist={(name) => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: name })} />
       )}
       {body}

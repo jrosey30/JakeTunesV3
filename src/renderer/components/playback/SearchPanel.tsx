@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
 import { useNavigation } from '../../context/NavigationContext'
 import { usePlayback } from '../../context/PlaybackContext'
@@ -8,6 +8,8 @@ import { buildNormalizedArtworkIndex, lookupArtwork } from '../../utils/artworkL
 import { albumKeyOf } from '../../utils/albumKey'
 import { sortAlbumTracks } from '../../utils/albumTrackOrder'
 import AlbumArtImage from '../AlbumArtImage'
+import { recordShopPrefill, recordShopRowLabel } from '../../utils/searchScope'
+import { openBrowse } from '../../listen-to-the-list/ltlDownload'
 import '../../styles/search-panel.css'
 
 /**
@@ -20,6 +22,9 @@ import '../../styles/search-panel.css'
  *  - artist   → VIEW_ARTIST_DETAIL
  *  - playlist → VIEW_PLAYLIST
  *
+ * Last row (Brief 254): "Search the Record Shop for “…”" — opens the Record
+ * Shop's Search with the words, searched. Shown under "No results" too.
+ *
  * Keyboard nav: ↑/↓ moves selection across all visible rows; ⏎
  * activates; Esc clears query + blurs input. Wired by SearchPill so
  * the input element's events drive panel behaviour without prop
@@ -29,6 +34,8 @@ interface Props {
   query: string
   inputEl: HTMLInputElement | null
   onClose: () => void
+  /** Drawn at the top of the dropdown (the JakeTunes | This page switch). */
+  header?: ReactNode
 }
 
 interface FlatRow extends RankedRow {
@@ -68,7 +75,7 @@ function HighlightedText({ text, query }: { text: string; query: string }): JSX.
   )
 }
 
-export default function SearchPanel({ query, inputEl, onClose }: Props) {
+export default function SearchPanel({ query, inputEl, onClose, header }: Props) {
   const { state: lib, dispatch } = useLibrary()
   const { recordSearch } = useNavigation()
   const { state: pb } = usePlayback()
@@ -171,28 +178,43 @@ export default function SearchPanel({ query, inputEl, onClose }: Props) {
     onClose()
   }, [lib.tracks, playTrack, dispatch, onClose, recordSearch, query])
 
+  // The Record Shop row: the last selectable row, after every library row.
+  const shopLabel = recordShopRowLabel(query)
+  const shopIdx = shopLabel ? flatRows.length : -1
+  const rowCount = flatRows.length + (shopLabel ? 1 : 0)
+  const openShop = useCallback(() => {
+    const detail = recordShopPrefill(query)
+    if (!detail) return
+    recordSearch(query)
+    // DownloadView takes the prefill when it mounts (or at once if mounted).
+    window.dispatchEvent(new CustomEvent('jaketunes-download-prefill', { detail }))
+    openBrowse(dispatch)
+    onClose()
+  }, [query, recordSearch, dispatch, onClose])
+
   // Keyboard nav — listens on the bound input so the user can type +
   // navigate without losing focus. The handler captures and stops
   // arrow/enter/esc; everything else passes through to the input.
   useEffect(() => {
     if (!inputEl) return
     const handler = (e: KeyboardEvent) => {
-      if (flatRows.length === 0) return
+      if (rowCount === 0) return
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        setSelectedFlatIdx(i => Math.min(flatRows.length - 1, i + 1))
+        setSelectedFlatIdx(i => Math.min(rowCount - 1, i + 1))
       } else if (e.key === 'ArrowUp') {
         e.preventDefault()
         setSelectedFlatIdx(i => Math.max(0, i - 1))
       } else if (e.key === 'Enter') {
         e.preventDefault()
+        if (selectedFlatIdx === shopIdx) { openShop(); return }
         const row = flatRows[selectedFlatIdx]
         if (row) activate(row.row)
       }
     }
     inputEl.addEventListener('keydown', handler)
     return () => inputEl.removeEventListener('keydown', handler)
-  }, [inputEl, flatRows, selectedFlatIdx, activate])
+  }, [inputEl, flatRows, selectedFlatIdx, activate, rowCount, shopIdx, openShop])
 
   // Click-outside dismiss — if user clicks anywhere not in the panel
   // or input, close. (Esc + global keyboard shortcut already handle
@@ -208,12 +230,28 @@ export default function SearchPanel({ query, inputEl, onClose }: Props) {
     return () => document.removeEventListener('mousedown', onClick)
   }, [inputEl, onClose])
 
+  const shopRow = shopLabel ? (
+    <div className="search-panel-section search-panel-section--shop">
+      <button
+        className={`search-panel-row search-panel-row--shop ${selectedFlatIdx === shopIdx ? 'search-panel-row--selected' : ''}`}
+        onClick={openShop}
+      >
+        <span className="search-panel-row-art search-panel-row-art--placeholder" aria-hidden="true">⌕</span>
+        <span className="search-panel-row-main">
+          <span className="search-panel-row-title">{shopLabel}</span>
+        </span>
+      </button>
+    </div>
+  ) : null
+
   if (flatRows.length === 0) {
     return (
-      <div className="search-panel search-panel--empty" ref={panelRef}>
-        <div className="search-panel-empty-msg">
+      <div className="search-panel" ref={panelRef}>
+        {header}
+        <div className="search-panel-empty-msg search-panel-empty-msg--padded">
           No results for "<strong>{query}</strong>"
         </div>
+        {shopRow}
       </div>
     )
   }
@@ -306,6 +344,7 @@ export default function SearchPanel({ query, inputEl, onClose }: Props) {
 
   return (
     <div className="search-panel" ref={panelRef}>
+      {header}
       {topRows.length > 0 && (
         <div className="search-panel-section search-panel-section--top">
           <div className="search-panel-section-header">Top hit</div>
@@ -336,6 +375,7 @@ export default function SearchPanel({ query, inputEl, onClose }: Props) {
           {playlistRows.map(renderRow)}
         </div>
       )}
+      {shopRow}
     </div>
   )
 }
