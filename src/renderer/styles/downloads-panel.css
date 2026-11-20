@@ -55,6 +55,10 @@
 
 .dlp-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
 .dlp-empty { padding: 18px 14px; font-size: 11px; line-height: 1.5; color: #666; }
+/* Brief 258: the list's three parts — In progress, Done today, Needs you. */
+.dlp-section { list-style: none; padding: 10px 14px 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #777; }
+.dlp-section--needsYou { color: #b0452a; }
+.dlp-needs-you-fix { margin-top: 6px; }
 
 .dlp-row {
   padding: 9px 12px 8px;

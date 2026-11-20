@@ -191,9 +191,11 @@ describe('the Listen List rides the one Downloads scheduler', () => {
     assert.equal(projectRecoStatus([], { id: 'nope' }).state, 'idle')
     // an album job made in the Download view from a prefilled selection carries the id back
     const alb: QResult = { kind: 'query', source: 'qobuz', mediaType: 'album', id: albumQueryId('Talking Heads', 'Little Creatures (Deluxe Version)'), desc: 'x', artist: 'Talking Heads', album: 'Little Creatures (Deluxe Version)', collectionId: 124906778, trackCount: 12, origin: { recommendationIds: ['r-album'] } }
+    answers.set('Little Creatures (Deluxe Version)', () => new Promise<Answer>(() => { /* in flight until canceled */ }))
     enqueue(alb)
     assert.equal(itemForRecommendation('r-album')?.result.collectionId, 124906778)
-    assert.equal(getLtlDownloadStatus('r-album').state, 'queued')
+    // Brief 258: albums have their own lane, so it starts beside the song in flight.
+    assert.equal(getLtlDownloadStatus('r-album').state, 'downloading')
     await cancel(queueKey(alb))
     await cancel(jobs[0].key)
   })

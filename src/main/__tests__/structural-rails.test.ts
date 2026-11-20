@@ -328,7 +328,7 @@ describe('FORTIFICATIONS — 2026-08-29 ("IT SPEAKS. fortify fortify fortify.")'
     assert.ok(store.includes("runDownload(['id', source, mediaType, id], shareSourceKey(addedVia))"),
       'the picked-id door dropped the share source')
     const preload = readFileSync(join(SRC, 'preload/index.ts'), 'utf-8')
-    assert.ok(preload.includes("ipcRenderer.invoke('streamrip:download-id', source, mediaType, id, addedVia)"),
+    assert.ok(preload.includes("ipcRenderer.invoke('streamrip:download-id', source, mediaType, id, addedVia, jobId)"),
       'the preload bridge dropped the share source on the picked-id door')
     const panel = readFileSync(join(SRC, 'renderer/components/DownloadsPanel.tsx'), 'utf-8')
     assert.ok(panel.includes('addedVia: q?.result.origin?.addedVia'),

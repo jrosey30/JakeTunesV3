@@ -42,6 +42,8 @@ import { artistAliases } from '../artist-spellings-store.ts'
 import { quietWarn } from '../flight-recorder.ts'
 import { judgeHeardListings } from '../album-preflight.ts'
 import { PREFLIGHT_BUDGET_MS, type AlbumPreflight, type AlbumPreflightRequest } from '../../common/album-preflight.ts'
+import { cancelJobs, currentJob, importOneAtATime, runInJob, stopAllJobsNow, watchLanding } from './rip-jobs.ts'
+import type { FinishedJob } from '../../common/download-lanes.ts'
 
 export interface StreamripDeps {
   ipc: IpcRegistrar
@@ -52,6 +54,8 @@ export interface StreamripDeps {
   /** The app's MusicBrainz identity and shared throttle (index.ts mbThrottle). */
   mbThrottle: () => Promise<void>
   mbUserAgent: string
+  /** Brief 258: a job's import finished — main's ledger, so a quit before the renderer saves "done" never downloads it twice. */
+  onJobFinished?: (jobId: string, f: Omit<FinishedJob, 'at'>) => Promise<void>
 }
 
 // pipx installs the launcher here; an absolute path sidesteps the app's spawn
@@ -121,10 +125,10 @@ interface RunResult { code: number; stdout: string; stderr: string; enoent: bool
 // 6.0 Phase 4: children are KIND-tagged. Cancel kills only 'download'
 // children — an in-flight suggestion SEARCH no longer dies because Jake
 // canceled a track (the old Set was a global blast radius). The ladder
-// also checks cancelRequested between stages, so cancel ends the whole
+// also checks currentJob().canceled between stages, so cancel ends the whole
 // fallback ladder, not just the current process.
 const activeProcs = new Map<ReturnType<typeof execFile>, 'download' | 'search'>()
-let cancelRequested = false
+// Brief 258: the cancel flag and the rip processes are per job (rip-jobs.ts), so two lanes never stop each other.
 function run(bin: string, args: string[], timeoutMs: number, kind: 'download' | 'search' = 'download', stillMoving?: () => Promise<boolean>): Promise<RunResult> {
   return new Promise((resolve) => {
     const started = Date.now()
@@ -133,12 +137,15 @@ function run(bin: string, args: string[], timeoutMs: number, kind: 'download' | 
     const child = execFile(bin, args, { maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (timer) clearTimeout(timer)
       activeProcs.delete(child)
+      job.procs.delete(child)
       const e = err as (Error & { code?: number | string; killed?: boolean }) | null
       const enoent = e?.code === 'ENOENT'
       const code = typeof e?.code === 'number' ? e.code : (e ? 1 : 0)
       resolve({ code, stdout: stdout || '', stderr: stderr || '', enoent, timedOut })
     })
     activeProcs.set(child, kind)
+    const job = currentJob()
+    if (kind === 'download') job.procs.add(child)
     const atDeadline = async (): Promise<void> => {
       if (stillMoving && Date.now() - started < RIP_HARD_CAP_MS && await stillMoving()) {
         timer = setTimeout(() => { void atDeadline() }, RIP_PROGRESS_CHECK_MS)
@@ -300,9 +307,52 @@ async function sweepOrphanedStaging(): Promise<void> {
   } catch { /* tmpdir unreadable — nothing to do */ }
 }
 
+/**
+ * Brief 258: each download call runs as its own job (rip-jobs.ts) — its own
+ * cancel, its own rip processes, an album's "7 of 12" sent to the renderer —
+ * and a job that imported is written to main's ledger before the answer goes
+ * back, so a quit in between never downloads it again. Nothing else about the
+ * handlers changes.
+ */
+const JOB_CHANNELS: Record<string, (args: unknown[]) => { id?: unknown; of?: unknown }> = {
+  'streamrip:download-by-query': (a) => {
+    const o = (a[0] ?? {}) as { jobId?: unknown; album?: unknown; title?: unknown; song?: unknown; trackCount?: unknown }
+    return { id: o.jobId, of: o.album && !(o.title || o.song) ? o.trackCount : undefined }
+  },
+  'streamrip:download-id': (a) => ({ id: a[4] }),
+  'streamrip:download': (a) => ({ id: a[1] }),
+}
+function jobScopedIpc(deps: StreamripDeps): IpcRegistrar {
+  return {
+    handle: (channel, listener, options) => {
+      const jobOf = JOB_CHANNELS[channel]
+      if (!jobOf) return deps.ipc.handle(channel, listener, options)
+      deps.ipc.handle(channel, (e, ...args) => {
+        const { id, of } = jobOf(args)
+        const jobId = typeof id === 'string' && id ? id : null
+        const progress = jobId ? (have: number, total: number): void => {
+          const win = deps.getMainWindow()
+          if (win && !win.isDestroyed()) win.webContents.send('streamrip:job-progress', { jobId, have, of: total })
+        } : undefined
+        return runInJob(jobId, typeof of === 'number' ? of : null, progress, async () => {
+          const r = await (listener as (ev: typeof e, ...rest: unknown[]) => unknown)(e, ...args)
+          const done = r as { ok?: boolean; imported?: number; dupes?: number; matchDesc?: string; completion?: string } | undefined
+          if (jobId && done?.ok && deps.onJobFinished) {
+            await deps.onJobFinished(jobId, { imported: done.imported, dupes: done.dupes, matchDesc: done.matchDesc, completion: done.completion })
+              .catch(() => quietWarn('download-ledger', '[downloads] could not note a finished job'))
+          }
+          return r
+        })
+      }, options)
+    },
+  }
+}
+
 export function registerStreamripStore(deps: StreamripDeps): void {
   setTimeout(() => { void sweepOrphanedStaging() }, 30_000).unref()
-  const { ipc } = deps
+  // Brief 258: a quit stops every rip and removes its temp folder; the saved list restarts the job.
+  process.once('exit', stopAllJobsNow)
+  const ipc = jobScopedIpc(deps)
   /** outcome + alternatives (6.0 Phase 1): the structured verdict behind the
    *  message — 'exact-not-found' with the candidates that were judged and
    *  why each failed, so a future approval UI can offer them instead of the
@@ -321,14 +371,14 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   /// verdict can tell a NETWORK failure apart from a genuine miss (2026-09-03:
   /// ten Sister Nancy tracks "no source had it" while the laptop's link was
   /// flapping — streamrip exited 1 on every one and nothing said why).
-  let lastStageFailure: string | null = null
   async function stageRip(ripSubcmd: string[], maxMs = 1000 * 60 * 20): Promise<{ ok: true; staged: StagedRip } | { ok: false; error: string }> {
-    lastStageFailure = null
+    currentJob().lastStageFailure = null
     const rip = await resolveRip()
     if (!rip) return { ok: false, error: await ripDiagnosis() }
     let staging = ''
     try {
       staging = await mkdtemp(join(tmpdir(), 'jaketunes-rip-'))
+      currentJob().stagingDirs.add(staging)
       // --no-db: ignore streamrip's persistent "already downloaded" database.
       // We stage to a throwaway temp dir (wiped every run) and dedupe at import
       // by fingerprint, so that DB can only hurt us — once a track is logged in
@@ -347,16 +397,20 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       let res: RunResult = { code: 1, stdout: '', stderr: '', enoent: false }
       const started = Date.now()
       for (let attempt = 1; attempt <= attempts; attempt++) {
-        if (cancelRequested) break
+        if (currentJob().canceled) break
         if (attempt > 1) {
           await wipeStaging(staging)
           staging = await mkdtemp(join(tmpdir(), 'jaketunes-rip-'))
+          currentJob().stagingDirs.add(staging)
           await new Promise((r) => setTimeout(r, 3000))
         }
         const left = maxMs - (Date.now() - started)
         if (left < 15000) break
         const here = staging
-        res = await run(rip.bin, ['--folder', staging, '--quality', '4', '--no-db', '--no-progress', ...ripSubcmd], left, 'download', createRipProgress(() => bytesUnder(here)))
+        const stopWatch = watchLanding(here)
+        try {
+          res = await run(rip.bin, ['--folder', staging, '--quality', '4', '--no-db', '--no-progress', ...ripSubcmd], left, 'download', createRipProgress(() => bytesUnder(here)))
+        } finally { stopWatch() }
         // Stopped mid-transfer: what's there is cut off under its final name. Nothing it left counts.
         if (res.timedOut) {
           console.warn(`[streamrip] stopped: no new bytes past the deadline (${Math.round((Date.now() - started) / 60000)} min). Nothing imported.`)
@@ -365,13 +419,13 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         }
         const got = await wholeRipFiles(await finishedRipFiles(await collectAudio(staging), probeStagedFile))
         if (got.length > 0) return { ok: true, staged: { staging, files: got } }
-        if (cancelRequested) break
+        if (currentJob().canceled) break
         const why = tailMessage(res)
         console.warn(`[streamrip] attempt ${attempt}/${attempts} produced nothing (exit ${res.code})${why ? ` — ${why}` : ''}${attempt < attempts ? ' — retrying' : ''}`)
-        if (res.code !== 0) lastStageFailure = why || `exit ${res.code}`
+        if (res.code !== 0) currentJob().lastStageFailure = why || `exit ${res.code}`
       }
       await wipeStaging(staging)
-      if (cancelRequested) return { ok: false, error: 'canceled' }
+      if (currentJob().canceled) return { ok: false, error: 'canceled' }
       return { ok: false, error: tailMessage(res) || `streamrip downloaded nothing (exit ${res.code}).${ripSubcmd[1] === 'soundcloud' ? '' : ' That service may need login in streamrip’s config.'}` }
     } catch (err) {
       if (staging) await rm(staging, { recursive: true, force: true }).catch(() => {})
@@ -419,6 +473,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     let staging = ''
     try {
       staging = await mkdtemp(join(tmpdir(), 'jaketunes-bc-'))
+      currentJob().stagingDirs.add(staging)
       // The file as Bandcamp serves it (Brief 224). `-x --audio-format m4a` turned
       // 128k MP3s into AACs of 345k and up: about three times the bytes, no better
       // sound, and files that then looked high quality (44 are in the library). The
@@ -508,7 +563,8 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     try {
       // `only` = the album contract's pick of files whose tracks are NOT
       // already owned; everything else in staging is discarded with it.
-      const summary = await deps.importDownloaded(opts.only ?? staged.files, 'streamrip', opts.addedVia, opts.rowTags)
+      // Brief 258: the two lanes import one after the other, so neither imports what the other just did.
+      const summary = await importOneAtATime(() => deps.importDownloaded(opts.only ?? staged.files, 'streamrip', opts.addedVia, opts.rowTags))
       const importedTracks: Array<Record<string, unknown>> = Array.isArray(summary)
         ? (summary as unknown as Array<Record<string, unknown>>)
         : ((summary as unknown as { tracks?: Array<Record<string, unknown>> }).tracks ?? [])
@@ -543,13 +599,9 @@ export function registerStreamripStore(deps: StreamripDeps): void {
 
   // Abort every in-flight rip process (download or search). The queue marks
   // the item canceled; the killed process's staging dir is cleaned as usual.
-  ipc.handle('streamrip:cancel-active', async () => {
-    let killed = 0
-    cancelRequested = true
-    for (const [c, kind] of activeProcs) {
-      if (kind !== 'download') continue   // searches survive a track cancel
-      try { c.kill('SIGKILL'); killed++ } catch { /* already gone */ }
-    }
+  // Brief 258: with a job id, only that job (the other lane keeps going); without one, every job.
+  ipc.handle('streamrip:cancel-active', async (_e, jobId?: string) => {
+    const killed = cancelJobs(typeof jobId === 'string' && jobId ? jobId : null)   // searches survive a track cancel
     return { ok: true, killed }
   }, { refuse: REFUSED_SENDER })
 
@@ -740,8 +792,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   // with no `durationMs`, every Listen List row among them, asks Apple for one first.
   const fmtDur = (s: number | null): string => s == null ? 'unknown length' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
   ipc.handle('streamrip:download-by-query', async (_e, opts: { sourceEdition?: SourceEdition; artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; addedVia?: string }): Promise<DownloadResult & { matchDesc?: string }> => {
-    cancelRequested = false            // new attempt = clean slate
-    lastStageFailure = null            // never let an OLD rip's error explain THIS request
+    // A new job is a clean slate (rip-jobs.ts runInJob): its own cancel flag, its own last rip error.
     const addedVia = shareSourceKey(opts?.addedVia)   // every import below lands with it
     const artist = (opts?.artist || '').trim()
     // album set WITHOUT a title -> resolve a whole ALBUM on Qobuz; else a single track.
@@ -1056,7 +1107,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
 
     if (sourceEdition && reqAlbum) {
       // Action B: straight to the selected source; nothing else is tried.
-      if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
+      if (currentJob().canceled) return { ok: false, error: 'canceled', outcome: 'canceled' }
       const st = await stageBandcamp(sourceEdition.url)
       if (!st.ok) { trace.push(`source edition stage: ${st.error}`); return { ok: false, error: st.error, outcome: 'provider-failed', primary: 'Download failed', detail: `The Bandcamp edition at ${sourceEdition.url} could not be fetched: ${st.error}` } }
       const desc = `${sourceEdition.title} — ${sourceEdition.artist} (Bandcamp edition)`
@@ -1110,7 +1161,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       // path went stage → import with no witness at all).
       let lastRipErr = ''
       for (const cand of ranked2.slice(0, 3)) {
-        if (cancelRequested) {
+        if (currentJob().canceled) {
           if (fallback) await discardStaged(fallback.staged)
           return { ok: false, error: 'canceled', outcome: 'canceled' }
         }
@@ -1178,7 +1229,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       return { ...dl, matchDesc: held.desc, outcome: dl.ok ? 'imported' : 'provider-failed' }
     }
 
-    if (cancelRequested) {
+    if (currentJob().canceled) {
       if (fallback) await discardStaged(fallback.staged)
       return { ok: false, error: 'canceled', outcome: 'canceled' }
     }
@@ -1254,7 +1305,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     }
     if (fallback) return importFallback(fallback)
 
-    if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
+    if (currentJob().canceled) return { ok: false, error: 'canceled', outcome: 'canceled' }
     if (clock.expired()) return { ...gaveUp(), outcome: 'provider-failed' }
     // ── Bandcamp — equal citizen (2026-08-07, Jake: "bandcamp is very
     // much used by me too. use both equally"). Scene bands live here when
@@ -1283,7 +1334,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     if (bcLeftAlone.length && qsearch.ok) anyMatched = true
     let bandcampFailure: string | null = null
     for (const bcPick of bcPicks) {
-      if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
+      if (currentJob().canceled) return { ok: false, error: 'canceled', outcome: 'canceled' }
       anyMatched = true
       const st = await stageBandcamp(bcPick.url)
       if (!st.ok) { trace.push(`bandcamp stage: ${st.error}`); bandcampFailure = st.error; continue }
@@ -1307,7 +1358,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       noteReject('bandcamp', desc, verdict)
     }
 
-    if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
+    if (currentJob().canceled) return { ok: false, error: 'canceled', outcome: 'canceled' }
     if (clock.expired()) return { ...gaveUp(), outcome: 'provider-failed' }
     // ── SoundCloud fallback (2026-07-22, Jake: "auto qobuz first"). Qobuz
     // doesn't carry indie/underground singles; SoundCloud does, full-length
@@ -1320,7 +1371,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // Setup" was all 16 PROVIDER UNAVAILABLEs in main.log. Only a file it delivered
     // and the judge ruled on counts. stageRip clears lastStageFailure, so Qobuz's
     // is kept from here on.
-    const stageFailureBeforeSoundcloud = lastStageFailure
+    const stageFailureBeforeSoundcloud = currentJob().lastStageFailure
     let soundcloudSearchError: string | null = null
     let soundcloudStageFailure: string | null = null
     if (!wantAlbum) {
@@ -1331,7 +1382,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         ? rankSoundcloudCandidates(title || query, artist, ssearch.results).slice(0, 3)
         : []
       for (const spick of spicks) {
-        if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
+        if (currentJob().canceled) return { ok: false, error: 'canceled', outcome: 'canceled' }
         if (clock.expired()) return { ...gaveUp(), outcome: 'provider-failed' }
         console.log(`[download] Qobuz had no exact match for "${query}" — trying SoundCloud: ${spick.desc}`)
         const st = await stageRip(['id', spick.source, spick.mediaType, spick.id], clock.remaining())
@@ -1463,7 +1514,6 @@ export function registerStreamripStore(deps: StreamripDeps): void {
 
   // Download a picked search result by its streamrip id.
   ipc.handle('streamrip:download-id', async (_e, source: string, mediaType: string, id: string, addedVia?: string): Promise<DownloadResult> => {
-    cancelRequested = false
     if (!source || !mediaType || !id) return { ok: false, error: 'Nothing selected to download.' }
     // IDs from search results are opaque store ids — reject path-like junk.
     if (/[\/\\\0]/.test(String(id)) || String(id).length > 128) {
@@ -1480,7 +1530,6 @@ export function registerStreamripStore(deps: StreamripDeps): void {
 
   // Download a pasted streaming link directly.
   ipc.handle('streamrip:download', async (_e, url: string): Promise<DownloadResult> => {
-    cancelRequested = false
     const link = (url || '').trim()
     if (!isAllowedStreamripUrl(link)) {
       return { ok: false, error: 'Paste a Qobuz, Tidal, Deezer, or YouTube https link.' }

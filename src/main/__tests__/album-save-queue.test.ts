@@ -101,14 +101,15 @@ describe('the album preflight on the scheduler', () => {
     assert.deepEqual(walkCalls.map((c) => c.title ?? c.album), ['Long Song'])
   })
 
-  it('the pump waits for an album’s answer before starting it, then goes on in order', async () => {
+  it('the album lane waits for an album’s answer before starting it, then goes on in order; a song beside it does not wait (Brief 258)', async () => {
     preflight.set('Slow Answer', async () => { await sleep(40); return { answer: 'found' } })
     enqueue(album('Slow Answer'))
+    enqueue(album('Next Album'))
     enqueue(song('After It'))
     await sleep(10)
-    assert.equal(walkCalls.length, 0, 'nothing jumps the album while it is asked about')
+    assert.deepEqual(walkCalls.map((c) => c.title ?? c.album), ['After It'], 'the song runs in its own lane; no album jumps the one being asked about')
     await settle()
-    assert.deepEqual(walkCalls.map((c) => c.title ?? c.album), ['Slow Answer', 'After It'])
+    assert.deepEqual(walkCalls.map((c) => c.title ?? c.album), ['After It', 'Slow Answer', 'Next Album'])
   })
 
   it('songs never ask', async () => {

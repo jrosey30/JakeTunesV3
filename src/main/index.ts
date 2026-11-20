@@ -328,6 +328,7 @@ import { searchItunesSuggestions, itunesAlbumTracks } from './download-search'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { applyDevReview, devReviewWebPreferences, suppressListeningWrites } from './dev-review.ts'
 import { registerStreamripStore } from './streamrip-store'
+import { createDownloadQueueStore, registerDownloadQueueStore } from './download-queue-store.ts'
 import { registerGaplessTrimIpc } from './gapless-trim'
 import { registerPlaylistCoverIpc, registerPlaylistCoverProtocol } from './playlist-covers'
 import { registerScotusArchive } from './scotus-archive'
@@ -10743,12 +10744,16 @@ app.whenReady().then(async () => {
   // streamrip download store (replaces the dead embedded web-store views —
   // squid/lucida/dab). Shells out to the `rip` CLI and imports the result
   // through the same pipeline Bandcamp uses, tagged source='streamrip'.
+  // Brief 258: the Downloads waiting list survives a restart or an update (userData/download-queue.json).
+  const downloadQueueStore = createDownloadQueueStore({ path: join(app.getPath('userData'), 'download-queue.json') })
+  registerDownloadQueueStore(ipc, downloadQueueStore)
   registerStreamripStore({
     ipc,
     getMainWindow: () => mainWindow,
     importDownloaded: importDownloadedFiles,
     mbThrottle,
     mbUserAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`,
+    onJobFinished: (jobId, f) => downloadQueueStore.markFinished(jobId, f),
   })
 
   // SCOTUS Archive — Poppy's Supreme Court argument (Beck v. Prupis). A
