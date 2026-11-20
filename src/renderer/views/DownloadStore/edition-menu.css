@@ -1,0 +1,66 @@
+/* The Edition menu on an album card or row (Brief 255). Small and quiet: the
+   save button stays the thing to press. */
+.edition-menu {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text-secondary, #6b655a);
+  min-width: 0; max-width: 100%;
+}
+.edition-menu-label { font-weight: 600; flex-shrink: 0; }
+.edition-menu-select {
+  min-width: 0; max-width: 100%;
+  font: inherit; font-size: 11px; color: var(--text-primary, #2b2823);
+  background: transparent; border: 1px solid rgba(85, 78, 64, 0.22); border-radius: 6px;
+  padding: 2px 4px; cursor: pointer; text-overflow: ellipsis;
+}
+/* A held place: the menu's size, invisible and unclickable until it shows. */
+.edition-menu--held { visibility: hidden; pointer-events: none; }
+.edition-menu-select:focus-visible { outline: 2px solid rgb(var(--brand-orange-rgb, 253 86 1)); outline-offset: 1px; }
+/* For You card: the menu sits at the foot of the card, right above Save album. */
+.edition-menu--card { margin-top: auto; padding-top: 8px; }
+.edition-menu--card + .store-add { margin-top: 4px; padding-top: 0; }
+/* Listen List row: first in the actions column, so its appearing moves nothing
+   to its right (Songs, Save album, toss stay where they were); never wider than
+   the actions column allows. */
+.edition-menu--row { max-width: 220px; }
+
+/* An album's songs, opened in place (Brief 255). */
+.tl-sheet-backdrop {
+  position: fixed; inset: 0; z-index: 900;
+  background: rgba(20, 18, 14, 0.35);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.tl-sheet {
+  width: min(520px, 100%); max-height: min(80vh, 720px);
+  display: flex; flex-direction: column; gap: 10px;
+  background: var(--surface-content, #fff); color: var(--text-primary, #2b2823);
+  border-radius: 12px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28); padding: 16px;
+}
+.tl-sheet-head { display: flex; align-items: flex-start; gap: 12px; }
+.tl-sheet-titles { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.tl-sheet-title { font-size: 15px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-sheet-artist { font-size: 12px; color: var(--text-secondary, #6b655a); }
+.tl-sheet-close { border: 0; background: none; cursor: pointer; font-size: 14px; color: var(--text-secondary, #6b655a); }
+.tl-sheet-note { font-size: 12px; color: var(--text-secondary, #6b655a); }
+.tl-sheet-note--err { color: #b23a1d; }
+.tl-sheet-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0; }
+.tl-sheet-row { display: flex; align-items: center; gap: 8px; padding: 5px 2px; border-bottom: 1px solid rgba(85, 78, 64, 0.08); font-size: 12px; }
+.tl-sheet-pick { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; cursor: pointer; }
+.tl-sheet-row.is-owned .tl-sheet-pick { cursor: default; color: var(--text-secondary, #6b655a); }
+.tl-sheet-num { width: 20px; text-align: right; color: var(--text-secondary, #6b655a); flex-shrink: 0; }
+.tl-sheet-song { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-sheet-dur { color: var(--text-secondary, #6b655a); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.tl-sheet-state { min-width: 90px; text-align: right; color: var(--text-secondary, #6b655a); flex-shrink: 0; }
+.tl-sheet-foot { display: flex; justify-content: flex-end; gap: 8px; }
+.tl-sheet-btn {
+  height: 28px; padding: 0 14px; border-radius: 999px; font-size: 12px; font-weight: 600; cursor: pointer;
+  border: 1px solid rgba(85, 78, 64, 0.25); background: transparent; color: inherit;
+}
+.tl-sheet-btn:disabled { opacity: 0.45; cursor: default; }
+.tl-sheet-btn--primary { border-color: rgb(var(--brand-orange-rgb, 252, 85, 1)); color: rgb(var(--brand-orange-rgb, 252, 85, 1)); }
+.tl-sheet .edition-menu { align-self: flex-start; }
+.store-songs, .ltl-tri-songs { border: 0; background: none; cursor: pointer; padding: 0; font-size: 11px; font-weight: 600; color: var(--text-secondary, #6b655a); }
+.store-songs:hover, .ltl-tri-songs:hover { text-decoration: underline; }
+/* For You card foot: Songs, then the Edition menu, then the save button, all at the bottom. */
+.store-card .store-songs { margin-top: auto; padding-top: 8px; align-self: flex-start; text-align: left; }
+.store-card .store-songs + .edition-menu--card { margin-top: 4px; padding-top: 0; }
+.store-card .store-songs + .store-add { margin-top: 2px; padding-top: 0; }

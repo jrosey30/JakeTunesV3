@@ -39,8 +39,11 @@ import {
 import { useWjlrPicks } from '../hooks/useWjlrPicks'
 import { lookupArtworkOneShot } from '../utils/artworkLookup'
 import {
-  getLtlDownloadSnapshot, subscribeLtlDownload, queueRecoDownload, prefillDownloadView, openBrowse,
+  getLtlDownloadSnapshot, subscribeLtlDownload, queueRecoDownload, prefillDownloadView, openBrowse, saveRecoAlbum, saveAlbumNamed, recoFields, recoOrigin,
 } from '../listen-to-the-list/ltlDownload'
+import EditionMenu, { askEditions } from './DownloadStore/EditionMenu'
+import AlbumTracklistSheet from './DownloadStore/AlbumTracklistSheet'
+import { showDownload } from '../components/DownloadsPanel'
 import '../styles/discover-feed.css'
 
 interface FeedCard {
@@ -97,6 +100,8 @@ export default function NewForYouView() {
   // The list entry each "+ List" made (by cardId) — once it's back, the
   // same button becomes "↓ Get" and downloads it the way the Listen List does.
   const [addedRecs, setAddedRecs] = useState<Map<string, Recommendation>>(new Map())
+  /** An album card's songs, open in place (Brief 255). */
+  const [songsOf, setSongsOf] = useState<FeedCard | null>(null)
   const dlMap = useSyncExternalStore(subscribeLtlDownload, getLtlDownloadSnapshot)
   const [owned, setOwned] = useState<RediscoveryPick[]>(rediscCache ?? [])
   const [wantedShelves, setWantedShelves] = useState<WantedShelf[]>(wantedCache ?? [])
@@ -280,13 +285,15 @@ export default function NewForYouView() {
   }
 
   // The Listen List's own door (ListenToTheListView getReco): a song queues
-  // on the one scheduler; an album has its EDITION picked in Search first;
-  // an artist-only pick is browsed, never downloaded blind.
+  // on the one scheduler; an album saves in one click, its edition named on
+  // the card (Brief 255); an artist-only pick is browsed, never downloaded blind.
   const getReco = (rec: Recommendation) => {
     const d = queueRecoDownload(rec)
-    if (d.kind === 'select-edition') { prefillDownloadView(rec, 'album'); openBrowse(dispatch) }
+    if (d.kind === 'select-edition') void saveRecoAlbum(rec, 'for-you').then((r) => { if (r.existingKey) showDownload(r.existingKey) })
     else if (d.kind === 'browse-only') { prefillDownloadView(rec, 'song'); openBrowse(dispatch) }
   }
+  // The full edition picker, when Jake asks for it from the Edition menu.
+  const pickInSearch = (rec: Recommendation) => { prefillDownloadView(rec, 'album'); openBrowse(dispatch) }
 
   // ── What I've learned ────────────────────────────────────────────────
   // Jake: "hard to know if you are actually learning my tastes or not based
@@ -332,8 +339,12 @@ export default function NewForYouView() {
     const isPlaying = preview.playingId === id
     const isAdded = added.has(id)
     const sampleUrl = c.type === 'album' ? c.hookPreviewUrl : c.previewUrl
+    // An album on the list: hovering or focusing the card asks for its editions (in turn),
+    // so the Edition menu is there, or never is, by the time the pointer reaches the foot.
+    const listed = c.type === 'album' && isAdded ? addedRecs.get(id) : undefined
+    const askAlbum = listed ? () => { const f = recoFields(listed); askEditions(f.artist, f.album || f.title) } : undefined
     return (
-      <div key={id} ref={seenRef(id, c)} className="store-card store-card--reco">
+      <div key={id} ref={seenRef(id, c)} className="store-card store-card--reco" onPointerEnter={askAlbum} onFocus={askAlbum}>
         <div className="store-art">
           <div className="df-art-ph" aria-hidden="true">♪</div>
           {c.artUrl && <img className="store-art-img" src={c.artUrl} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none' }} />}
@@ -360,7 +371,12 @@ export default function NewForYouView() {
         {c.why && c.lane !== 'ipod-wanted' && !/^Neighbors with /.test(c.why) && <div className="store-pitch">{c.why}</div>}
         {(() => {
           if (!isAdded) {
-            return <button type="button" className="store-add" onClick={() => void addToList(c)}>+ List</button>
+            return (
+              <>
+                {c.type === 'album' && <button type="button" className="store-songs store-songs--foot" onClick={() => setSongsOf(c)} title="See the songs and pick a few">Songs</button>}
+                <button type="button" className="store-add" onClick={() => void addToList(c)}>+ List</button>
+              </>
+            )
           }
           const rec = addedRecs.get(id)
           const dl = rec ? dlMap.get(rec.id)?.state ?? 'idle' : null
@@ -369,12 +385,18 @@ export default function NewForYouView() {
             return <button type="button" className="store-add store-add--done" disabled>{label}</button>
           }
           const failed = dl === 'error'
+          const albumOf = c.type === 'album' ? recoFields(rec) : null
           return (
-            <button type="button" className="store-add" onClick={() => getReco(rec)}
-              title={failed ? (dlMap.get(rec.id)?.error || 'Download failed — try again') : c.type === 'song' ? 'Save to your library' : c.type === 'album' ? 'Pick the edition in Search' : 'Find their records in Search'}>
-              {/* One word per action (Brief 253): Save / Save album. */}
-              {failed ? 'Retry' : c.type === 'album' ? 'Save album' : c.type === 'song' ? 'Save' : 'Search'}
-            </button>
+            <>
+              {albumOf && <button type="button" className="store-songs" onClick={() => setSongsOf(c)} title="See the songs and pick a few">Songs</button>}
+              {/* Its place is held, so its appearing never moves Songs or Save album. */}
+              {albumOf && <EditionMenu artist={albumOf.artist} album={albumOf.album || albumOf.title} onMore={() => pickInSearch(rec)} className="edition-menu--card" reserve />}
+              <button type="button" className="store-add" onClick={() => getReco(rec)}
+                title={failed ? (dlMap.get(rec.id)?.error || 'Download failed — try again') : c.type === 'song' ? 'Save to your library' : c.type === 'album' ? 'Save the album' : 'Find their records in Search'}>
+                {/* One word per action (Brief 253): Save / Save album. */}
+                {failed ? 'Retry' : c.type === 'album' ? 'Save album' : c.type === 'song' ? 'Save' : 'Search'}
+              </button>
+            </>
           )
         })()}
       </div>
@@ -557,6 +579,21 @@ export default function NewForYouView() {
       {error && !loading && lanes.length === 0 && <div className="df-error">{error}</div>}
 
       {SHOP_PAGE_SECTIONS.map((id) => bands[id])}
+      {songsOf && (() => {
+        const rec = addedRecs.get(cardId(songsOf))
+        const who = rec ? recoFields(rec) : null
+        const artist = who?.artist || songsOf.artist
+        const album = who ? (who.album || who.title) : songsOf.title
+        return (
+          <AlbumTracklistSheet
+            artist={artist} album={album}
+            origin={rec ? recoOrigin(rec) : undefined}
+            onSaveAlbum={() => { if (rec) getReco(rec); else void saveAlbumNamed(artist, album, 'for-you').then((r) => { if (r.existingKey) showDownload(r.existingKey) }) }}
+            onMore={() => { setSongsOf(null); if (rec) pickInSearch(rec); else { window.dispatchEvent(new CustomEvent('jaketunes-download-prefill', { detail: { query: `${artist} ${album}`, kind: 'album', artist, title: album, target: 'browse' } })); openBrowse(dispatch) } }}
+            onClose={() => setSongsOf(null)}
+          />
+        )
+      })()}
     </div>
   )
 }

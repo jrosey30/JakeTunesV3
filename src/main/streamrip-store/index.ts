@@ -40,6 +40,8 @@ import { recoArtistMatches } from '../reco-match.ts'
 import { isAllowedStreamripUrl } from '../url-safety.ts'
 import { artistAliases } from '../artist-spellings-store.ts'
 import { quietWarn } from '../flight-recorder.ts'
+import { judgeHeardListings } from '../album-preflight.ts'
+import { PREFLIGHT_BUDGET_MS, type AlbumPreflight, type AlbumPreflightRequest } from '../../common/album-preflight.ts'
 
 export interface StreamripDeps {
   ipc: IpcRegistrar
@@ -625,11 +627,14 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     releaseDate?: string; releaseYear?: number; parentalWarning?: boolean
     tracks: Array<{ id: string; title: string; durationSec?: number; streamable?: boolean; trackNumber?: number; discNumber?: number; parentalWarning?: boolean; performer?: string }>
   }
-  async function qobuzAlbumTrackList(albumId: string): Promise<QobuzAlbumListing> {
+  /** `heard` (Brief 255's preflight): filled in with whether Qobuz answered,
+   *  and whether that answer was its own 404. The walk passes nothing. */
+  async function qobuzAlbumTrackList(albumId: string, heard?: { answered: boolean; gone: boolean }): Promise<QobuzAlbumListing> {
     const creds = await readQobuzCreds()
     if (!creds) return { tracks: [] }
     try {
       const answer = await qobuzGet('album/get?album_id=' + encodeURIComponent(albumId), creds, 8000)
+      if (heard) { heard.answered = answer !== null; heard.gone = answer === 'gone' }
       if (!answer || answer === 'gone') return { tracks: [] }
       const d = answer.body as { title?: string; version?: string | null; artist?: { name?: string }; tracks_count?: number; media_count?: number; upc?: string; parental_warning?: boolean; release_date_original?: string; release_date_stream?: string; tracks?: { items?: Array<{ id?: number | string; title?: string; version?: string | null; duration?: number; streamable?: boolean; track_number?: number; media_number?: number; parental_warning?: boolean; performer?: { name?: string } }> } }
       const releaseDate = typeof d.release_date_stream === 'string' ? d.release_date_stream : undefined
@@ -1373,6 +1378,88 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     console.warn(`[download] ${primary.toUpperCase()} “${title}” — ${artist}: ${detail.replace(/\n/g, ' | ')}`)
     return { ok: false, outcome, alternatives, primary, detail, error: `${primary}: ${detail.split('\n')[0]}` }
   }, { refuse: REFUSED_SENDER })
+
+  // ── The album preflight (Brief 255, Record Shop Phase 2): before an album
+  // job downloads anything, ask Qobuz once whether it has THIS edition. A
+  // refusal used to take 4 to 17 minutes (a whole Bandcamp album staged and
+  // refused, or a Qobuz album staged and found short); the question is a
+  // search, the requested tracklist and up to six listings, a few seconds.
+  // The walk above is untouched and still the only thing that downloads: a
+  // "found" or an "unknown" runs it exactly as before, and the renderer ends
+  // the job only on a "no". Never the token in a log line.
+  ipc.handle('check-qobuz-album', async (_e, opts: AlbumPreflightRequest): Promise<AlbumPreflight> => {
+    const started = Date.now()
+    const artist = String(opts?.artist || '').trim()
+    const title = String(opts?.album || '').trim()
+    const ask = async (): Promise<AlbumPreflight> => {
+      if (!artist || !title) return { answer: 'unknown', why: 'no-request' }
+      if (!(await readQobuzCreds())) return { answer: 'unknown', why: 'no-token' }
+      // The walk's query, word for word (download-by-query: lookFor, query, bare).
+      const lookFor = searchTitle(title) || title
+      const query = [artist, searchQueryTitle(title) || lookFor].filter(Boolean).join(' ')
+      // Asked now, read only on a Qobuz "no": the walk's next stop for an album.
+      const bandcamp = bandcampSearch(query, 'a')
+      let qsearch = await searchCatalog({ query, source: 'qobuz', mediaType: 'album', numResults: 25 })
+      const bare = [artist, (searchQueryTitle(title) || lookFor).replace(/\s*[([{][^)\]}]*[)\]}]/g, '').replace(/\s{2,}/g, ' ').trim()].filter(Boolean).join(' ')
+      if (qsearch.ok && (qsearch.results?.length ?? 0) === 0 && bare && bare !== query) qsearch = await searchCatalog({ query: bare, source: 'qobuz', mediaType: 'album', numResults: 25 })
+      if (!qsearch.ok) return { answer: 'unknown', why: 'no-answer' }
+      const { ranked, rejectedVersions, aliases } = qsearch.results?.length
+        ? await rankWithArtistAliases(lookFor || query, artist, qsearch.results, 'album', (a) => artistAliases(a, { throttle: deps.mbThrottle, userAgent: deps.mbUserAgent }), undefined)
+        : { ranked: [], rejectedVersions: [], aliases: [] as string[] }
+      // The requested edition, built as the walk builds it.
+      let cid = typeof opts?.collectionId === 'number' && opts.collectionId > 0 ? opts.collectionId : undefined
+      if (!cid) cid = (await itunesFindAlbum(artist, title).catch(() => null))?.collectionId
+      const lookup = cid ? await itunesAlbumTracks(cid).catch(() => null) : null
+      const rows = lookup?.ok ? lookup.tracks : []
+      const req = buildRequestedAlbum({
+        artist, artistAliases: aliases, title,
+        trackCount: opts?.trackCount ?? lookup?.trackCount,
+        tracks: rows.map((t) => ({ title: t.song, trackNumber: t.trackNumber, discNumber: t.discNumber, durationSec: t.durationSecs, explicitness: t.explicitness })),
+        discCount: rows.reduce((m, t) => Math.max(m, t.discCount ?? t.discNumber ?? 1), 0) || undefined,
+        releaseYear: lookup?.releaseYear ?? opts?.releaseYear,
+        collectionId: cid,
+        explicitSource: opts?.explicitSource,
+      })
+      // Already in the library: the walk says so in a moment, from the library.
+      if (req.tracks.length) {
+        const lib = await loadLibraryTracksLite().catch(() => [] as LibraryTrackLite[])
+        if (matchLibraryOwnership(req, lib).missing.length === 0) return { answer: 'found' }
+      }
+      // The walk's metadata probe covers its top six; the listings are that probe.
+      const top = ranked.slice(0, 6)
+      const heard = await Promise.all(top.map(async (hit) => {
+        const h = { answered: false, gone: false }
+        const tl = await qobuzAlbumTrackList(hit.id, h)
+        return { hit, tl, h }
+      }))
+      // A listing nobody answered anywhere in the six is a candidate the walk could
+      // still stage (the explicit filters can lift #4-6 into the judged three): no verdict.
+      const verdict = judgeHeardListings(req, heard.map((x) => ({ hit: x.hit, tl: x.tl, answered: x.h.answered, gone: x.h.gone })), {
+        rejectedVersions, explicitSource: opts?.explicitSource, beyond: ranked.length > 6,
+      })
+      if (verdict.answer !== 'no') return verdict
+      // Today's walk goes on to Bandcamp after a Qobuz "no", and stages up to two
+      // pages there. When it would, it runs (unchanged); when it wouldn't, the no stands.
+      // ⚠️ TWIN: the walk's bcNamed / bcPicks (download-by-query, album request).
+      const bc = await bandcamp
+      if ('hits' in bc) {
+        const picks = bc.hits.filter((r) =>
+          recoArtistMatches(artist, r.band) && titleMatches(title, r.name) && !unwantedVersionOf(title, r.name) && !liveBrandMarker(title, r.name)
+          && !bandcampHitDoubt({ artist, title, album: title }, r))
+        if (picks.length) return { answer: 'unknown', why: 'bandcamp' }
+        return verdict
+      }
+      // Bandcamp didn't answer: the no stands for Qobuz, and says Bandcamp wasn't asked (as the walk does).
+      return { ...verdict, bandcampUnasked: true }
+    }
+    let timer: NodeJS.Timeout | undefined
+    const budget = new Promise<AlbumPreflight>((res) => { timer = setTimeout(() => res({ answer: 'unknown', why: 'timeout' }), PREFLIGHT_BUDGET_MS) })
+    try {
+      const out = await Promise.race([ask().catch((): AlbumPreflight => ({ answer: 'unknown', why: 'error' })), budget])
+      console.warn(`[preflight] album “${title}” — ${artist}: ${out.answer}${'why' in out ? ` (${out.why}${out.answer === 'no' && out.why === 'partial' ? ` ${out.have}/${out.of}` : ''})` : ''} in ${Date.now() - started} ms`)
+      return out
+    } finally { if (timer) clearTimeout(timer) }
+  }, { refuse: { answer: 'unknown', why: 'error' } })
 
   // Download a picked search result by its streamrip id.
   ipc.handle('streamrip:download-id', async (_e, source: string, mediaType: string, id: string, addedVia?: string): Promise<DownloadResult> => {

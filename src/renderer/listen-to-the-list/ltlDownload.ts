@@ -22,9 +22,11 @@ import { recoFields } from '../../common/artist-credit.ts'
 import type { Recommendation } from '../types.ts'
 import { friendOf, isLinkKind } from './friend.ts'
 import {
-  enqueue, cancel, retry, subscribeQueue, getQueue, itemForRecommendation,
+  enqueue, cancel, retry, subscribeQueue, getQueue, itemForRecommendation, itemFor,
   trackQueryId, albumQueryId, type QItem, type QResult, type QueueOrigin,
 } from '../views/DownloadStore/downloadQueue.ts'
+import { albumJobFor, editionToSave } from '../views/DownloadStore/albumEditions.ts'
+import type { AlbumSaveSurface } from '../../common/album-preflight.ts'
 
 export type LtlDownloadState = 'idle' | 'queued' | 'downloading' | 'done' | 'error'
 
@@ -186,6 +188,41 @@ export function queueAllRecoDownloads(recs: Recommendation[]): { queued: number;
     else out.browseOnly++
   }
   return out
+}
+
+/**
+ * Save album in one click (Brief 255): the record's edition is named here
+ * (main/album-editions.ts, or Jake's pick from the card's Edition menu) and
+ * the album is queued, with no trip to Search. With no edition to name, the
+ * record is queued by name and main resolves it as it always has. Before it
+ * downloads, the queue asks Qobuz whether it has that edition (the fast no).
+ * Answers the job's key when the record already had one that is still
+ * running or done, so the caller can show it in Downloads (Brief 253: Save
+ * album never does nothing).
+ */
+export async function saveRecoAlbum(rec: Recommendation, surface: AlbumSaveSurface): Promise<{ existingKey?: string }> {
+  const clickedAt = Date.now()
+  const { artist, title, album } = recoFields(rec)
+  const name = album || title
+  if (!artist || !name) return {}
+  const mine = itemForRecommendation(rec.id)
+  if (mine && mine.status !== 'failed' && mine.status !== 'canceled') return { existingKey: mine.key }
+  return saveAlbumNamed(artist, name, surface, recoOrigin(rec), clickedAt)
+}
+
+/** Save album for a record named by artist and title, with or without a row
+ *  behind it (a For You card not yet on the list). Same rules as saveRecoAlbum. */
+export async function saveAlbumNamed(artist: string, name: string, surface: AlbumSaveSurface, origin?: QueueOrigin, clickedAt = Date.now()): Promise<{ existingKey?: string }> {
+  if (!artist || !name) return {}
+  const { edition, from } = await editionToSave(artist, name)
+  const job = albumJobFor({ artist, album: name, edition, editionFrom: from, surface, origin, clickedAt })
+  const existing = itemFor(job)
+  if (existing && existing.status !== 'failed' && existing.status !== 'canceled') {
+    enqueue(job)   // adopts this row's origin onto the running job
+    return { existingKey: existing.key }
+  }
+  enqueue(job)
+  return {}
 }
 
 export async function cancelRecoDownload(id: string): Promise<void> {

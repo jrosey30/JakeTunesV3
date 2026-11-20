@@ -31,8 +31,11 @@ import { useListenToTheList } from '../listen-to-the-list/useListenToTheList'
 import type { AddFormState } from '../listen-to-the-list/useListenToTheList'
 import {
   canDownloadReco, getLtlDownloadSnapshot, prefillDownloadView, openBrowse,
-  queueRecoDownload, recoFields, subscribeLtlDownload, type LtlDownloadStatus,
+  queueRecoDownload, recoFields, recoOrigin, saveRecoAlbum, subscribeLtlDownload, type LtlDownloadStatus,
 } from '../listen-to-the-list/ltlDownload'
+import EditionMenu, { askEditions } from './DownloadStore/EditionMenu'
+import AlbumTracklistSheet from './DownloadStore/AlbumTracklistSheet'
+import { showDownload } from '../components/DownloadsPanel'
 import '../styles/listen-to-the-list.css'
 
 interface Friend { name: string; adds: number; got: number; tossed: number; lastAt: number; imported: number }
@@ -154,6 +157,8 @@ export default function ListenToTheListView() {
   const [sel, setSel] = useState(0)
   const [showAdd, setShowAdd] = useState(false)
   const [showFriends, setShowFriends] = useState(false)
+  /** An album row's songs, open in place (Brief 255). */
+  const [songsOf, setSongsOf] = useState<Recommendation | null>(null)
   useEffect(() => { setSel((s) => Math.max(0, Math.min(s, inboxFlat.length - 1))) }, [inboxFlat.length])
   const selRef = useRef<HTMLDivElement>(null)
   useEffect(() => { selRef.current?.scrollIntoView({ block: 'nearest' }) }, [sel])
@@ -164,15 +169,15 @@ export default function ListenToTheListView() {
     togglePreview(r.id, r.previewUrl, r.matchedTitle || r.song || r.album || 'Preview', r.matchedArtist || r.artist || '')
   }, [])
 
-  // Songs queue on the one scheduler; an album has to have its EDITION picked
-  // in the catalogue first (the tracklist in Download), and an artist-only
-  // jot or a concert is browsed there — never downloaded blind.
+  // Songs queue on the one scheduler; an album saves in one click, its edition
+  // named on the row (Brief 255; the Edition menu or main's choice); an
+  // artist-only jot or a concert is browsed in Search — never downloaded blind.
   const getReco = useCallback((r: Recommendation) => {
     if (!canDownloadReco(r)) return
     const f = friendOf(r)
     if (f) void window.electronAPI.friendEvent?.(f, 'got')
     const d = queueRecoDownload(r)
-    if (d.kind === 'select-edition') { prefillDownloadView(r, 'album'); openBrowse(dispatch) }
+    if (d.kind === 'select-edition') void saveRecoAlbum(r, 'listen-list').then((res) => { if (res.existingKey) showDownload(res.existingKey) })
     else if (d.kind === 'browse-only') { prefillDownloadView(r, 'song'); openBrowse(dispatch) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -216,7 +221,9 @@ export default function ListenToTheListView() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return
+      // An album's songs are open over the list: its keys are the sheet's (Esc closes it).
+      if (songsOf) return
       if (inboxFlat.length === 0) return
       const cur = inboxFlat[Math.min(sel, inboxFlat.length - 1)]
       switch (e.key) {
@@ -231,7 +238,7 @@ export default function ListenToTheListView() {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [inboxFlat, sel, previewReco, getReco, tossReco])
+  }, [inboxFlat, sel, previewReco, getReco, tossReco, songsOf])
 
   // ── Capture (omnibox — unchanged proven flow) ────────────────────────────
   const handleOmni = async (raw: string) => {
@@ -314,12 +321,18 @@ export default function ListenToTheListView() {
     const dl = dlOf(r.id)
     // An artist or a playlist a friend sent: the link is the thing to open.
     const sentLink = isLinkKind(r) ? linkOf(r) : null
+    // An album row: hovering or focusing it asks for its editions (in turn), never on mount.
+    const askAlbum = isAlbum && r.kind !== 'concert' && dl.state !== 'queued' && dl.state !== 'downloading' && dl.state !== 'error'
+      ? () => { const f = recoFields(r); askEditions(f.artist, f.album || f.title) }
+      : undefined
     return (
       <div
         key={r.id}
         ref={selected ? selRef : undefined}
         className={`ltl-tri${selected ? ' is-selected' : ''}`}
         onClick={() => setSel(i)}
+        onPointerEnter={askAlbum}
+        onFocus={askAlbum}
         role="button"
         tabIndex={-1}
       >
@@ -367,7 +380,17 @@ export default function ListenToTheListView() {
               <button type="button" className="ltl-tri-get" onClick={() => getReco(r)} title={dl.error || 'Try again'}>Retry</button>
             </>
           ) : isAlbum ? (
-            <button type="button" className="ltl-tri-get" onClick={() => openDownloadForReco(r)} title="Pick the edition in Search">Save album</button>
+            r.kind === 'concert' ? (
+              // A concert is browsed in Search, as before; it has no editions to name.
+              <button type="button" className="ltl-tri-get" onClick={() => openDownloadForReco(r)} title="Find it in Search">Save album</button>
+            ) : (
+              <>
+                {/* First in the column: appearing, it moves nothing to its right. */}
+                <EditionMenu artist={recoFields(r).artist} album={recoFields(r).album || recoFields(r).title} onMore={() => openDownloadForReco(r)} className="edition-menu--row" />
+                <button type="button" className="ltl-tri-songs" onClick={() => setSongsOf(r)} title="See the songs and pick a few">Songs</button>
+                <button type="button" className="ltl-tri-get" onClick={() => getReco(r)} title="Save the album (Enter)">Save album</button>
+              </>
+            )
           ) : sentLink ? (
             <button type="button" className="ltl-tri-get" onClick={() => { void window.electronAPI.openExternalUrl?.(sentLink) }} title={sentLink}>Open</button>
           ) : canDl && (
@@ -524,6 +547,15 @@ export default function ListenToTheListView() {
           <span className="ltl-toast-text">Tossed <strong>{displayRecoName(tossing)}</strong></span>
           <button type="button" className="ltl-toast-undo" onClick={undoToss}>Undo</button>
         </div>
+      )}
+      {songsOf && (
+        <AlbumTracklistSheet
+          artist={recoFields(songsOf).artist} album={recoFields(songsOf).album || recoFields(songsOf).title}
+          origin={recoOrigin(songsOf)}
+          onSaveAlbum={() => getReco(songsOf)}
+          onMore={() => { const r = songsOf; setSongsOf(null); openDownloadForReco(r) }}
+          onClose={() => setSongsOf(null)}
+        />
       )}
     </div>
   )

@@ -12,6 +12,7 @@
 //  - query: an iTunes-picked song/album resolved on Qobuz at download time
 //    (artist+title or artist+album) — the v2 search flow.
 import { norm } from './downloadKeys.ts'
+import { PREFLIGHT_BUDGET_MS, albumSaveEvent, preflightVerdict, type AlbumPreflight, type AlbumSaveEdition, type AlbumSaveSurface } from '../../../common/album-preflight.ts'
 
 /** Where a job came from (the Record Shop's saved list, a feed shelf…) —
  *  carried on the job so every presentation can find it by recommendation
@@ -82,6 +83,11 @@ export interface QResult {
   trackCount?: number
   /** Action B: the album is selected by its source identity and tracklist snapshot, not an iTunes edition. */
   sourceEdition?: import('../../../common/source-edition').SourceEdition
+  /** Brief 255, for the usage log only (never sent to main): when Save album
+   *  was clicked, on which screen, and how its edition was named. */
+  clickedAt?: number
+  surface?: AlbumSaveSurface
+  editionFrom?: AlbumSaveEdition
 }
 export type QStatus = 'queued' | 'downloading' | 'done' | 'failed' | 'canceled'
 export interface QItem {
@@ -108,6 +114,12 @@ export interface QItem {
   endedAt?: number
   /** How many times this job has been armed (1 = first try). */
   attempt?: number
+  /** The album preflight (Brief 255): still asking, or what Qobuz answered. */
+  preflight?: 'asking' | AlbumPreflight['answer']
+  preflightAnswer?: AlbumPreflight
+  /** When this arm of the job began (the click, for the first), and whether its usage line is written. */
+  armedAt?: number
+  logged?: boolean
 }
 
 export function queueKey(r: QResult): string {
@@ -163,13 +175,87 @@ export function enqueue(r: QResult): void {
   const existing = queue.find((q) => q.key === key)
   if (existing) {
     mergeOrigin(existing.result, r.origin)
-    if (existing.status === 'failed' || existing.status === 'canceled') { existing.status = 'queued'; existing.error = undefined; existing.attempt = (existing.attempt ?? 1) + 1; emit(); void pump() }
+    if (existing.status === 'failed' || existing.status === 'canceled') { existing.status = 'queued'; existing.error = undefined; existing.attempt = (existing.attempt ?? 1) + 1; askPreflight(existing, r.clickedAt); emit(); void pump() }
     else emit()
     return
   }
-  queue = [...queue, { key, result: r, status: 'queued' }]
+  const it: QItem = { key, result: r, status: 'queued' }
+  queue = [...queue, it]
+  askPreflight(it, r.clickedAt)
   emit()
   void pump()
+}
+
+// ── The album preflight (Brief 255) ─────────────────────────────────────
+// An album job asks main, the moment it is queued, whether Qobuz has that
+// edition (main 'check-qobuz-album'). The question runs beside the one
+// download in flight, so a "no" lands in seconds even with songs ahead of it:
+// the job ends there with one plain line, and the walk never runs. "found"
+// and "unknown" (no login, no answer, too slow, a Bandcamp page worth trying)
+// leave it queued, and it downloads in its turn exactly as before. The pump
+// waits for an album's answer before starting it.
+const asking = new Map<QItem, Promise<void>>()
+
+function wantsPreflight(r: QResult): boolean {
+  return r.kind === 'query' && r.mediaType === 'album' && !r.sourceEdition && !r.origin?.group
+    && Boolean((r.album || '').trim() && (r.artist || '').trim())
+    && typeof window !== 'undefined' && typeof window.electronAPI?.checkQobuzAlbum === 'function'
+}
+
+/** One `shop.album-save` line, at the first answer (usage log, never words). */
+function logAlbumSave(it: QItem, answer: 'found' | 'no' | 'done' | 'failed', p?: AlbumPreflight): void {
+  if (it.armedAt == null || it.logged) return
+  it.logged = true
+  const ev = albumSaveEvent({
+    clickedAt: it.armedAt, answeredAt: Date.now(), answer,
+    why: p && 'why' in p ? p.why : undefined,
+    surface: it.result.surface, edition: it.result.editionFrom,
+    have: p?.answer === 'no' ? p.have : undefined, of: p?.answer === 'no' ? p.of : undefined,
+  })
+  try { window.electronAPI.usageLog?.([{ t: new Date().toISOString(), ...ev }]) } catch { /* observation only */ }
+}
+
+function askPreflight(it: QItem, clickedAt?: number): void {
+  if (!wantsPreflight(it.result)) return
+  // The first arm is timed from the click (an edition lookup may sit between); a re-arm from now.
+  it.armedAt = it.attempt && it.attempt > 1 ? Date.now() : (clickedAt ?? Date.now())
+  it.logged = false
+  it.preflight = 'asking'
+  it.preflightAnswer = undefined
+  const r = it.result
+  const unknown = (why: 'timeout' | 'error'): AlbumPreflight => ({ answer: 'unknown', why })
+  const ask = window.electronAPI.checkQobuzAlbum!({
+    artist: (r.artist || '').trim(), album: (r.album || '').trim(),
+    collectionId: r.collectionId, trackCount: r.trackCount, releaseYear: r.releaseYear, explicitSource: r.explicitSource,
+  })
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const settled: Promise<void> = Promise.race([
+    Promise.resolve(ask).catch(() => unknown('error')),
+    new Promise<AlbumPreflight>((res) => { timer = setTimeout(() => res(unknown('timeout')), PREFLIGHT_BUDGET_MS + 5000) }),
+  ]).then((p) => {
+    if (timer) clearTimeout(timer)
+    // Asked again since: this answer is nobody's.
+    if (asking.get(it) !== settled) return
+    asking.delete(it)
+    // Canceled while asking.
+    if (!queue.includes(it) || it.status !== 'queued') return
+    it.preflight = p?.answer ?? 'unknown'
+    it.preflightAnswer = p
+    const v = p ? preflightVerdict(p) : null
+    if (v) {
+      it.status = 'failed'
+      it.outcome = v.outcome
+      it.primary = v.primary
+      it.detail = v.detail
+      it.error = v.error
+      it.alternatives = v.alternatives
+      it.startedAt = it.armedAt
+      it.endedAt = Date.now()
+    }
+    if (p?.answer === 'found' || p?.answer === 'no') logAlbumSave(it, p.answer, p)
+    emit()
+  })
+  asking.set(it, settled)
 }
 
 /** Cancel a queued item (drop it) or an in-flight one (kill the rip
@@ -198,6 +284,7 @@ export function retry(key: string): void {
   it.imported = undefined
   it.dupes = undefined
   it.attempt = (it.attempt ?? 1) + 1
+  askPreflight(it)
   emit()
   void pump()
 }
@@ -213,6 +300,7 @@ export function retryFailed(): void {
     it.imported = undefined
     it.dupes = undefined
     it.attempt = (it.attempt ?? 1) + 1
+    askPreflight(it)
     any = true
   }
   if (!any) return
@@ -233,6 +321,9 @@ async function pump(): Promise<void> {
     for (;;) {
       const it = queue.find((q) => q.status === 'queued')
       if (!it) break
+      // An album still asking Qobuz: its answer first (seconds). A "no" ends it there.
+      const pending = asking.get(it)
+      if (pending) { await pending; continue }
       it.status = 'downloading'
       it.startedAt = Date.now()
       it.imported = undefined
@@ -281,6 +372,8 @@ async function pump(): Promise<void> {
         }
       }
       it.endedAt = Date.now()
+      // The preflight couldn't tell: the walk's own end is the first answer.
+      if (it.preflight === 'unknown' && (it.status === 'done' || it.status === 'failed')) logAlbumSave(it, it.status, it.preflightAnswer)
       emit()
     }
   } finally {
