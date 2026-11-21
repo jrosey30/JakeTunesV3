@@ -246,6 +246,9 @@ def main(argv=None):
         for s, rid in ((bs, a.base), (cs, a.cand)):
             if s.get("ruler") != "v3":
                 raise GateInputError(f"{rid} is ruler {s.get('ruler', 'v1')}, not v3")
+        for field in ('grounding_validator', 'model'):
+            if bs.get(field) != cs.get(field):
+                raise GateInputError(f'incomparable {field}: {bs.get(field)} vs {cs.get(field)}')
         if bs.get("eval_set_sha") != cs.get("eval_set_sha"):
             raise GateInputError(f"different v3 rulers: {bs.get('eval_set_sha')} vs {cs.get('eval_set_sha')}")
         if bs.get("primary_source") != cs.get("primary_source"):
