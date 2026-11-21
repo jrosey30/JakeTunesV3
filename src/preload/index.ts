@@ -362,6 +362,12 @@ const electronAPI = {
     ipcRenderer.on('ipod-device-changed', handler)
     return () => { ipcRenderer.removeListener('ipod-device-changed', handler) }
   },
+  // Brief 264: /Volumes changed (main's watcher, debounced) — check for an iPod now.
+  onIpodVolumesChanged: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('ipod-volumes-changed', handler)
+    return () => { ipcRenderer.removeListener('ipod-volumes-changed', handler) }
+  },
   onIpodSyncIncomplete: (callback: (info: { phase: string; at?: string }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, info: { phase: string; at?: string }) => callback(info)
     ipcRenderer.on('ipod-sync-incomplete', handler)

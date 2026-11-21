@@ -654,6 +654,9 @@ export default function Sidebar() {
     // halves that worst case without adding meaningful main-process
     // load (a stat + readdir per tick is negligible).
     const interval = setInterval(check, 2500)
+    // Brief 264: main watches /Volumes and says when it changed (debounced
+    // there), so a plugged-in iPod is checked at once; the poll is the backup.
+    const offVolumes = window.electronAPI.onIpodVolumesChanged?.(() => check())
     // Listen for eject events so sidebar updates immediately. Explicit
     // eject resets the miss streak and forces an unmounted state.
     const onIpodEject = () => { ipodMissStreak = 2; setTimeout(check, 500) }
@@ -662,6 +665,7 @@ export default function Sidebar() {
     window.addEventListener('jaketunes-cd-ejected', onCdEject)
     return () => {
       clearInterval(interval)
+      offVolumes?.()
       window.removeEventListener('jaketunes-ipod-ejected', onIpodEject)
       window.removeEventListener('jaketunes-cd-ejected', onCdEject)
     }
