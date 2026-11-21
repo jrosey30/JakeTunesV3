@@ -713,6 +713,11 @@ const electronAPI = {
     ipcRenderer.invoke('ipod-local:check', planIds),
   ipodLocalKick: (): Promise<unknown> =>
     ipcRenderer.invoke('ipod-local:kick'),
+  // A list iPod's Sync fetches the songs it needs itself (Brief 263).
+  ipodLocalFetchForSync: (planIds: number[], ipodName: string): Promise<unknown> =>
+    ipcRenderer.invoke('ipod-local:fetch-for-sync', planIds, ipodName),
+  ipodLocalFetchForSyncStop: (): Promise<unknown> =>
+    ipcRenderer.invoke('ipod-local:fetch-for-sync-stop'),
   buildWorkoutSyncSet: (tracks: Array<{
     id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number
     playCount?: number; skipCount?: number; rating?: number; bpm?: number | null; codec?: string; fileSize?: number

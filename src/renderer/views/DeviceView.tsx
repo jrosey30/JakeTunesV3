@@ -3,7 +3,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { assembleSyncPlaylists, planIpodSync, planTracks } from '../utils/workoutIpodSync'
 import type { OneSyncPlan } from '../../common/ipod-one-sync-plan'
 import { readyLine, leftOffLine, syncButtonLabel, lastSyncedLine, syncingStep, withLastSyncLeftOff } from '../../common/ipod-one-sync-plan'
-import { readyOnMacLine, leaveOffQuestion, syncNowLeavingOffLabel, idsLeavingOff, mustAskBeforeSync, listFetchStep, type ReadyOnMac } from '../../common/ipod-ready-on-mac'
+import { readyOnMacLine, leaveOffQuestion, syncNowLeavingOffLabel, idsLeavingOff, mustAskBeforeSync, listFetchOutcome, unavailableLine, type ReadyOnMac } from '../../common/ipod-ready-on-mac'
 import { stickerHex } from '../components/IpodIdentityBar'
 import IpodArtworkAsk from '../components/IpodArtworkAsk'
 import { checkIpodName, macShowsLine } from '../../common/ipod-name'
@@ -160,6 +160,8 @@ export default function DeviceView() {
   // A list iPod's Sync waits for its songs instead of leaving any off (2026-11-17):
   // set while it waits, so the Stop button can end the wait.
   const [fetchingFirst, setFetchingFirst] = useState(false)
+  // Songs a list iPod's Sync left off because homemini couldn't give them: one line after (Brief 263).
+  const [leftOffNote, setLeftOffNote] = useState<string | null>(null)
   const stopFetchRef = useRef(false)
   // False once this page is gone: a wait that outlives the page must never start a sync
   // nobody is watching (review of #433).
@@ -507,6 +509,7 @@ export default function DeviceView() {
     const activity = await import('../activity')
     setSyncing(true)
     setShowLeftOff(false)
+    setLeftOffNote(null)
     setLeaveOff(null)
     try {
       const fresh = await refreshPlan()
@@ -528,43 +531,35 @@ export default function DeviceView() {
         setTimeout(() => activity.setSync(null), 6000)
         return
       }
-      // A list iPod gets exactly its list (Jake, 2026-11-17): a song not on this Mac
-      // is fetched from homemini first (the Wait path), never left off. The card is
-      // not touched until every song is here, or the wait ends in one error line.
+      // A list iPod gets exactly its list (Jake, 2026-11-17). A song not on this Mac is
+      // fetched by the Sync itself, now, before the card is touched (Brief 263: it used to
+      // wait on the background download, which stops under 60 GB free). A song homemini
+      // can't give at all is left off and said in one line after; anything else that
+      // didn't arrive ends in one error line, with nothing on the iPod changed.
+      let leftOff: number[] = []
       if (fresh.ok && fresh.kind === 'list' && local && local.missing.length > 0) {
         stopFetchRef.current = false
         setFetchingFirst(true)
         const leave = (): boolean => !aliveRef.current || stopFetchRef.current
         try {
-          void window.electronAPI.ipodLocalKick?.()
-          const startedAt = Date.now()
-          let lastProgressAt = startedAt
-          let lastMissing = local.missing.length
-          for (;;) {
-            const step = listFetchStep(local, { startedAt, lastProgressAt, now: Date.now(), ipodName: fresh.ipodName })
-            if (leave()) { setSyncStatus({ state: 'idle' }); activity.setSync(null); return }
-            if (step.kind === 'go') break
-            if (step.kind === 'stuck') {
-              setReady(local)
-              setSyncStatus({ state: 'error', message: step.error })
-              activity.setSync({ active: true, step: step.error })
-              setTimeout(() => activity.setSync(null), 6000)
-              return
-            }
-            setSyncStatus({ state: 'syncing', step: step.line })
-            activity.setSync({ active: true, step: step.line })
-            await new Promise((r) => window.setTimeout(r, 4000))
-            if (leave()) {
-              setSyncStatus({ state: 'idle' })
-              activity.setSync(null)
-              return
-            }
-            // A failed check is not "everything is here": keep the last answer and keep
-            // waiting (no progress for 10 minutes ends it in one error line).
-            const next = await checkReady(fresh)
-            if (next) local = next
-            if (local.missing.length < lastMissing) { lastMissing = local.missing.length; lastProgressAt = Date.now() }
+          const asked = local.missing.length
+          const line = `Getting ${asked.toLocaleString('en-US')} ${asked === 1 ? 'song' : 'songs'} from homemini…`
+          setSyncStatus({ state: 'syncing', step: line })
+          activity.setSync({ active: true, step: line })
+          const got = await window.electronAPI.ipodLocalFetchForSync?.(local.missing, fresh.ipodName).catch(() => null)
+          if (leave()) { setSyncStatus({ state: 'idle' }); activity.setSync(null); return }
+          const after = await checkReady(fresh)
+          const step = listFetchOutcome(got && got.ok ? got : null, after, asked)
+          if (step.kind === 'stopped') { setSyncStatus({ state: 'idle' }); activity.setSync(null); return }
+          if (step.kind === 'stuck') {
+            if (after) setReady(after)
+            setSyncStatus({ state: 'error', message: step.error })
+            activity.setSync({ active: true, step: step.error })
+            setTimeout(() => activity.setSync(null), 6000)
+            return
           }
+          leftOff = step.leftOff
+          if (after) local = after
         } finally {
           setFetchingFirst(false)
         }
@@ -583,6 +578,7 @@ export default function DeviceView() {
         }
         setReady(local)
       }
+      setLeftOffNote(unavailableLine(leftOff.length))
       if (fresh.ok && fresh.kind === 'original' && local && mustAskBeforeSync(local, leaving)) {
         setReady(local)
         setLeaveOff(local)
@@ -675,7 +671,7 @@ export default function DeviceView() {
         // count climbs up to the real number over the next moment.
         activity.setSync({
           active: true,
-          step: `Synced ${landed.toLocaleString('en-US')} songs to ${fresh.ipodName}.`,
+          step: [`Synced ${landed.toLocaleString('en-US')} songs to ${fresh.ipodName}.`, unavailableLine(leftOff.length)].filter(Boolean).join(' '),
         })
         setTimeout(() => activity.setSync(null), 7000)
       }
@@ -790,7 +786,7 @@ export default function DeviceView() {
           {plan?.ok && ready && !leaveOff && !fetchingFirst && readyOnMacLine(ready, { list: plan.kind === 'list' }) && <span>{readyOnMacLine(ready, { list: plan.kind === 'list' })}</span>}
           {fetchingFirst && (
             <span>
-              <button type="button" className="device-link-btn" onClick={() => { stopFetchRef.current = true }}>Stop</button>
+              <button type="button" className="device-link-btn" onClick={() => { stopFetchRef.current = true; void window.electronAPI.ipodLocalFetchForSyncStop?.() }}>Stop</button>
             </span>
           )}
           {leaveOff && (
@@ -858,8 +854,8 @@ export default function DeviceView() {
             )}
             {timeline.status === 'done' && (
               <div className="device-sync-result device-sync-result--done">
-                <span className="device-sync-result-line">{resultLine(timeline)}</span>
-                <button type="button" className="device-link-btn" onClick={clearSyncTimeline}>OK</button>
+                <span className="device-sync-result-line">{resultLine(timeline)}{leftOffNote ? ` ${leftOffNote}` : ''}</span>
+                <button type="button" className="device-link-btn" onClick={() => { setLeftOffNote(null); clearSyncTimeline() }}>OK</button>
               </div>
             )}
             {outcome && (

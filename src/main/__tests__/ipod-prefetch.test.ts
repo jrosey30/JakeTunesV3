@@ -520,7 +520,7 @@ describe('homemini is asked what it holds before anything is downloaded', () => 
     const cycleSrc = src.slice(src.indexOf('async function cycle('))
     const replicaGate = cycleSrc.indexOf('if (!(await applies())) return')
     assert.ok(replicaGate > 0 && replicaGate < cycleSrc.indexOf('settleOwed('), 'the replica gate comes first')
-    assert.equal((src.match(/settleOwed\(/g) ?? []).length, 3, 'defined once, called twice, both inside the pass')
+    assert.equal((src.match(/settleOwed\(/g) ?? []).length, 4, 'defined once, called twice inside the pass and once after a sync’s own fetch (Brief 263)')
     assert.equal(src.slice(0, src.indexOf('async function cycle(')).split('host.tellLibrary(').length - 1, 1, 'told only from settleOwed')
     const index = await readFile(new URL('../index.ts', import.meta.url), 'utf8')
     assert.match(index, /isAway: isAwayFromHome, fingerprintOf: computeAudioFingerprint, tellLibrary: \(m\) => sendToRenderer\('tag-writeback:file-changed', m\)/)

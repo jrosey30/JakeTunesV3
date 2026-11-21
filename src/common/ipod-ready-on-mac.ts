@@ -86,38 +86,41 @@ export function idsLeavingOff(planIds: readonly number[], r: Pick<ReadyOnMac, 'm
 }
 
 /**
- * A list iPod never leaves a song off because it isn't on this Mac yet (Jake,
- * 2026-11-17: a list iPod gets exactly its list). Its Sync is the Wait path:
- * kick the background download, wait while the songs arrive, then sync, with
- * no "Sync now (N left off)". What the Device page does on each look at the
- * ready check:
- *   • go: every song is on this Mac (or already on the iPod)
- *   • wait: still downloading, or the download has had less than `graceMs` to start
- *   • stuck: the download stopped and says why, or nothing arrived for `stallMs`
- *     (a sync error, said in one line; nothing on the iPod was changed)
+ * A list iPod gets exactly its list (Jake, 2026-11-17), and its Sync gets the songs
+ * that aren't on this Mac itself, at once (2026-11-20, Brief 263: main/ipod-sync-fetch.ts).
+ * It used to wait on the background download and call itself stuck whenever that
+ * download stopped, which it does under 60 GB free. What the Device page does with
+ * the fetch's answer and a fresh ready check:
+ *   • go: every song is here now, except songs homemini can't give at all
+ *     (`gone`: no file, or its file isn't the song). Those are left off, and one
+ *     line says so after the sync (unavailableLine): one song never blocks the iPod;
+ *   • stopped: Jake pressed Stop;
+ *   • stuck: a song that could still be had didn't arrive after every try
+ *     (homemini not answering, no room). One error line; nothing on the iPod changed.
  */
-export type ListFetchStep =
-  | { kind: 'go' }
-  | { kind: 'wait'; line: string }
+export interface SyncFetchAnswer { landed: number[]; gone: number[]; failed: number[]; stopped: boolean }
+
+export type ListFetchOutcome =
+  | { kind: 'go'; leftOff: number[] }
+  | { kind: 'stopped' }
   | { kind: 'stuck'; error: string }
 
-export function listFetchStep(
-  check: Pick<ReadyOnMac, 'missing' | 'downloading' | 'stoppedBecause'> | null,
-  t: { startedAt: number; lastProgressAt: number; now: number; ipodName: string },
-  limits: { graceMs?: number; stallMs?: number } = {},
-): ListFetchStep {
-  const graceMs = limits.graceMs ?? 15_000
-  const stallMs = limits.stallMs ?? 10 * 60_000
-  if (!check) return { kind: 'go' }   // the check itself couldn't run: the sync goes ahead as before
-  const c = check.missing.length
-  if (c === 0) return { kind: 'go' }
-  const getting = `Getting ${songs(c)} from homemini…`
-  if (t.now - t.startedAt < graceMs) return { kind: 'wait', line: getting }
-  if (check.stoppedBecause && !check.downloading) {
-    return { kind: 'stuck', error: `Can’t get ${songs(c)} right now. Try Sync again later.` }
-  }
-  if (t.now - t.lastProgressAt >= stallMs) {
-    return { kind: 'stuck', error: `${songs(c)} stopped downloading. Press Sync to try again.` }
-  }
-  return { kind: 'wait', line: getting }
+export function listFetchOutcome(
+  answer: SyncFetchAnswer | null,
+  after: Pick<ReadyOnMac, 'missing'> | null,
+  asked: number,
+): ListFetchOutcome {
+  if (answer?.stopped) return { kind: 'stopped' }
+  if (!answer) return { kind: 'stuck', error: `Can’t get ${songs(Math.max(1, asked))} right now. Try Sync again later.` }
+  if (!after) return { kind: 'stuck', error: 'Couldn’t get ready to sync. Press Sync again.' }
+  const gone = new Set(answer.gone)
+  const still = after.missing.filter((id) => !gone.has(id))
+  if (still.length > 0) return { kind: 'stuck', error: `Can’t get ${songs(still.length)} right now. Try Sync again later.` }
+  return { kind: 'go', leftOff: after.missing.filter((id) => gone.has(id)) }
+}
+
+/** The one line after a sync that left songs off because homemini couldn't give them. */
+export function unavailableLine(count: number): string | null {
+  if (count <= 0) return null
+  return `${songs(count)} ${count === 1 ? 'wasn’t' : 'weren’t'} available, so ${count === 1 ? 'it was' : 'they were'} left off.`
 }
