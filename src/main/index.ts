@@ -4445,7 +4445,7 @@ function homeminiPullOpts(colonPath: string, trackId: number | string) {
     localMount: MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''),
     pathSep: IS_WINDOWS ? '\\' : '/',
     homeminiAudioBase: HOMEMINI_AUDIO_BASE,
-    lstat, mkdir, writeFile, rename, unlink,
+    lstat, mkdir, writeFile, rename, unlink, readdir: (p: string) => readdir(p),
     freeBytes: laptopFreeBytes,
     fetchAudio: async (url: string) => {
       const res = await fetch(url, withCompanionInit({ signal: AbortSignal.timeout(120_000) }))

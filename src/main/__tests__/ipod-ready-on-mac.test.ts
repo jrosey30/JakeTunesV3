@@ -106,11 +106,10 @@ describe('what a list iPod’s Sync does after fetching its songs', () => {
 
 describe('review of #466: plain lines the Device page shows', () => {
   it('a fetch that stopped for a reason Jake can act on says that reason, not "try again later"', async () => {
-    const { NO_ROOM_FOR_SYNC_LINE, notTheSameFileLine } = await import('../../common/ipod-ready-on-mac.ts')
+    const { NO_ROOM_FOR_SYNC_LINE, ROOM_UNKNOWN_LINE } = await import('../../common/ipod-ready-on-mac.ts')
     const none = { landed: [], gone: [], stopped: false }
     assert.deepEqual(listFetchOutcome({ ...none, failed: [1, 2], reason: NO_ROOM_FOR_SYNC_LINE }, { missing: [1, 2] }, 2), { kind: 'stuck', error: NO_ROOM_FOR_SYNC_LINE })
-    assert.equal(notTheSameFileLine(1), '1 song on homemini isn’t the same file this Mac had, so Sync can’t use it yet.')
-    assert.equal(notTheSameFileLine(2), '2 songs on homemini aren’t the same file this Mac had, so Sync can’t use them yet.')
+    assert.deepEqual(listFetchOutcome({ ...none, failed: [1], reason: ROOM_UNKNOWN_LINE }, { missing: [1] }, 1), { kind: 'stuck', error: 'Couldn’t check free space on this Mac.' })
     // A reason with nothing failed changes nothing.
     assert.equal(listFetchOutcome({ ...none, failed: [], reason: NO_ROOM_FOR_SYNC_LINE }, { missing: [] }, 1).kind, 'go')
   })
@@ -136,5 +135,23 @@ describe('review of #466: plain lines the Device page shows', () => {
     assert.match(index, /ipodLocal\.sawOffloadable\(items\.filter\(\(it\) => !kept\(it\)\)\.length\)/)
     const view = await readFile(new URL('../../renderer/views/DeviceView.tsx', import.meta.url), 'utf-8')
     assert.match(view, /\{ready\?\.room && <span>\{ready\.room\}<\/span>\}/)
+  })
+})
+
+describe('review of #469: a song that couldn’t be fetched cleanly never blocks the iPod', () => {
+  it('left off with its own line, and the sync goes ahead', async () => {
+    const { uncleanLine, leftOffNote } = await import('../../common/ipod-ready-on-mac.ts')
+    const r = listFetchOutcome({ landed: [1], gone: [], unclean: [2], failed: [], stopped: false }, { missing: [2], total: 500 }, 2)
+    assert.deepEqual(r, { kind: 'go', leftOff: [], unclean: [2] })
+    assert.equal(uncleanLine(1), '1 song couldn’t be fetched cleanly; it was left off this time.')
+    assert.equal(uncleanLine(2), '2 songs couldn’t be fetched cleanly; they were left off this time.')
+    assert.equal(uncleanLine(0), null)
+    assert.equal(leftOffNote(1, 1), '1 song wasn’t available, so it was left off. 1 song couldn’t be fetched cleanly; it was left off this time.')
+    assert.equal(leftOffNote(0, 0), null)
+  })
+
+  it('unless that is every song on the iPod', () => {
+    const r = listFetchOutcome({ landed: [], gone: [], unclean: [1, 2], failed: [], stopped: false }, { missing: [1, 2], total: 2 }, 2)
+    assert.deepEqual(r, { kind: 'stuck', error: '2 songs couldn’t be fetched cleanly from homemini. Try Sync again later.' })
   })
 })

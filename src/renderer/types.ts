@@ -1056,7 +1056,7 @@ declare global {
       ) => Promise<{ names: string[]; notes: string[] } | null>
       ipodLocalCheck?: (planIds: number[]) => Promise<{ ok: true; ready: import('../common/ipod-ready-on-mac').ReadyOnMac } | { ok: false; error: string }>
       ipodLocalKick?: () => Promise<{ ok: boolean }>
-      ipodLocalFetchForSync?: (planIds: number[], ipodName: string) => Promise<{ ok: true; landed: number[]; gone: number[]; failed: number[]; stopped: boolean; reason?: string | null } | { ok: false; error: string }>
+      ipodLocalFetchForSync?: (planIds: number[], ipodName: string) => Promise<{ ok: true; landed: number[]; gone: number[]; unclean?: number[]; failed: number[]; stopped: boolean; reason?: string | null } | { ok: false; error: string }>
       ipodLocalFetchForSyncStop?: () => Promise<{ ok: boolean }>
       buildWorkoutSyncSet?: (tracks: Array<{
         id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number

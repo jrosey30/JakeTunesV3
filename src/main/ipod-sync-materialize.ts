@@ -57,6 +57,8 @@ export interface MaterializeTrackOpts {
   fetchAudio: (url: string) => Promise<MaterializeFetchResult>
   /** When set, a write that would pass the floor is refused and nothing is written. */
   freeBytes?: () => Promise<number>
+  /** When set, the song's folder is swept of temps a crashed process left (sweepStaleMaterializeTemps). */
+  readdir?: (p: string) => Promise<string[]>
 }
 
 export type MaterializeTrackResult =
@@ -116,6 +118,34 @@ export function materializeTmpPath(abs: string): string {
   return `${abs}.dl-${process.pid}-${randomBytes(6).toString('hex')}.tmp`
 }
 
+/**
+ * A restore's temp left by a process that is gone (review of #469: a crash mid-write
+ * left a song-sized `*.dl-*.tmp` in F## for good). A temp of THIS process is a write
+ * in progress (another writer of the song, e.g. a Download click) and is never touched;
+ * the old shared name (`*.dl.tmp`, before #469) has no owner and always goes.
+ */
+export function isStaleMaterializeTemp(name: string, ownPid = process.pid): boolean {
+  const m = /\.dl(?:-(\d+)-[0-9a-f]+)?\.tmp$/.exec(name)
+  if (!m) return false
+  return m[1] === undefined || Number(m[1]) !== ownPid
+}
+
+/** Removes the stale restore temps in one folder; returns how many went. Never throws. */
+export async function sweepStaleMaterializeTemps(
+  dir: string,
+  fs: { readdir: (p: string) => Promise<string[]>; unlink: (p: string) => Promise<unknown> },
+  ownPid = process.pid,
+): Promise<number> {
+  let names: string[]
+  try { names = await fs.readdir(dir) } catch { return 0 }
+  let removed = 0
+  for (const name of names) {
+    if (!isStaleMaterializeTemp(name, ownPid)) continue
+    try { await fs.unlink(join(dir, name)); removed++ } catch { /* already gone */ }
+  }
+  return removed
+}
+
 export async function materializeTrackFromHomemini(opts: MaterializeTrackOpts): Promise<MaterializeTrackResult> {
   const colon = String(opts.colonPath || '').trim()
   if (!colon) return { ok: false, error: 'no path' }
@@ -135,6 +165,7 @@ export async function materializeTrackFromHomemini(opts: MaterializeTrackOpts): 
   // Its own temp name per write (review of #466): two writers of one song (the iPod
   // download and a Sync's fetch, or a Download click) never share or delete each other's.
   const tmp = materializeTmpPath(abs)
+  if (opts.readdir) await sweepStaleMaterializeTemps(dirname(abs), { readdir: opts.readdir, unlink: opts.unlink })
   try {
     await opts.mkdir(dirname(abs), { recursive: true })
     await opts.writeFile(tmp, audio.buffer)

@@ -186,7 +186,7 @@ describe('sync outcome — claims from phase evidence', () => {
   // Brief 263 (2026-11-20): punkPod stopped at Get ready with "Can’t get 1 song right now", and the
   // banner said "The iPod may be half-synced": the rule only knew "songs".
   it('a list iPod’s fetch stopping before the card says nothing on the iPod changed, for one song or many', async () => {
-    const { listFetchOutcome, NO_ROOM_FOR_SYNC_LINE, notTheSameFileLine } = await import('../../common/ipod-ready-on-mac.ts')
+    const { listFetchOutcome, NO_ROOM_FOR_SYNC_LINE, ROOM_UNKNOWN_LINE } = await import('../../common/ipod-ready-on-mac.ts')
     const none = { landed: [], gone: [], failed: [], stopped: false }
     const errors = [
       listFetchOutcome({ ...none, failed: [1] }, { missing: [1] }, 1),
@@ -194,9 +194,10 @@ describe('sync outcome — claims from phase evidence', () => {
       listFetchOutcome({ ...none, failed: Array.from({ length: 1200 }, (_, i) => i) }, { missing: Array.from({ length: 1200 }, (_, i) => i) }, 1200),
       listFetchOutcome(null, null, 1),
       listFetchOutcome({ ...none, landed: [1] }, null, 1),
-      // Review of #466: the fetch's own plain reasons (no room; a song homemini changed).
+      // Review of #466/#469: the fetch's own plain reasons (no room; free space unreadable).
       listFetchOutcome({ ...none, failed: [1], reason: NO_ROOM_FOR_SYNC_LINE }, { missing: [1] }, 1),
-      listFetchOutcome({ ...none, failed: [1], reason: notTheSameFileLine(1) }, { missing: [1] }, 1),
+      listFetchOutcome({ ...none, failed: [1], reason: ROOM_UNKNOWN_LINE }, { missing: [1] }, 1),
+      listFetchOutcome({ ...none, unclean: [1, 2] }, { missing: [1, 2], total: 2 }, 2),
     ].map((r) => (r.kind === 'stuck' ? r.error : ''))
     assert.ok(errors.includes(NO_ROOM_FOR_SYNC_LINE))
     assert.ok(errors.includes('Can’t get 1 song right now. Try Sync again later.'))
@@ -207,7 +208,7 @@ describe('sync outcome — claims from phase evidence', () => {
       assert.doesNotMatch(outcomeLine(o), /half-synced/, raw)
     }
     // The page's own plain lines are shown as written.
-    for (const raw of [NO_ROOM_FOR_SYNC_LINE, notTheSameFileLine(2)]) {
+    for (const raw of [NO_ROOM_FOR_SYNC_LINE, ROOM_UNKNOWN_LINE]) {
       const o = syncOutcome(applySyncResult(startTimeline(T0, null), { ok: false, error: raw }, T0))!
       assert.ok(outcomeLine(o).includes(raw), outcomeLine(o))
     }

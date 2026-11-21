@@ -3,7 +3,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { assembleSyncPlaylists, planIpodSync, planTracks } from '../utils/workoutIpodSync'
 import type { OneSyncPlan } from '../../common/ipod-one-sync-plan'
 import { readyLine, leftOffLine, syncButtonLabel, lastSyncedLine, syncingStep, withLastSyncLeftOff } from '../../common/ipod-one-sync-plan'
-import { readyOnMacLine, leaveOffQuestion, syncNowLeavingOffLabel, idsLeavingOff, mustAskBeforeSync, listFetchOutcome, unavailableLine, type ReadyOnMac } from '../../common/ipod-ready-on-mac'
+import { readyOnMacLine, leaveOffQuestion, syncNowLeavingOffLabel, idsLeavingOff, mustAskBeforeSync, listFetchOutcome, leftOffNote as fetchLeftOffNote, type ReadyOnMac } from '../../common/ipod-ready-on-mac'
 import { stickerHex } from '../components/IpodIdentityBar'
 import IpodArtworkAsk from '../components/IpodArtworkAsk'
 import { checkIpodName, macShowsLine } from '../../common/ipod-name'
@@ -537,6 +537,7 @@ export default function DeviceView() {
       // can't give at all is left off and said in one line after; anything else that
       // didn't arrive ends in one error line, with nothing on the iPod changed.
       let leftOff: number[] = []
+      let unclean: number[] = []
       if (fresh.ok && fresh.kind === 'list' && local && local.missing.length > 0) {
         stopFetchRef.current = false
         setFetchingFirst(true)
@@ -559,6 +560,7 @@ export default function DeviceView() {
             return
           }
           leftOff = step.leftOff
+          unclean = step.unclean ?? []
           if (after) local = after
         } finally {
           setFetchingFirst(false)
@@ -578,7 +580,7 @@ export default function DeviceView() {
         }
         setReady(local)
       }
-      setLeftOffNote(unavailableLine(leftOff.length))
+      setLeftOffNote(fetchLeftOffNote(leftOff.length, unclean.length))
       if (fresh.ok && fresh.kind === 'original' && local && mustAskBeforeSync(local, leaving)) {
         setReady(local)
         setLeaveOff(local)
@@ -671,7 +673,7 @@ export default function DeviceView() {
         // count climbs up to the real number over the next moment.
         activity.setSync({
           active: true,
-          step: [`Synced ${landed.toLocaleString('en-US')} songs to ${fresh.ipodName}.`, unavailableLine(leftOff.length)].filter(Boolean).join(' '),
+          step: [`Synced ${landed.toLocaleString('en-US')} songs to ${fresh.ipodName}.`, fetchLeftOffNote(leftOff.length, unclean.length)].filter(Boolean).join(' '),
         })
         setTimeout(() => activity.setSync(null), 7000)
       }
