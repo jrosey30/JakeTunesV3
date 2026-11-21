@@ -25,6 +25,7 @@ Usage:
   python3 tools/vale/slop-check.py --repo mobile --calibrate # every rule, counts
   python3 tools/vale/slop-check.py --repo mobile --dump      # the extracted words
 """
+import bisect
 import json
 import os
 import re
@@ -117,12 +118,12 @@ def _swift_strings(src):
             start, sl = i, line
             multi = src.startswith('"""', i + hashes)
             text, i, line = read_string(i + hashes + (3 if multi else 1), line, multi, hashes)
-            out.append((start, sl, text))
+            out.append((start, sl, text, i))
         elif c == '"':
             start, sl = i, line
             multi = src.startswith('"""', i)
             text, i, line = read_string(i + (3 if multi else 1), line, multi, 0)
-            out.append((start, sl, text))
+            out.append((start, sl, text, i))
         else:
             i += 1
     return out
@@ -238,13 +239,13 @@ def _ts_strings(src):
         if c in '\'"':
             start, sl = i, line
             text, i, line = read_quoted(i + 1, line, c)
-            out.append((start, sl, text))
+            out.append((start, sl, text, i))
             prev = 's'
             continue
         if c == '`':
             start, sl = i, line
             text, i, line = read_template(i + 1, line)
-            out.append((start, sl, text))
+            out.append((start, sl, text, i))
             prev = 's'
             continue
         prev = c
@@ -274,19 +275,47 @@ def preceding(src, start, width=60):
     return src[max(0, start - width):start]
 
 
-SWIFT_TRIGGER = re.compile(
+SWIFT_TRIGGER_BODY = (
     r'(?:\b(?:Text|Button|Label|Toggle|Section|Link|TextField|SecureField|Menu|Picker|'
     r'LocalizedStringKey|ContentUnavailableView|showToast)\(\s*'
     r'|\.(?:alert|confirmationDialog|navigationTitle|accessibilityLabel|accessibilityHint|help|badge)\(\s*'
     r'|\b(?:title|subtitle|message|prompt|placeholder|caption|headline|hint|line|banner)\s*:\s*'
-    r'|\b(?:title|subtitle|message|headline|caption|hint)\s*=\s*)$')
+    r'|\b(?:title|subtitle|message|headline|caption|hint)\s*=\s*)')
 
-BACKEND_TRIGGER = re.compile(r'\b(?:error|message|notice|hint)\s*:\s*$')
+BACKEND_TRIGGER_BODY = r'\b(?:error|message|notice|hint)\s*:\s*'
 
-TS_TRIGGER = re.compile(
+TS_TRIGGER_BODY = (
     r'(?:\b(?:notify|notifyToast|showToast|toast|pushToast|confirm|alert)\(\s*'
     r'|\b(?:title|subtitle|message|label|hint|body|detail|placeholder|happened|next|line|headline|caption|empty|tooltip)\s*:\s*'
-    r'|\b(?:title|placeholder|alt|label|aria-label)=\{?\s*)$')
+    r'|\b(?:title|placeholder|alt|label|aria-label)=\{?\s*)')
+
+
+class Trigger:
+    """Where a literal is words a person reads: right after a trigger (`Text(`, `title:`), or
+    the first branch of a ternary after one (`Text(c ? "a" : "b")`)."""
+
+    def __init__(self, body):
+        self.direct = re.compile(body + r'$')
+        # The condition: no quote, no newline, no statement end, at most 100 characters.
+        self.ternary = re.compile(body + r'[^\n"\';{}]{1,100}?\s\?\s*$')
+
+    def search(self, before):
+        return self.direct.search(before) or self.ternary.search(before)
+
+
+SWIFT_TRIGGER = Trigger(SWIFT_TRIGGER_BODY)
+BACKEND_TRIGGER = Trigger(BACKEND_TRIGGER_BODY)
+TS_TRIGGER = Trigger(TS_TRIGGER_BODY)
+
+# A function or computed property whose job is to say something: its `return "…"` is read.
+MESSAGE_NAME = re.compile(r'(?i)(message|title|text|line|label|copy|caption|headline|banner|toast|words|hint|reason|summary|sentence|phrase)')
+SWIFT_DECL = re.compile(r'\bfunc\s+(\w+)|\b(?:static\s+)?var\s+(\w+)\s*:\s*String\b[^\n{=]*\{')
+TS_DECL = re.compile(r'\bfunction\s+(\w+)|\b(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*(?::[^=\n]*)?=>')
+RETURN = re.compile(r'\breturn\s+(?:[^\n"\';{}]{1,100}?\s\?\s*)?$')
+# The other half of a literal already read: the ternary's second branch, or a concatenation
+# (`"a" + "b"`, `"a" + name + "b"`).
+ELSE_BRANCH = re.compile(r'^\s*:\s*$')
+CONCAT = re.compile(r'^\s*\+\s*(?:[\w.?!()\[\]]+\s*\+\s*)?$')
 
 JSX_ATTR = re.compile(r'''\b(?:title|placeholder|alt|aria-label|label)="([^"{}]+)"''')
 JSX_INLINE = re.compile(r'(?<![=\-])>([^<>{}]*[A-Za-z][^<>{}]*)(?=<|\{)')
@@ -328,18 +357,61 @@ def jsx_text(path, src):
 
 def walk(base, exts, skip=()):
     for dirpath, dirnames, files in os.walk(os.path.join(ROOT, base)):
-        dirnames[:] = [d for d in dirnames if d not in ('node_modules', '__tests__', 'dist', 'build')]
+        dirnames[:] = sorted(d for d in dirnames if d not in ('node_modules', '__tests__', 'dist', 'build'))
         for f in sorted(files):
             if f.endswith(exts) and not f.endswith(('.test.ts', '.test.tsx', '.d.ts')) and f not in skip:
                 yield os.path.join(dirpath, f)
 
 
-def literal_hits(path, src, strings, trigger, everything=False):
+def literal_hits(path, src, strings, trigger, everything=False, decl=None, spans=None):
+    """(line, text) for every literal a person reads. `decl` finds the function a literal is
+    in (its `return "…"` is read when the name says it makes a message); `spans` limits
+    `everything` to those (start, end) ranges of the file."""
     out = []
-    for start, line, text in strings:
-        if everything or trigger.search(preceding(src, start)):
+    decls = [(m.start(), m.group(1) or m.group(2)) for m in decl.finditer(src)] if decl else []
+    starts = [d[0] for d in decls]
+    prev_end, prev_in = -1, False
+    for start, line, text, end in strings:
+        before = preceding(src, start, 160)
+        between = src[prev_end:start] if prev_end >= 0 else None
+        whole = everything and (spans is None or any(a <= start < b for a, b in spans))
+        take = whole or trigger.search(before)
+        if not take and decls and RETURN.search(before):
+            k = bisect.bisect_right(starts, start) - 1
+            take = k >= 0 and MESSAGE_NAME.search(decls[k][1] or '') is not None
+        joined = False
+        if not take and prev_in and between is not None:
+            if CONCAT.match(between):
+                # One sentence in two halves: read as one.
+                gap = ' X ' if between.strip() != '+' else ''
+                pl, pt = out[-1]
+                out[-1] = (pl, pt + gap + text)
+                joined = True
+            elif ELSE_BRANCH.match(between):
+                take = True
+        if take:
             out.append((line, text))
+        prev_end, prev_in = end, bool(take) or joined
     return out
+
+
+def function_spans(src, names):
+    """(start, end) of each named top-level TS function: its header to the `}` closing it."""
+    spans = []
+    for name in names:
+        m = re.search(r'^(?:export\s+)?function\s+' + re.escape(name) + r'\b', src, re.M)
+        if not m:
+            continue
+        end = src.find('\n}\n', m.start())
+        spans.append((m.start(), len(src) if end < 0 else end + 2))
+    return spans
+
+
+# Backend words that reach a person from outside routes/: (file, the functions that write them).
+BACKEND_UTIL_WORDS = {
+    'mobile': [('backend/src/util/musicManPacket.ts', ('factsOnlyAnswer', 'tempoLine', 'pace'))],
+    'v3': [('src/common/music-man-packet.ts', ('factsOnlyAnswer', 'tempoLine', 'pace'))],
+}
 
 
 def extract(repo):
@@ -361,10 +433,10 @@ def extract(repo):
             src = open(path, encoding='utf-8', errors='replace').read()
             name = os.path.basename(path)
             whole = re.search(r'(Words|Copy)\.swift$', name) is not None
-            add(path, literal_hits(path, src, _swift_strings(src), SWIFT_TRIGGER, whole), src)
+            add(path, literal_hits(path, src, _swift_strings(src), SWIFT_TRIGGER, whole, SWIFT_DECL), src)
         for path in walk('backend/src/routes', ('.ts',)):
             src = open(path, encoding='utf-8', errors='replace').read()
-            add(path, literal_hits(path, src, _ts_strings(src), BACKEND_TRIGGER), src)
+            add(path, literal_hits(path, src, _ts_strings(src), BACKEND_TRIGGER, decl=TS_DECL), src)
     elif repo == 'v3':
         copy_files = re.compile(r'^(sync-failure-copy|downloads-panel-model|record-shop(-[a-z-]+)?|shop-[a-z-]+)\.ts$')
         for path in walk('src/renderer', ('.tsx', '.ts')):
@@ -379,10 +451,20 @@ def extract(repo):
             add(path, literal_hits(path, src, _ts_strings(src), TS_TRIGGER, True), src)
     else:
         raise SystemExit(f'slop check: unknown --repo {repo}')
+    for rel, names in BACKEND_UTIL_WORDS[repo]:
+        path = os.path.join(ROOT, rel)
+        if not os.path.isfile(path):
+            continue
+        src = open(path, encoding='utf-8', errors='replace').read()
+        add(path, literal_hits(path, src, _ts_strings(src), BACKEND_TRIGGER, True, spans=function_spans(src, names)), src)
     return items
 
 
 # ── Running Vale ──────────────────────────────────────────────────────────────
+
+class ValeBroken(Exception):
+    pass
+
 
 def run_vale(vale, config, items):
     # One file per string: a rule that reads across sentences never joins two
@@ -393,11 +475,17 @@ def run_vale(vale, config, items):
         for k, (_, _, text) in enumerate(items):
             with open(os.path.join(words, f'{k:06d}.txt'), 'w', encoding='utf-8') as f:
                 f.write(text + '\n')
-        proc = subprocess.run([vale, '--config', config, '--output=JSON', '--no-exit', words],
-                              capture_output=True, text=True, timeout=180)
-        if not proc.stdout.strip().startswith('{'):
-            raise SystemExit(f'slop check: Vale failed: {proc.stderr.strip()[:300]}')
-        data = json.loads(proc.stdout)
+        try:
+            proc = subprocess.run([vale, '--config', config, '--output=JSON', '--no-exit', words],
+                                  capture_output=True, text=True, timeout=180)
+        except (subprocess.TimeoutExpired, OSError) as err:
+            raise ValeBroken(f'Vale did not answer ({type(err).__name__})')
+        try:
+            data = json.loads(proc.stdout) if proc.stdout.strip().startswith('{') else None
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            raise ValeBroken(f'Vale failed: {(proc.stderr.strip() or "exit " + str(proc.returncode))[:200]}')
     hits = []
     for name, alerts in sorted(data.items()):
         k = int(os.path.basename(name).split('.')[0])
@@ -444,6 +532,19 @@ def main(argv):
         print('slop check: skipped (no Vale at JT_VALE or ~/.jaketunes-vale/bin/vale)')
         return 0
 
+    try:
+        return report(mode, vale, items)
+    except ValeBroken as err:
+        # Vale installed but crashing or hanging here: one line, and the commit is not held,
+        # except where Vale is required (CI).
+        if os.environ.get('JT_VALE_REQUIRED') == '1':
+            print(f'slop check: FAIL: {err}')
+            return 1
+        print(f'slop check: skipped ({err})')
+        return 0
+
+
+def report(mode, vale, items):
     if mode == 'calibrate':
         with tempfile.TemporaryDirectory() as tmp:
             hits = run_vale(vale, calibrate_config(tmp), items)
