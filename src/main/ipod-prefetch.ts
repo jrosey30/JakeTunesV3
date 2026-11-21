@@ -495,7 +495,7 @@ export async function fetchResumable(opts: {
   /** A connection that sends nothing for this long is dropped (kept for resume). */
   idleMs?: number
   withInit?: (init: RequestInit) => RequestInit
-}): Promise<{ ok: true; bytes: number } | { ok: false; error: string; stopped?: boolean; transport?: boolean }> {
+}): Promise<{ ok: true; bytes: number } | { ok: false; error: string; stopped?: boolean; transport?: boolean; noRoom?: boolean }> {
   const idleMs = opts.idleMs ?? 60_000
   const wrap = opts.withInit ?? ((i: RequestInit) => i)
   await mkdir(dirname(opts.partPath), { recursive: true })
@@ -554,10 +554,33 @@ export async function fetchResumable(opts: {
     await writeFile(metaPathOf(opts.partPath), JSON.stringify({ etag, total } satisfies PartMeta))
   }
   const out = createWriteStream(opts.partPath, { flags: append ? 'a' : 'w' })
-  const closeOut = (): Promise<void> => new Promise((resolve) => out.end(() => resolve()))
+  // A full disk (ENOSPC) or any other write failure: without this listener the
+  // stream's 'error' is unhandled and takes the whole main process down (review of #466).
+  let writeError: Error | null = null
+  out.on('error', (err) => { writeError = err })
+  const closeOut = (): Promise<void> => new Promise((resolve) => {
+    if (writeError || out.destroyed) { resolve(); return }
+    out.once('error', () => resolve())
+    out.end(() => resolve())
+  })
+  const waitDrain = (): Promise<void> => new Promise<void>((resolve) => {
+    const done = (): void => { out.off('drain', done); out.off('error', done); out.off('close', done); resolve() }
+    out.once('drain', done)
+    out.once('error', done)
+    out.once('close', done)
+  })
+  const wroteBadly = async (): Promise<{ ok: false; error: string; noRoom?: boolean }> => {
+    ac.abort()
+    await reader.cancel().catch(() => undefined)
+    await discardPart(opts.partPath).catch(() => undefined)
+    const code = (writeError as NodeJS.ErrnoException | null)?.code
+    if (code === 'ENOSPC') return { ok: false, error: 'not enough room on this Mac', noRoom: true }
+    return { ok: false, error: `couldn’t write the download: ${writeError?.message ?? 'write failed'}` }
+  }
   const reader = res.body.getReader()
   try {
     for (;;) {
+      if (writeError) return await wroteBadly()
       if (opts.shouldStop()) {
         ac.abort()
         await reader.cancel().catch(() => undefined)
@@ -568,15 +591,17 @@ export async function fetchResumable(opts: {
       if (step.done) break
       poke()
       if (!step.value || step.value.byteLength === 0) continue
-      if (!out.write(step.value)) await new Promise<void>((resolve) => out.once('drain', () => resolve()))
+      if (!out.write(step.value)) await waitDrain()
     }
   } catch (err) {
     await closeOut()
+    if (writeError) return await wroteBadly()
     return { ok: false, error: `homemini: ${err instanceof Error ? err.message : String(err)}`, transport: true }
   } finally {
     if (idle) clearTimeout(idle)
   }
   await closeOut()
+  if (writeError) return await wroteBadly()
   const size = (await stat(opts.partPath)).size
   if (total !== null && size !== total) {
     if (size > total) {

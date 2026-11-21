@@ -15,7 +15,7 @@
  * is picked up on the next run (and at once from the Device page's Wait).
  * Only on the Mac Jake syncs from (not a replica): elsewhere it does nothing.
  */
-import { lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { IpcRegistrar } from './ipc-register.ts'
 import { REFUSED_SENDER } from './ipc-register.ts'
@@ -38,9 +38,12 @@ import { parseEvictionJournal } from './library-eviction.ts'
 import { colonPathToAbs } from './activity-boardable.ts'
 import { measureLibraryFileSizes } from '../common/library-file-sizes.ts'
 import type { MaterializeFetchResult } from './ipod-sync-materialize.ts'
-import type { ReadyOnMac } from '../common/ipod-ready-on-mac.ts'
+import { roomLine, type ReadyOnMac } from '../common/ipod-ready-on-mac.ts'
 import { ipodListsCachePath, readListsCache } from './ipod-lists-gather.ts'
-import { fetchForSync, syncFetchLogLine, type SyncFetchOne, type SyncFetchResult } from './ipod-sync-fetch.ts'
+import {
+  applySupersededReceipts, createKeyedLock, fetchForSync, landingRoomRefusal, parseSupersededReceipts, supersedeReceipt, SUPERSEDED_RECEIPTS_FILE, syncFetchLogLine,
+  type SyncFetchOne, type SyncFetchResult,
+} from './ipod-sync-fetch.ts'
 import { isPending, type IdentityEntry } from './audio-identity.ts'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
@@ -78,6 +81,8 @@ export interface IpodLocalHost {
   warn: (msg: string) => void
   /** Persisted to main.log, never rate-limited: why iPod songs aren't being kept or fetched, once per change. */
   note?: (msg: string) => void
+  /** Tests only: the waits between a Sync's fetch rounds (SYNC_FETCH_BACKOFF_MS otherwise). */
+  syncFetchBackoffMs?: readonly number[]
 }
 
 export interface IpodLocal {
@@ -85,6 +90,8 @@ export interface IpodLocal {
   gate(): Promise<KeepGate>
   /** For sweepOnce: true = keep this F##/file. */
   sweepKeep(): Promise<(rel: string) => boolean>
+  /** The stream-convert pass: how many queued songs it may move off this Mac now (for the Device page's room line). */
+  sawOffloadable(count: number): void
 }
 
 /** null = the downloaded file is the one homemini says it serves (size and whole-file sha1). */
@@ -125,6 +132,12 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
     warn: host.note ?? host.warn,
   })
   const note = host.note ?? host.warn
+  const syncPartDir = join(host.userDataDir, 'ipod-sync-fetch')
+  // A Sync's part files are for that Sync: a quit or crash mid-fetch leaves none behind (review of #466).
+  void rm(syncPartDir, { recursive: true, force: true }).catch(() => undefined)
+  // One writer per song: the background pass and a Sync's fetch never land the same song at once.
+  const songLock = createKeyedLock<number>()
+  let offloadable: number | null = null
 
   const kindOf = async (colon: string): Promise<LocalKind> => {
     const k = await classifyLocalLibraryFile(colon, { localMount: host.localMount(), pathSep: host.pathSep, lstat })
@@ -163,6 +176,20 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
     } catch {
       return new Map()   // nothing was ever evicted here
     }
+  }
+
+  // This Mac's receipts, with the ones a Sync superseded by homemini's own file (review of #469).
+  const supersededPath = join(host.userDataDir, SUPERSEDED_RECEIPTS_FILE)
+  const receipts = async (): Promise<{ fullSha1ByPath: Map<string, string>; evictedByPath: Map<string, { md5: string; bytes: number }> }> =>
+    applySupersededReceipts(await fullSha1ByPath(), await evictedByPath(), parseSupersededReceipts(await readFile(supersededPath, 'utf-8').catch(() => null)))
+  let supersedeChain: Promise<void> = Promise.resolve()
+  const supersede = (item: PrefetchItem, now: { sha1: string; md5: string; bytes: number }): Promise<void> => {
+    supersedeChain = supersedeChain.then(async () => {
+      const doc = parseSupersededReceipts(await readFile(supersededPath, 'utf-8').catch(() => null))
+      const next = supersedeReceipt(doc, item, now, Date.now())
+      if (next !== doc) await saveJson(supersededPath, next)
+    }).catch((err) => host.warn(`[ipod-local] could not record id ${item.id}’s new file: ${err instanceof Error ? err.message : err}`))
+    return supersedeChain
   }
 
   const owedPath = join(host.userDataDir, OWED_FINGERPRINTS_FILE)
@@ -228,7 +255,8 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
       if (host.syncInFlight()) { skip('an iPod sync is running'); return }
       const tracks = await host.libraryTracks()
       await settleOwed(tracks)
-      const plan = await planPrefetch(doc.ids, tracks, kindOf, await fullSha1ByPath(), await evictedByPath())
+      const rc = await receipts()
+      const plan = await planPrefetch(doc.ids, tracks, kindOf, rc.fullSha1ByPath, rc.evictedByPath)
       lastSkip = null
       const partDir = join(host.userDataDir, 'ipod-prefetch')
       // Songs homemini's copy couldn't prove are asked for once a day, not every pass.
@@ -288,7 +316,7 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
           const got = await land(item, url, part, shouldStop, tracks)
           if (!got.ok) {
             if (got.bad) return refuse(item, part, got.error)
-            return got
+            return { ok: false, error: got.error, stopped: got.stopped, transport: got.transport }
           }
           landed.add(item.id)
           if (got.measured) landedMeasures.push(got.measured)
@@ -368,7 +396,10 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
         }
       }
       const stoppedBecause = running ? null : (lastSkip ?? lastPass?.stoppedBecause ?? null)
-      return { ok: true, ready: { total: ids.length, missing, onCard: onCard.size, fill, downloading: running || (!stoppedBecause && missing.length > 0), stoppedBecause } }
+      const gate = await keep.gate().catch(() => null)
+      const free = await host.freeBytes().catch(() => Number.NaN)
+      const room = roomLine({ hold: gate?.kind === 'hold', freeBytes: free, offloadable })
+      return { ok: true, ready: { total: ids.length, missing, onCard: onCard.size, fill, downloading: running || (!stoppedBecause && missing.length > 0), stoppedBecause, room } }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
@@ -378,20 +409,45 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
    * Download, prove, restore and measure one song: the background pass and a Sync's own
    * fetch go through this one path. `bad`: the bytes came and aren't the song.
    * `remote`: homemini's identity, when it has one, is checked against the whole file too.
+   * `acceptHomeminis` (a Sync's fetch, review of #469): a file that IS homemini's (its size
+   * and sha1) but isn't this Mac's older record of the song lands, and the record is superseded.
    */
-  async function land(item: PrefetchItem, url: string, part: string, shouldStop: () => boolean, tracks: ReadonlyArray<Record<string, unknown>>, remote?: IdentityEntry):
-    Promise<{ ok: true; bytes: number; measured: OwedLanding | null } | { ok: false; error: string; bad?: boolean; stopped?: boolean; transport?: boolean }> {
-    const got = await fetchResumable({ url, partPath: part, fetchImpl: fetch, shouldStop, withInit: copyInit })
-    if (!got.ok) return got
-    const bad = await verifyFetched(part, item) ?? (remote && !isPending(remote) ? await notHomeminisFile(part, remote) : null)
-    if (bad) return { ok: false, error: bad, bad: true }
-    const bytes = await readFile(part)
-    const r = await host.materialize(item.colon, item.id, async () => ({ ok: true, status: 200, buffer: bytes }))
-    await discardPart(part)
-    if (!r.ok) return { ok: false, error: r.error || 'restore failed' }
-    // The file is here and proven: the library's fingerprint is measured from it.
-    const measured = await measureLanded(item, tracks).catch(() => null)
-    return { ok: true, bytes: bytes.length, measured }
+  type Landed =
+    | { ok: true; bytes: number; measured: OwedLanding | null }
+    /**
+     * bad: the bytes came and aren't the song. differs: they ARE homemini's file (its
+     * size and sha1), and that file isn't this Mac's record of the song: trying again
+     * can't help. noRoom: this Mac can't take it; nothing was downloaded.
+     */
+    | { ok: false; error: string; bad?: boolean; differs?: boolean; stopped?: boolean; transport?: boolean; noRoom?: boolean }
+  function land(item: PrefetchItem, url: string, part: string, shouldStop: () => boolean, tracks: ReadonlyArray<Record<string, unknown>>, remote?: IdentityEntry, acceptHomeminis = false): Promise<Landed> {
+    return songLock(item.id, async (): Promise<Landed> => {
+      // The other writer may have brought it while this one waited.
+      if ((await kindOf(item.colon)) === 'local') return { ok: true, bytes: 0, measured: null }
+      // Room first: nothing is downloaded that the restore would refuse (review of #466).
+      const noRoom = landingRoomRefusal(await host.freeBytes().catch(() => Number.NaN), item, remote)
+      if (noRoom) return { ok: false, error: noRoom, noRoom: true }
+      const got = await fetchResumable({ url, partPath: part, fetchImpl: fetch, shouldStop, withInit: copyInit })
+      if (!got.ok) return got
+      const homeminis = remote && !isPending(remote) ? await notHomeminisFile(part, remote) : null
+      if (homeminis) return { ok: false, error: homeminis, bad: true }   // torn or not what homemini serves: asked again
+      const bad = await verifyFetched(part, item)
+      const proven = !!remote && !isPending(remote)   // the whole file matched homemini's own size and sha1 above
+      if (bad && !(acceptHomeminis && proven)) return { ok: false, error: bad, bad: true, differs: proven }
+      const bytes = await readFile(part)
+      const r = await host.materialize(item.colon, item.id, async () => ({ ok: true, status: 200, buffer: bytes }))
+      await discardPart(part)
+      if (!r.ok) return { ok: false, error: r.error || 'restore failed', ...(/free disk would drop below/.test(r.error || '') ? { noRoom: true } : {}) }
+      if (bad && proven) {
+        // homemini's file for this id is the song now (a re-tag there, most often); this Mac's
+        // record only said what it had. One line, by id: no title reaches the usage log.
+        note(`[ipod-local] id ${item.id}: homemini’s file isn’t this Mac’s older record of it (${bad}); homemini’s own size and sha1 match, so it was used and the record updated`)
+        await supersede(item, { sha1: String((remote as { sha1: string }).sha1), md5: createHash('md5').update(bytes).digest('hex'), bytes: bytes.length })
+      }
+      // The file is here and proven: the library's fingerprint is measured from it.
+      const measured = await measureLanded(item, tracks).catch(() => null)
+      return { ok: true, bytes: bytes.length, measured }
+    })
   }
 
   // A Sync's own fetch (Brief 263): exactly the songs it needs, now, verified, with retries.
@@ -399,8 +455,9 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
   async function fetchSongsForSync(ids: number[], ipodName: string): Promise<SyncFetchResult> {
     syncFetchStop = false
     const tracks = await host.libraryTracks()
-    const plan = await planPrefetch(ids, tracks, kindOf, await fullSha1ByPath(), await evictedByPath())
-    const partDir = join(host.userDataDir, 'ipod-sync-fetch')
+    const rc = await receipts()
+    const plan = await planPrefetch(ids, tracks, kindOf, rc.fullSha1ByPath, rc.evictedByPath)
+    const partDir = syncPartDir
     const where = { away: false, userAsked: true }   // Jake pressed Sync: whole-file checks are fine away from home
     const measures: OwedLanding[] = []
     const result = await fetchForSync({
@@ -409,22 +466,37 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
       isHere: async (item) => (await kindOf(item.colon)) === 'local',
       wait: (ms) => new Promise((r) => setTimeout(r, ms)),
       shouldStop: () => syncFetchStop,
+      ...(host.syncFetchBackoffMs ? { backoffMs: host.syncFetchBackoffMs } : {}),
       fetchOne: async (item, remote): Promise<SyncFetchOne> => {
         const url = rawAudioUrl(host.audioBase, item.id)
         let verdict = decidePrefetch(item, remote, where)
         if (verdict === 'probe') verdict = afterProbe(await probeFingerprint(item, url, fetch, copyInit), where)
         if (verdict === 'absent') return { ok: false, gone: true, error: 'homemini doesn’t have the file' }
-        if (verdict === 'refuse') return { ok: false, gone: true, error: 'homemini’s copy isn’t the file this Mac has on record' }
+        // Not this Mac's record of the song (review of #469: a re-tag on homemini, most often).
+        // homemini's own identity settles it: its file is fetched and proven against that.
+        const proven = !!remote && !isPending(remote)
+        if (verdict === 'refuse') {
+          if (isPending(remote)) return { ok: false, error: 'homemini is still checking its copy' }
+          // An older homemini that can't say what its file is: nothing can prove it. Left off.
+          if (!proven) return { ok: false, stuck: true, error: 'homemini’s copy isn’t the file this Mac has on record' }
+          verdict = 'fetch'
+        }
         if (verdict !== 'fetch') return { ok: false, error: 'homemini is still checking its copy' }
         const part = join(partDir, `${item.id}.part`)
-        const got = await land(item, url, part, () => syncFetchStop, tracks, remote)
+        const got = await land(item, url, part, () => syncFetchStop, tracks, remote, true)
         if (got.ok) { if (got.measured) measures.push(got.measured); return { ok: true } }
-        if (got.bad) { await discardPart(part); return { ok: false, error: got.error } }   // torn or wrong bytes: asked again next round
+        if (got.noRoom) return { ok: false, noRoom: true, error: got.error }
+        if (got.bad) {
+          await discardPart(part)
+          return { ok: false, torn: true, error: got.error }   // not homemini's own file: asked again, left off if every try is
+        }
         if (/^homemini 404\b/.test(got.error)) return { ok: false, gone: true, error: 'homemini doesn’t have the file' }
         return { ok: false, error: got.error }
       },
     })
     if (measures.length) await settleOwed(tracks, measures)
+    // Stopped: its part files go now (a stopped fetch is resumed by nobody).
+    if (result.stopped) await rm(syncPartDir, { recursive: true, force: true }).catch(() => undefined)
     if (plan.items.length) note(syncFetchLogLine(ipodName, result))
     return result
   }
@@ -434,7 +506,7 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
       if (!(await applies())) return { ok: false, error: 'this Mac doesn’t sync iPods' }
       const ids = Array.isArray(planIds) ? planIds.map(Number).filter((n) => Number.isInteger(n) && n > 0) : []
       const r = await fetchSongsForSync(ids, typeof ipodName === 'string' && ipodName ? ipodName : 'the iPod')
-      return { ok: true, landed: r.landed, gone: r.gone.map((g) => g.id), failed: r.failed.map((f) => f.id), stopped: r.stopped }
+      return { ok: true, landed: r.landed, gone: r.gone.map((g) => g.id), unclean: r.unclean.map((u) => u.id), failed: r.failed.map((f) => f.id), stopped: r.stopped, reason: r.reason }
     } catch (err) {
       note(`[ipod-local] a sync’s fetch failed: ${err instanceof Error ? err.message : err}`)
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -450,6 +522,9 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
     async sweepKeep() {
       const g = await keep.gate()
       return (rel: string) => keepsRel(g, rel)
+    },
+    sawOffloadable(count: number) {
+      offloadable = Number.isInteger(count) && count >= 0 ? count : null
     },
   }
 }

@@ -189,3 +189,60 @@ describe('materializeTrackFromHomemini', () => {
     assert.equal(diskWriteWouldBreachFloor(MATERIALIZE_FREE_FLOOR_BYTES + 1000, 100), false)
   })
 })
+
+// Review of #466: the background download and a Sync's fetch could restore the same song at
+// once, both through `${abs}.dl.tmp`: one deleted or renamed the other's half-written temp.
+describe('two restores of one song at once', () => {
+  it('each write has its own temp; both finish and no temp is left behind', async () => {
+    const { readdirSync } = await import('node:fs')
+    const { materializeTmpPath } = await import('../ipod-sync-materialize.ts')
+    const root = mkdtempSync(join(tmpdir(), 'jt-mat-'))
+    const dirAbs = join(root, 'iPod_Control', 'Music', 'F00')
+    const abs = join(dirAbs, 'Twice.m4a')
+    assert.notEqual(materializeTmpPath(abs), materializeTmpPath(abs))
+    const temps: string[] = []
+    const opts = {
+      colonPath: ':iPod_Control:Music:F00:Twice.m4a', trackId: 7, localMount: root, pathSep: '/', homeminiAudioBase: 'http://homemini:3000/audio',
+      lstat, mkdir, rename, unlink,
+      // Slow writes, so the two overlap.
+      writeFile: async (p: string, b: Buffer) => { temps.push(p); await new Promise((r) => setTimeout(r, 20)); await writeFile(p, b) },
+      fetchAudio: async () => ({ ok: true, status: 200, buffer: Buffer.from('the song') }),
+    }
+    const [a, b] = await Promise.all([materializeTrackFromHomemini(opts), materializeTrackFromHomemini(opts)])
+    assert.equal(a.ok && b.ok, true, JSON.stringify([a, b]))
+    assert.equal(new Set(temps).size, 2)
+    assert.equal(readFileSync(abs, 'utf-8'), 'the song')
+    assert.deepEqual(readdirSync(dirAbs), ['Twice.m4a'])
+  })
+})
+
+// Review of #469: a crash mid-write left a song-sized `*.dl-*.tmp` in F## for good.
+describe('restore temps a crashed process left', () => {
+  it('a restore sweeps its folder of other processes’ temps and the old shared name; this process’s own are never touched', async () => {
+    const { readdir, writeFile: wf } = await import('node:fs/promises')
+    const { isStaleMaterializeTemp } = await import('../ipod-sync-materialize.ts')
+    const root = mkdtempSync(join(tmpdir(), 'jt-mat-sweep-'))
+    const dirAbs = join(root, 'iPod_Control', 'Music', 'F00')
+    await mkdir(dirAbs, { recursive: true })
+    const own = `Other.m4a.dl-${process.pid}-abc123.tmp`
+    const crashed = `Other.m4a.dl-${process.pid + 1}-def456.tmp`
+    for (const n of ['Keep.m4a', own, crashed, 'Old.m4a.dl.tmp', 'notes.tmp']) await wf(join(dirAbs, n), 'x')
+    assert.equal(isStaleMaterializeTemp(own), false)
+    assert.equal(isStaleMaterializeTemp(crashed), true)
+    assert.equal(isStaleMaterializeTemp('Old.m4a.dl.tmp'), true)
+    assert.equal(isStaleMaterializeTemp('notes.tmp'), false)
+    const r = await materializeTrackFromHomemini({
+      colonPath: ':iPod_Control:Music:F00:Swept.m4a', trackId: 9, localMount: root, pathSep: '/', homeminiAudioBase: 'http://homemini:3000/audio',
+      lstat, mkdir, rename, unlink, writeFile, readdir: (p: string) => readdir(p),
+      fetchAudio: async () => ({ ok: true, status: 200, buffer: Buffer.from('the song') }),
+    })
+    assert.equal(r.ok, true)
+    assert.deepEqual((await readdir(dirAbs)).sort(), ['Keep.m4a', own, 'Swept.m4a', 'notes.tmp'].sort())
+  })
+
+  it('the app’s restore is handed readdir, so the sweep runs', async () => {
+    const src = readFileSync(new URL('../index.ts', import.meta.url), 'utf-8')
+    const opts = src.slice(src.indexOf('function homeminiPullOpts'), src.indexOf('async function materializeLibraryTrack'))
+    assert.match(opts, /readdir: \(p: string\) => readdir\(p\)/)
+  })
+})

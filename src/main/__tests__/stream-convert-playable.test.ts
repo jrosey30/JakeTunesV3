@@ -115,7 +115,8 @@ describe('index.ts wires the two rules in front of the drop', () => {
   })
   it('the pass keeps what Jake just got, what the player asked for, and asks for playable copies', () => {
     const passFn = index.slice(index.indexOf('async function runStreamConvertPass('), index.indexOf('function ensureStreamConvertWorker('))
-    assert.match(passFn, /kept: \(it\) => keepsColon\(ipodGate, it\.ipodPath\) \|\| recent\.has\(it\.ipodPath\) \|\| cameBack\.has\(it\.ipodPath\) \|\| playerTouches\.has\(it\.ipodPath, now\)/)
+    assert.match(passFn, /const kept = \(it: StreamConvertItem\): boolean => keepsColon\(ipodGate, it\.ipodPath\) \|\| recent\.has\(it\.ipodPath\) \|\| cameBack\.has\(it\.ipodPath\) \|\| playerTouches\.has\(it\.ipodPath, now\)/)
+    assert.match(passFn, /^\s+kept,$/m, 'the pass is handed that same rule')
     assert.match(passFn, /const windows = await keepWindowState\.look\(freeNow\)/, 'the two-edge windows, not a fresh look each pass')
     assert.match(index, /const keepWindowState = createKeepWindowState\(keepWindowStore\)/, 'and the side survives a restart')
     assert.match(passFn, /const cameBack = await returnedHold\(now, freeNow\)/)

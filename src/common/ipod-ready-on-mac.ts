@@ -22,6 +22,8 @@ export interface ReadyOnMac {
   downloading: boolean
   /** Why the background download isn't getting them (plain words), or null. */
   stoppedBecause: string | null
+  /** One plain line about this Mac's room, or null (roomLine). Absent from an older main. */
+  room?: string | null
 }
 
 const n = (v: number): string => v.toLocaleString('en-US')
@@ -94,29 +96,78 @@ export function idsLeavingOff(planIds: readonly number[], r: Pick<ReadyOnMac, 'm
  *   • go: every song is here now, except songs homemini can't give at all
  *     (`gone`: no file, or its file isn't the song). Those are left off, and one
  *     line says so after the sync (unavailableLine): one song never blocks the iPod;
+ *     Songs homemini has but that couldn't be fetched cleanly (`unclean`: every
+ *     download failed homemini's own size and sha1) are left off the same way,
+ *     with their own line (uncleanLine), unless that is every song on the iPod;
  *   • stopped: Jake pressed Stop;
  *   • stuck: a song that could still be had didn't arrive after every try
  *     (homemini not answering, no room). One error line; nothing on the iPod changed.
  */
-export interface SyncFetchAnswer { landed: number[]; gone: number[]; failed: number[]; stopped: boolean }
+export interface SyncFetchAnswer { landed: number[]; gone: number[]; unclean?: number[]; failed: number[]; stopped: boolean; reason?: string | null }
+
+/** A Sync's fetch stopped because this Mac has no room (main/ipod-sync-fetch.ts): no retries. */
+export const NO_ROOM_FOR_SYNC_LINE = 'Not enough room on this Mac for this iPod’s songs. Free up some space, then press Sync again.'
+
+/** A Sync's fetch stopped because this Mac's free space couldn't be read: never called "no room". */
+export const ROOM_UNKNOWN_LINE = 'Couldn’t check free space on this Mac.'
+
+/**
+ * Songs homemini has whose download never came out clean (review of #469): left
+ * off this time, never a stop, unless they are every song on the iPod.
+ */
+export function uncleanLine(count: number): string | null {
+  if (count <= 0) return null
+  return `${songs(count)} couldn’t be fetched cleanly; ${count === 1 ? 'it was' : 'they were'} left off this time.`
+}
+
+/** The one note after a sync that left songs off: unavailable ones, then unclean ones. */
+export function leftOffNote(unavailable: number, unclean: number): string | null {
+  return [unavailableLine(unavailable), uncleanLine(unclean)].filter(Boolean).join(' ') || null
+}
+
+/** Under this much free, the Device page says how full this Mac is. */
+export const ROOM_LOW_BYTES = 20 * 1024 ** 3
+
+/**
+ * The one line about this Mac's room on the Device page (review of #466: a hold or a
+ * full Mac was said only in main.log). `hold`: the iPod lists can't be read, so nothing
+ * is moved off this Mac. `offloadable`: songs the offload could still move now (null =
+ * not known yet). Null when there is nothing worth saying.
+ */
+export function roomLine(r: { hold: boolean; freeBytes: number; offloadable: number | null }): string | null {
+  const low = Number.isFinite(r.freeBytes) && r.freeBytes < ROOM_LOW_BYTES
+  const gb = Number.isFinite(r.freeBytes) ? Math.max(0, Math.floor(r.freeBytes / 1024 ** 3)) : null
+  if (r.hold) return low ? `This Mac is almost full (${gb} GB free), and nothing can be moved off it until homemini answers.` : 'Nothing is being moved off this Mac until homemini answers.'
+  if (low && r.offloadable === 0) return `This Mac is almost full (${gb} GB free), and everything left on it is needed by an iPod or was just added or played.`
+  return null
+}
 
 export type ListFetchOutcome =
-  | { kind: 'go'; leftOff: number[] }
+  /** leftOff: homemini can't give them. unclean: it has them, but they couldn't be fetched cleanly (only when any). */
+  | { kind: 'go'; leftOff: number[]; unclean?: number[] }
   | { kind: 'stopped' }
   | { kind: 'stuck'; error: string }
 
 export function listFetchOutcome(
   answer: SyncFetchAnswer | null,
-  after: Pick<ReadyOnMac, 'missing'> | null,
+  after: Pick<ReadyOnMac, 'missing'> & Partial<Pick<ReadyOnMac, 'total'>> | null,
   asked: number,
 ): ListFetchOutcome {
   if (answer?.stopped) return { kind: 'stopped' }
+  if (answer?.reason && answer.failed.length > 0) return { kind: 'stuck', error: answer.reason }
   if (!answer) return { kind: 'stuck', error: `Can’t get ${songs(Math.max(1, asked))} right now. Try Sync again later.` }
   if (!after) return { kind: 'stuck', error: 'Couldn’t get ready to sync. Press Sync again.' }
   const gone = new Set(answer.gone)
-  const still = after.missing.filter((id) => !gone.has(id))
+  const uncleanIds = new Set(answer.unclean ?? [])
+  const still = after.missing.filter((id) => !gone.has(id) && !uncleanIds.has(id))
   if (still.length > 0) return { kind: 'stuck', error: `Can’t get ${songs(still.length)} right now. Try Sync again later.` }
-  return { kind: 'go', leftOff: after.missing.filter((id) => gone.has(id)) }
+  const leftOff = after.missing.filter((id) => gone.has(id))
+  const unclean = after.missing.filter((id) => !gone.has(id) && uncleanIds.has(id))
+  // One song never blocks the iPod; every song on it failing to come cleanly is not a sync.
+  if (unclean.length > 0 && typeof after.total === 'number' && leftOff.length + unclean.length >= after.total) {
+    return { kind: 'stuck', error: `${songs(unclean.length)} couldn’t be fetched cleanly from homemini. Try Sync again later.` }
+  }
+  return unclean.length > 0 ? { kind: 'go', leftOff, unclean } : { kind: 'go', leftOff }
 }
 
 /** The one line after a sync that left songs off because homemini couldn't give them. */
