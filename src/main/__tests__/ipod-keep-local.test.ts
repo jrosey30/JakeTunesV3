@@ -9,11 +9,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   buildKeepDoc, createIpodKeepLocal, gateFor, keepsColon, keepsRel, relOfColon, KEEP_LOCAL_FILE,
-  alwaysKeptIds, knownFreeBytes, parseKeepDoc, prefetchFloorFor,
-  IPOD_KEEP_ALWAYS, IPOD_KEEP_ASKED_FLOOR_BYTES, IPOD_KEEP_FETCH_FLOOR_BYTES, IPOD_KEEP_FLOOR_BYTES,
+  alwaysKeptIds, lastCleanAt, parseKeepDoc, prefetchFloorFor,
+  IPOD_KEEP_ASKED_FLOOR_BYTES, IPOD_KEEP_FETCH_FLOOR_BYTES, KEEP_STALE_MS,
   type KeepLocalDoc,
 } from '../ipod-keep-local.ts'
 import { sweepOnce, EVICT_GRACE_MS, type EvictionDeps } from '../library-eviction.ts'
+import { runConvertPass, type StreamConvertItem } from '../stream-convert-pass.ts'
 
 const NOW = '2026-11-08T12:00:00.000Z'
 const colon = (id: number) => `:iPod_Control:Music:F${String(id % 50).padStart(2, '0')}:imported_${id}.m4a`
@@ -85,162 +86,159 @@ describe('the gate', () => {
     assert.equal(keepsRel(g, rel(3)), false)
   })
 
-  // 2026-11-13: a list can hold 5,000 songs; kept without a limit they'd stop this Mac freeing room.
-  describe('the free-space floor', () => {
+  // 2026-11-20 (Brief 263): the 30 GB floor that let list songs be offloaded is gone.
+  describe('no free-space floor: a song on any list is never offloaded', () => {
     const GIB = 1024 ** 3
     const all6000 = Array.from({ length: 6000 }, (_, i) => i + 1)
-    const many: KeepLocalDoc = { version: 1, at: NOW, ids: all6000, sources: [], complete: true, top1000: all6000.slice(0, 1000) }
-    const lib = many.ids.map((id) => ({ id, path: colon(id) }))
+    const lib = all6000.map((id) => ({ id, path: colon(id) }))
 
-    it('with room, every one of 6,000 iPod songs is kept', () => {
-      const g = gateFor(true, many, lib, 80 * GIB)
-      assert.equal(g.kind === 'keep' && g.count, 6000)
-      assert.equal(g.kind === 'keep' && g.lapsed, undefined)
-      assert.equal(keepsColon(g, colon(6000)), true)
-      assert.equal(keepsColon(gateFor(true, many, lib, IPOD_KEEP_FLOOR_BYTES), colon(6000)), true)   // exactly at the floor: kept
-    })
-
-    it('under 30 GB free only the first 1,000 (the Top 1000) stay kept; the rest may be offloaded', () => {
-      const g = gateFor(true, many, lib, IPOD_KEEP_FLOOR_BYTES - 1)
-      assert.equal(g.kind === 'keep' && g.count, IPOD_KEEP_ALWAYS)
-      assert.equal(g.kind === 'keep' && g.lapsed, 5000)
-      assert.equal(keepsColon(g, colon(1)), true)
-      assert.equal(keepsRel(g, rel(1000)), true)
-      assert.equal(keepsColon(g, colon(1001)), false)
-      assert.equal(keepsRel(g, rel(6000)), false)
-    })
-
-    it('a free-space read that failed changes nothing: every song stays kept', () => {
-      // 0 is what a failed statfs used to come back as (review of PR 413): never "no room".
-      for (const free of [undefined, Number.NaN, Number.POSITIVE_INFINITY, 0, -1, -5 * GIB]) {
-        const g = gateFor(true, many, lib, free)
-        assert.equal(keepsColon(g, colon(6000)), true, String(free))
-        assert.equal(g.kind === 'keep' && g.lapsed, undefined, String(free))
-        assert.equal(g.kind === 'keep' && g.count, 6000, String(free))
-      }
-      assert.equal(knownFreeBytes(0), null)
-      assert.equal(knownFreeBytes(Number.NaN), null)
-      assert.equal(knownFreeBytes('5'), null)
-      assert.equal(knownFreeBytes(1), 1)
-    })
-
-    it('unknown songs still hold everything, whatever the disk says', () => {
-      assert.equal(keepsColon(gateFor(true, null, lib, 1), colon(6000)), true)
-    })
-
-    it('the download floors sit above the lapse floor, and at the edges the recent-songs windows use', () => {
-      assert.equal(IPOD_KEEP_FLOOR_BYTES, 30 * GIB)
-      assert.equal(IPOD_KEEP_FETCH_FLOOR_BYTES, 80 * GIB)   // ROOMY_ENTER_BYTES: the long windows hold while iPod songs arrive
-      assert.equal(IPOD_KEEP_ASKED_FLOOR_BYTES, 60 * GIB)   // ROOMY_FREE_BYTES: Jake's Wait never pushes them out
-      assert.equal(prefetchFloorFor(false), 80 * GIB)
-      assert.equal(prefetchFloorFor(true), 60 * GIB)
-      assert.ok(prefetchFloorFor(true) > IPOD_KEEP_FLOOR_BYTES)
-    })
-
-    it('a free-space read that throws keeps every song (the live gate)', async () => {
-      const dir = await mkdtemp(join(tmpdir(), 'jt-keep-throw-'))
-      for (const freeBytes of [async () => { throw new Error('statfs') }, async () => 0, async () => Number.NaN]) {
+    it('every one of 6,000 iPod songs is kept, whatever the disk says (the live gate)', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'jt-keep-nofloor-'))
+      try {
         const keep = createIpodKeepLocal({
           userDataDir: dir, applies: async () => true,
           top1000: async () => all6000.slice(0, 1000), lists: async () => [{ id: 'punk-0d8fc490', name: 'punkPod', ids: all6000.slice(1000) }],
-          registered: async () => new Set(['punk-0d8fc490']), libraryTracks: async () => lib, freeBytes,
+          registered: async () => new Set(['punk-0d8fc490']), libraryTracks: async () => lib,
         })
         await keep.refresh()
         const g = await keep.gate()
-        assert.equal(keepsColon(g, colon(6000)), true)
         assert.equal(g.kind === 'keep' && g.count, 6000)
+        assert.equal(keepsColon(g, colon(6000)), true)
+        assert.equal(keepsRel(g, rel(1001)), true)
+      } finally {
+        await rm(dir, { recursive: true, force: true })
       }
-      await rm(dir, { recursive: true, force: true })
     })
 
-    it('main’s free-space read says "unknown" when it fails, never 0', async () => {
-      const src = await readFile(new URL('../index.ts', import.meta.url), 'utf-8')
-      const fn = src.slice(src.indexOf('async function laptopFreeBytes'), src.indexOf('function homeminiPullOpts'))
-      assert.match(fn, /catch \(err\) \{[\s\S]*return Number\.NaN/)
-      assert.doesNotMatch(fn, /return 0\b/)
-    })
-
-    it('the wiring: the gate is handed this Mac’s free disk, and each pass its floor', async () => {
-      const src = await readFile(new URL('../ipod-local-start.ts', import.meta.url), 'utf-8')
-      const keepCall = src.slice(src.indexOf('createIpodKeepLocal({'), src.indexOf('const kindOf'))
-      assert.match(keepCall, /freeBytes: host\.freeBytes,/, 'without it the floor never applies')
-      const passCall = src.slice(src.indexOf('await runPrefetchPass({'), src.indexOf('fetchOne: async'))
+    it('the host can’t hand the gate a free-space number any more', async () => {
+      const src = await readFile(new URL('../ipod-keep-local.ts', import.meta.url), 'utf-8')
+      assert.doesNotMatch(src, /freeBytes|lapsed|IPOD_KEEP_FLOOR_BYTES/, 'a floor on the keep set offloaded 89 iPod songs on 2026-11-20')
+      const start = await readFile(new URL('../ipod-local-start.ts', import.meta.url), 'utf-8')
+      const keepCall = start.slice(start.indexOf('createIpodKeepLocal({'), start.indexOf('const kindOf'))
+      assert.match(keepCall, /cachedListIds:/, 'the sidebar’s newer copy of homemini’s lists is part of the keep set')
+      const passCall = start.slice(start.indexOf('await runPrefetchPass({'), start.indexOf('fetchOne: async'))
       assert.match(passCall, /floorBytes: prefetchFloorFor\(asked\),/, 'without it the download runs down to 10 GB free')
     })
 
-    // Review of PR 413: on a read where homemini didn't answer for the Top 1000, the lists
-    // went first and the previous Top 1000 last, so at 20 GB free none of it stayed kept.
-    describe('the protected songs are the Top 1000 by identity', () => {
-      const top = Array.from({ length: 1000 }, (_, i) => i + 1)             // 1..1000
-      const punk = Array.from({ length: 5000 }, (_, i) => 10_000 + i)
-      const lists = [{ id: 'punk-0d8fc490', name: 'punkPod', ids: punk }]
-      const registered = new Set(['punk-0d8fc490'])
-      const clean = buildKeepDoc({ top1000: top, lists, registered, previous: null, now: NOW })!
-      const world = [...top, ...punk].map((id) => ({ id, path: colon(id) }))
-
-      it('a read where the Top 1000 didn’t answer still puts the last good Top 1000 first', () => {
-        const next = buildKeepDoc({ top1000: null, lists, registered, previous: clean, now: NOW })!
-        assert.equal(next.complete, false)
-        assert.deepEqual(next.ids.slice(0, 1000), top)
-        assert.deepEqual(next.top1000, top)
-        const g = gateFor(true, next, world, 20 * GIB)
-        assert.equal(g.kind === 'keep' && g.count, 1000)
-        assert.ok(top.every((id) => keepsColon(g, colon(id))), 'every Top 1000 song stays kept at 20 GB free')
-        assert.equal(keepsColon(g, colon(10_000)), false)
-      })
-
-      it('and again on the read after that, and across a restart (the saved file)', () => {
-        const once = buildKeepDoc({ top1000: null, lists, registered, previous: clean, now: NOW })!
-        const twice = buildKeepDoc({ top1000: null, lists: null, registered, previous: parseKeepDoc(JSON.parse(JSON.stringify(once))), now: NOW })!
-        assert.deepEqual(alwaysKeptIds(twice), top)
-        assert.deepEqual(twice.ids.slice(0, 1000), top)
-        assert.equal(twice.sources.filter((s) => s.key === 'top1000').length, 1)
-      })
-
-      it('a fresh Top 1000 replaces the old one as the protected set', () => {
-        const fresh = top.map((id) => id + 500)                              // 501..1500
-        const next = buildKeepDoc({ top1000: fresh, lists, registered, previous: clean, now: NOW })!
-        assert.deepEqual(alwaysKeptIds(next), fresh)
-        assert.equal(keepsColon(gateFor(true, next, [...world, ...fresh.map((id) => ({ id, path: colon(id) }))], 20 * GIB), colon(1)), false)
-      })
-
-      it('a doc saved before this, from a clean read: the head is the Top 1000', () => {
-        const { top1000: _gone, ...old } = clean
-        assert.deepEqual(alwaysKeptIds(old), top)
-      })
-
-      it('a doc that can’t say which songs are the Top 1000 lapses nothing', () => {
-        const unknown: KeepLocalDoc = { version: 1, at: NOW, ids: [...punk, ...top], sources: [], complete: false }
-        assert.equal(alwaysKeptIds(unknown), null)
-        const g = gateFor(true, unknown, world, 20 * GIB)
-        assert.equal(g.kind === 'keep' && g.count, 6000)
-        assert.equal(keepsColon(g, colon(1)), true)
-      })
+    it('the download floors are where the recent-songs windows are', () => {
+      assert.equal(IPOD_KEEP_FETCH_FLOOR_BYTES, 80 * GIB)
+      assert.equal(IPOD_KEEP_ASKED_FLOOR_BYTES, 60 * GIB)
+      assert.equal(prefetchFloorFor(false), 80 * GIB)
+      assert.equal(prefetchFloorFor(true), 60 * GIB)
     })
 
-    it('the live gate asks the disk each time, and says so once', async () => {
-      const dir = await mkdtemp(join(tmpdir(), 'jt-keep-floor-'))
-      let free = 80 * GIB
-      const lines: string[] = []
-      const keep = createIpodKeepLocal({
-        userDataDir: dir, applies: async () => true,
-        top1000: async () => many.ids.slice(0, 1000), lists: async () => [{ id: 'punk-0d8fc490', name: 'punkPod', ids: many.ids.slice(1000) }],
-        registered: async () => new Set(['punk-0d8fc490']), libraryTracks: async () => lib,
-        freeBytes: async () => free, log: (m) => lines.push(m),
-      })
-      await keep.refresh()
-      assert.equal(keepsColon(await keep.gate(), colon(6000)), true)
-      free = 29 * GIB
-      assert.equal(keepsColon(await keep.gate(), colon(6000)), false)
-      assert.equal(keepsColon(await keep.gate(), colon(1000)), true)
-      free = 31 * GIB
-      assert.equal(keepsColon(await keep.gate(), colon(6000)), true)
-      assert.deepEqual(lines, [
-        '[ipod-local] keeping 6000 iPod song(s) on this Mac',
-        '[ipod-local] keeping 1000 iPod song(s) on this Mac; 5000 more may be offloaded while it has under 30 GB free',
-        '[ipod-local] keeping 6000 iPod song(s) on this Mac',
-      ])
-      await rm(dir, { recursive: true, force: true })
+    // The real case: Kraken (12558) on punkPod since 11-14, offloaded at 20:33Z with the disk 97% full.
+    it('2026-11-20: a punkPod song on a 97%-full Mac stays local through the stream-convert pass', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'jt-keep-kraken-'))
+      try {
+        const kraken = ':iPod_Control:Music:F08:imported_12558.m4a'
+        const offList = ':iPod_Control:Music:F01:imported_7.m4a'
+        const tracks = [{ id: 12558, path: kraken, audioFingerprint: 'sha1:d12082828727dbcd|55333' }, { id: 7, path: offList, audioFingerprint: 'sha1:aa|1' }, { id: 1, path: colon(1) }]
+        const keep = createIpodKeepLocal({
+          userDataDir: dir, applies: async () => true,
+          top1000: async () => [1],
+          lists: async () => [{ id: '0d8fc490-74d1-4232-9a35-1801a66f4fde', name: 'punkPod', ids: [12558] }],
+          registered: async () => new Set(['0d8fc490-74d1-4232-9a35-1801a66f4fde']), libraryTracks: async () => tracks,
+        })
+        await keep.refresh()
+        const gate = await keep.gate()
+        const now = Date.parse('2026-11-20T20:33:00.000Z')
+        const items: StreamConvertItem[] = [kraken, offList].map((ipodPath) => ({ ipodPath, fingerprint: 'x', enqueuedAt: now - 24 * 3_600_000 }))
+        const converted: string[] = []
+        await runConvertPass({
+          now, items, maxAgeMs: 30 * 60_000, batch: null, tracks,
+          kept: (it) => keepsColon(gate, it.ipodPath),
+          away: async () => false,
+          askIdentity: async (ids) => ({ kind: 'answers', byId: new Map(ids.map((id) => [String(id), { size: 8036287, sha1: '4a441abc4db4ec66069ede2056fb32a22b3bea54', etag: '"e"' }])) }),
+          convert: async (row) => { converted.push(row.item.ipodPath); return { ok: true } },
+          log: () => {},
+        })
+        assert.deepEqual(converted, [offList], 'only the song on no list is offloaded')
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('a list in the sidebar’s newer copy of homemini’s answer is kept before the keep file hears of it', () => {
+      const doc: KeepLocalDoc = { version: 1, at: NOW, ids: [1], sources: [], complete: true }
+      const tracks = [1, 2, 3].map((id) => ({ id, path: colon(id) }))
+      const g = gateFor(true, doc, tracks, { now: Date.parse(NOW), extraIds: [2] })
+      assert.equal(keepsColon(g, colon(2)), true)
+      assert.equal(keepsColon(g, colon(3)), false)
+    })
+  })
+
+  // Review of PR 413: the Top 1000 is carried by identity across a read where homemini didn't answer for it.
+  describe('the Top 1000 by identity', () => {
+    const top = Array.from({ length: 1000 }, (_, i) => i + 1)
+    const punk = Array.from({ length: 50 }, (_, i) => 10_000 + i)
+    const lists = [{ id: 'punk-0d8fc490', name: 'punkPod', ids: punk }]
+    const registered = new Set(['punk-0d8fc490'])
+    const clean = buildKeepDoc({ top1000: top, lists, registered, previous: null, now: NOW })!
+
+    it('a read where the Top 1000 didn’t answer still puts the last good Top 1000 first, across a restart', () => {
+      const once = buildKeepDoc({ top1000: null, lists, registered, previous: clean, now: NOW })!
+      assert.equal(once.complete, false)
+      assert.deepEqual(once.ids.slice(0, 1000), top)
+      const twice = buildKeepDoc({ top1000: null, lists: null, registered, previous: parseKeepDoc(JSON.parse(JSON.stringify(once))), now: NOW })!
+      assert.deepEqual(alwaysKeptIds(twice), top)
+      assert.equal(twice.sources.filter((s) => s.key === 'top1000').length, 1)
+    })
+
+    it('a doc saved before 2026-11-13, from a clean read: the head is the Top 1000', () => {
+      const { top1000: _gone, ...old } = clean
+      assert.deepEqual(alwaysKeptIds(old), top)
+    })
+  })
+
+  describe('fresh or nothing', () => {
+    const tracks = [1, 2, 3].map((id) => ({ id, path: colon(id) }))
+    const t = Date.parse(NOW)
+
+    it('a clean read older than 6 hours holds: nothing is offloaded until homemini answers again', () => {
+      const doc: KeepLocalDoc = { version: 1, at: NOW, ids: [1], sources: [], complete: true }
+      assert.equal(gateFor(true, doc, tracks, { now: t + KEEP_STALE_MS }).kind, 'keep')
+      const g = gateFor(true, doc, tracks, { now: t + KEEP_STALE_MS + 1 })
+      assert.equal(g.kind, 'hold')
+      assert.equal(keepsColon(g, colon(3)), true)
+    })
+
+    it('a read where a source failed doesn’t make the set fresh: the last CLEAN read is the clock', () => {
+      const clean = buildKeepDoc({ top1000: [1], lists: [], registered: new Set(), previous: null, now: NOW })!
+      assert.equal(clean.cleanAt, NOW)
+      const later = new Date(t + 7 * 3_600_000).toISOString()
+      const partial = buildKeepDoc({ top1000: null, lists: [], registered: new Set(), previous: clean, now: later })!
+      assert.equal(partial.complete, false)
+      assert.equal(lastCleanAt(partial), NOW)
+      assert.equal(gateFor(true, partial, tracks, { now: t + 7 * 3_600_000 }).kind, 'hold')
+      assert.equal(lastCleanAt(parseKeepDoc(JSON.parse(JSON.stringify(partial)))), NOW, 'survives a restart')
+    })
+
+    it('an older saved doc: complete counts from `at`, incomplete has no clean read and holds', () => {
+      assert.equal(gateFor(true, { version: 1, at: NOW, ids: [1], sources: [], complete: true }, tracks, { now: t }).kind, 'keep')
+      assert.equal(gateFor(true, { version: 1, at: NOW, ids: [1], sources: [], complete: false }, tracks, { now: t }).kind, 'hold')
+    })
+
+    it('the live gate says why it holds in main.log, once per change', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'jt-keep-stale-'))
+      try {
+        let clock = t
+        const warns: string[] = []
+        const keep = createIpodKeepLocal({
+          userDataDir: dir, applies: async () => true, now: () => clock,
+          top1000: async () => [1], lists: async () => [], registered: async () => new Set(),
+          libraryTracks: async () => tracks, warn: (m) => warns.push(m),
+        })
+        await keep.refresh()
+        assert.equal((await keep.gate()).kind, 'keep')
+        clock = t + KEEP_STALE_MS + 1
+        assert.equal((await keep.gate()).kind, 'hold')
+        assert.equal((await keep.gate()).kind, 'hold')
+        assert.equal(warns.length, 1)
+        assert.match(warns[0], /offloading nothing: the iPod lists were last read/)
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
     })
   })
 })

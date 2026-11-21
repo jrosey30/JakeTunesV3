@@ -55,7 +55,9 @@ const RULES: Rule[] = [
   { test: /no verified ipod mount|ipod is not mounted|no ipod detected/i, stage: 'device', happened: 'No iPod found.', next: 'Plug it straight into the Mac and try again.' },
   { test: /library is empty|nothing to commit|could not build an activity set|api-failed|io-failed|build failed/i, stage: 'build', happened: 'Couldn’t get the songs ready.', next: AGAIN },
   // One button per iPod (2026-11-07, main/ipod-one-sync.ts): refused before anything is written.
-  { test: /top 1000 can’t be read right now|list couldn’t be read|can’t get the top 1000|can’t get .+ songs right now/i, stage: 'build', happened: 'Couldn’t get this iPod’s songs.', next: HOMEMINI },
+  // Brief 263: "songs?" — "Can’t get 1 song right now" (the Device page's own, before the card) fell
+  // through to no rule, and with no phase evidence the line said the iPod "may be half-synced".
+  { test: /top 1000 can’t be read right now|list couldn’t be read|can’t get the top 1000|can’t get .+ songs? right now/i, stage: 'build', happened: 'Couldn’t get this iPod’s songs.', next: HOMEMINI },
   { test: /list is empty\. songs are added|has no songs yet/i, stage: 'build', happened: 'This iPod has no songs yet.', next: '' },
   { test: /none of the [\d,]+ songs on .+ list can go on it|none of the top 1000 can go on|none of .+ songs can go on it/i, stage: 'build', happened: 'None of this iPod’s songs can go on it.', next: ITS_SONGS },
   // A list-only iPod (every iPod but the Original, 2026-11-07) with nothing in its Pool.

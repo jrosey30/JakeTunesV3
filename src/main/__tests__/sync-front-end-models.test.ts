@@ -183,6 +183,26 @@ describe('sync outcome — claims from phase evidence', () => {
       assert.equal(outcomeLine(o), raw, 'shown as written, never "may be half-synced"')
     }
   })
+  // Brief 263 (2026-11-20): punkPod stopped at Get ready with "Can’t get 1 song right now", and the
+  // banner said "The iPod may be half-synced": the rule only knew "songs".
+  it('a list iPod’s fetch stopping before the card says nothing on the iPod changed, for one song or many', async () => {
+    const { listFetchOutcome } = await import('../../common/ipod-ready-on-mac.ts')
+    const none = { landed: [], gone: [], failed: [], stopped: false }
+    const errors = [
+      listFetchOutcome({ ...none, failed: [1] }, { missing: [1] }, 1),
+      listFetchOutcome({ ...none, failed: [1, 2] }, { missing: [1, 2] }, 2),
+      listFetchOutcome({ ...none, failed: Array.from({ length: 1200 }, (_, i) => i) }, { missing: Array.from({ length: 1200 }, (_, i) => i) }, 1200),
+      listFetchOutcome(null, null, 1),
+      listFetchOutcome({ ...none, landed: [1] }, null, 1),
+    ].map((r) => (r.kind === 'stuck' ? r.error : ''))
+    assert.ok(errors.includes('Can’t get 1 song right now. Try Sync again later.'))
+    for (const raw of errors) {
+      assert.ok(raw, 'each is an error line')
+      const o = syncOutcome(applySyncResult(startTimeline(T0, null), { ok: false, error: raw }, T0))!
+      assert.equal(o.changed, 'no', raw)
+      assert.doesNotMatch(outcomeLine(o), /half-synced/, raw)
+    }
+  })
   it('the header says "Last sync" after an uncertain or partial attempt, and no count after an aborted one', () => {
     assert.equal(ipodCountLabel({ landed: 312, target: 1000, sealedOk: false, aborted: true }, 'idle'), null)
     const clean = { landed: 1000, target: 1000, sealedOk: true }
