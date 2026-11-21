@@ -784,6 +784,8 @@ export default function DeviceView() {
           {plan && !plan.ok && plan.kind === 'unknown' && <span>Set up this iPod above to sync it.</span>}
           {plan && !plan.ok && plan.kind !== 'unknown' && <span className="device-sync-facts-error">{plan.error}</span>}
           {plan?.ok && ready && !leaveOff && !fetchingFirst && readyOnMacLine(ready, { list: plan.kind === 'list' }) && <span>{readyOnMacLine(ready, { list: plan.kind === 'list' })}</span>}
+          {/* This Mac's room: a hold, or full with nothing left to move off (ipod-ready-on-mac.ts roomLine). */}
+          {ready?.room && <span>{ready.room}</span>}
           {fetchingFirst && (
             <span>
               <button type="button" className="device-link-btn" onClick={() => { stopFetchRef.current = true; void window.electronAPI.ipodLocalFetchForSyncStop?.() }}>Stop</button>

@@ -46,7 +46,8 @@ const ITS_SONGS = 'Open Details to see which songs, then sync again.'
 const RULES: Rule[] = [
   // The page's own refusals before anything touches the iPod (DeviceView, ipod-ready-on-mac,
   // ipod-one-sync). They are already plain: shown as written (happened '' = the message itself).
-  { test: /stopped downloading|couldn’t get ready to sync|changed while its songs were downloading|songs are in your library|^set up this ipod/i, stage: 'build', happened: '', next: '' },
+  // Brief 263 review: a Sync's own fetch stopping for want of room, or on a song homemini changed.
+  { test: /stopped downloading|couldn’t get ready to sync|changed while its songs were downloading|songs are in your library|^set up this ipod|^not enough room on this mac|the same file this mac had/i, stage: 'build', happened: '', next: '' },
   // Refusals before the iPod is touched: the plug-in health check (common/ipod-onboarding.ts
   // healthSyncRefusal / healthBlindRefusal), the identity gate and the card-fit check. Their own
   // line says what to do; the sync never started. sync-front-end-models.test.ts runs each one.

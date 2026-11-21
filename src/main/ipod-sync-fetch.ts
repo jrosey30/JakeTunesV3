@@ -19,18 +19,29 @@
  *   • gone: homemini has no file for it, or its file is provably another song.
  *     The Sync goes ahead without it and says so in one line afterwards: one
  *     song must never keep a whole iPod from syncing;
- *   • failed: still not here after every try (homemini not answering, no room).
- *     The Sync stops before the card is touched, as before.
+ *   • failed: still not here after every try (homemini not answering), or
+ *     not tried again because trying can't help: not enough room on this Mac
+ *     (`noRoom`: the whole fetch stops at once), or homemini's file differs
+ *     from this Mac's own record of the song (`stuck`: a re-tag changes the
+ *     bytes, so it is not "gone", and there is no audio-only record on this
+ *     Mac to prove the audio is the same). The Sync stops before the card is
+ *     touched, with one plain line (`reason`).
  *
  * Electron-free; every effect is injected (__tests__/ipod-sync-fetch.test.ts).
  */
 import type { IdentityAnswer, IdentityEntry } from './audio-identity.ts'
+import { diskWriteWouldBreachFloor, formatFreeSpaceRefuse, MATERIALIZE_FREE_FLOOR_BYTES } from './ipod-sync-materialize.ts'
 import type { PrefetchItem } from './ipod-prefetch.ts'
+import { NO_ROOM_FOR_SYNC_LINE, notTheSameFileLine } from '../common/ipod-ready-on-mac.ts'
 
 export type SyncFetchOne =
   | { ok: true }
-  /** gone: this song can't be had from homemini (no file, or its file isn't this song). */
-  | { ok: false; error: string; gone?: boolean }
+  /**
+   * gone: homemini has no file for this song. stuck: trying again can't help
+   * (homemini's file isn't the one on record here): not retried. noRoom: this
+   * Mac can't take it: the whole fetch stops at once.
+   */
+  | { ok: false; error: string; gone?: boolean; stuck?: boolean; noRoom?: boolean }
 
 export interface SyncFetchDeps {
   /** The songs the sync needs that aren't on this Mac. */
@@ -53,17 +64,21 @@ export interface SyncFetchResult {
   gone: Array<{ id: number; why: string }>
   failed: Array<{ id: number; error: string }>
   stopped: boolean
+  /** The one plain line for the Device page when songs failed for a reason Jake can act on, else null. */
+  reason: string | null
 }
 
 export const SYNC_FETCH_BACKOFF_MS: readonly number[] = [2_000, 8_000, 20_000]
 
 export async function fetchForSync(deps: SyncFetchDeps): Promise<SyncFetchResult> {
-  const out: SyncFetchResult = { landed: [], gone: [], failed: [], stopped: false }
+  const out: SyncFetchResult = { landed: [], gone: [], failed: [], stopped: false, reason: null }
   const backoff = deps.backoffMs ?? SYNC_FETCH_BACKOFF_MS
   const stop = deps.shouldStop ?? (() => false)
   let pending = [...new Map(deps.items.map((i) => [i.id, i])).values()]
   const lastError = new Map<number, string>()
-  for (let round = 0; round <= backoff.length && pending.length > 0; round++) {
+  let stuck = 0
+  let noRoom = false
+  for (let round = 0; round <= backoff.length && pending.length > 0 && !noRoom; round++) {
     if (round > 0) await deps.wait(backoff[round - 1])
     if (stop()) { out.stopped = true; break }
     let answer: IdentityAnswer
@@ -74,6 +89,7 @@ export async function fetchForSync(deps: SyncFetchDeps): Promise<SyncFetchResult
     }
     const next: PrefetchItem[] = []
     for (const item of pending) {
+      if (noRoom) { lastError.set(item.id, lastError.get(item.id) ?? 'not enough room on this Mac'); next.push(item); continue }
       if (stop()) { out.stopped = true; next.push(item); continue }
       if (deps.isHere && (await deps.isHere(item).catch(() => false))) { out.landed.push(item.id); continue }
       const remote = answer.kind === 'answers' ? answer.byId.get(String(item.id)) : undefined
@@ -85,6 +101,8 @@ export async function fetchForSync(deps: SyncFetchDeps): Promise<SyncFetchResult
       try { r = await deps.fetchOne(item, remote) } catch (err) { r = { ok: false, error: err instanceof Error ? err.message : String(err) } }
       if (r.ok) { out.landed.push(item.id); continue }
       if (r.gone) { out.gone.push({ id: item.id, why: r.error }); continue }
+      if (r.stuck) { stuck++; out.failed.push({ id: item.id, error: r.error }); continue }
+      if (r.noRoom) noRoom = true
       lastError.set(item.id, r.error)
       next.push(item)
     }
@@ -92,6 +110,8 @@ export async function fetchForSync(deps: SyncFetchDeps): Promise<SyncFetchResult
     if (out.stopped) break
   }
   if (!out.stopped) for (const i of pending) out.failed.push({ id: i.id, error: lastError.get(i.id) ?? 'not fetched' })
+  if (noRoom && !out.stopped) out.reason = NO_ROOM_FOR_SYNC_LINE
+  else if (stuck > 0) out.reason = notTheSameFileLine(stuck)
   return out
 }
 
@@ -102,4 +122,42 @@ export function syncFetchLogLine(ipodName: string, r: SyncFetchResult): string {
   if (r.failed.length) parts.push(`${r.failed.length} still missing (first: id ${r.failed[0].id}: ${r.failed[0].error})`)
   if (r.stopped) parts.push('stopped by Jake')
   return parts.join(' · ')
+}
+
+/**
+ * Before one song is downloaded (review of #466): the download sat in its part
+ * file, then the restore wrote a second copy beside it, and only then was the
+ * 10 GB floor asked, so under the floor every try downloaded, refused, and tried
+ * again, and with less free than the song it could fill the disk. Both copies are
+ * counted (the part and the restore's temp exist at once). Unknown free space
+ * (NaN) refuses, as the floor always has. null = room.
+ */
+export function landingRoomRefusal(freeBytes: number, item: Pick<PrefetchItem, 'bytes'>, remote?: IdentityEntry, floor = MATERIALIZE_FREE_FLOOR_BYTES): string | null {
+  const remoteSize = remote && typeof (remote as { size?: unknown }).size === 'number' ? Number((remote as { size: number }).size) : 0
+  const need = Math.max(0, Number(item.bytes) || 0, remoteSize)
+  if (!diskWriteWouldBreachFloor(freeBytes, need * 2, floor)) return null
+  return `not enough room on this Mac: ${formatFreeSpaceRefuse(freeBytes, floor)}`
+}
+
+/**
+ * One writer per song at a time (review of #466): the background download and a
+ * Sync's fetch could land the same song at once. A second caller waits for the
+ * first to finish, then runs (and finds the song already here).
+ */
+export function createKeyedLock<K>(): <T>(key: K, fn: () => Promise<T>) => Promise<T> {
+  const tails = new Map<K, Promise<void>>()
+  return async <T>(key: K, fn: () => Promise<T>): Promise<T> => {
+    const before = tails.get(key) ?? Promise.resolve()
+    let release!: () => void
+    const mine = new Promise<void>((resolve) => { release = resolve })
+    const tail = before.then(() => mine)
+    tails.set(key, tail)
+    await before
+    try {
+      return await fn()
+    } finally {
+      release()
+      if (tails.get(key) === tail) tails.delete(key)
+    }
+  }
 }

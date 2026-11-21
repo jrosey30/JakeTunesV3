@@ -189,3 +189,29 @@ describe('materializeTrackFromHomemini', () => {
     assert.equal(diskWriteWouldBreachFloor(MATERIALIZE_FREE_FLOOR_BYTES + 1000, 100), false)
   })
 })
+
+// Review of #466: the background download and a Sync's fetch could restore the same song at
+// once, both through `${abs}.dl.tmp`: one deleted or renamed the other's half-written temp.
+describe('two restores of one song at once', () => {
+  it('each write has its own temp; both finish and no temp is left behind', async () => {
+    const { readdirSync } = await import('node:fs')
+    const { materializeTmpPath } = await import('../ipod-sync-materialize.ts')
+    const root = mkdtempSync(join(tmpdir(), 'jt-mat-'))
+    const dirAbs = join(root, 'iPod_Control', 'Music', 'F00')
+    const abs = join(dirAbs, 'Twice.m4a')
+    assert.notEqual(materializeTmpPath(abs), materializeTmpPath(abs))
+    const temps: string[] = []
+    const opts = {
+      colonPath: ':iPod_Control:Music:F00:Twice.m4a', trackId: 7, localMount: root, pathSep: '/', homeminiAudioBase: 'http://homemini:3000/audio',
+      lstat, mkdir, rename, unlink,
+      // Slow writes, so the two overlap.
+      writeFile: async (p: string, b: Buffer) => { temps.push(p); await new Promise((r) => setTimeout(r, 20)); await writeFile(p, b) },
+      fetchAudio: async () => ({ ok: true, status: 200, buffer: Buffer.from('the song') }),
+    }
+    const [a, b] = await Promise.all([materializeTrackFromHomemini(opts), materializeTrackFromHomemini(opts)])
+    assert.equal(a.ok && b.ok, true, JSON.stringify([a, b]))
+    assert.equal(new Set(temps).size, 2)
+    assert.equal(readFileSync(abs, 'utf-8'), 'the song')
+    assert.deepEqual(readdirSync(dirAbs), ['Twice.m4a'])
+  })
+})

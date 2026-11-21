@@ -51,6 +51,7 @@ import { fetchHeadersWithin } from './fetch-headers'; import { withBodyInactivit
 import { computeDeletedPaths } from './library-deletions'; import { createPhoneImportGuard } from './phone-import-guard.ts'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createPlayCache } from './play-cache.ts'
+import { atBackgroundPriority } from './background-priority.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
 import { mergeQueuedDuringPass, runConvertPass, type ConvertOutcome, type QueueTrack, type StreamConvertItem } from './stream-convert-pass.ts'; import { confirmHomeminiHoldsFile, keptLocalMessage, USER_PENDING_RETRIES, type RefusalMemo } from './offload-confirm.ts'
@@ -3379,6 +3380,8 @@ async function buildAacMirror(srcPath: string, targetKbps: number): Promise<stri
   const { execFile } = await import('child_process')
   const { promisify } = await import('util')
   const execP = promisify(execFile)
+  // The converts run at background priority: at normal priority they made Jake's music pop during syncs (background-priority.ts).
+  const bgExec = (cmd: string, args: string[], o: { timeout: number }) => { const [f, a] = atBackgroundPriority(cmd, args); return execP(f, a, o) }
   const { createHash } = await import('crypto')
 
   // Quick ext gate: if the source doesn't smell lossless, skip without
@@ -3438,12 +3441,12 @@ async function buildAacMirror(srcPath: string, targetKbps: number): Promise<stri
       // source that the old ffmpeg-only path passed through untouched.
       const pcm = cached + '.partial.wav'
       try {
-        await execP('ffmpeg', [
+        await bgExec('ffmpeg', [
           '-nostdin', '-y', '-i', srcPath, '-vn',
           '-ar', '44100', '-ac', '2', '-c:a', 'pcm_s16le',
           '-f', 'wav', pcm,
         ], { timeout: 600000 })
-        await execP('afconvert', [
+        await bgExec('afconvert', [
           pcm, '-o', tmp,
           '-d', 'aac',                    // AAC-LC (not aach/HE — iPod-safe)
           '-f', 'm4af',                   // MPEG-4 Audio container (.m4a)
@@ -3461,7 +3464,7 @@ async function buildAacMirror(srcPath: string, targetKbps: number): Promise<stri
     // Fallback (non-macOS / afconvert missing): ffmpeg native AAC, but now
     // hard-capped to iPod-safe 44.1kHz/stereo so a hi-res source can never
     // pass through at a rate the device can't clock.
-    await execP('ffmpeg', [
+    await bgExec('ffmpeg', [
       '-nostdin', '-y', '-i', srcPath, '-vn',
       '-c:a', 'aac', '-b:a', `${targetKbps}k`,
       '-ar', '44100', '-ac', '2',
@@ -4560,11 +4563,13 @@ async function runStreamConvertPass(now: number): Promise<void> {
     if (hub) void returnRecentToDisk({ added: addedLately(recent), inUse: (colon) => playerTouches.has(colon, Date.now()), roomy: windows.roomy, away: isAwayFromHome })
     // A played or loaded-ahead streamed song: homemini is asked to keep its playable copy ready (stream-keep-warm.ts).
     void warmKeeper.pass({ tracks: libTracks, touched: playerTouches.recent(now), now, needsCopy: (colon) => wantsHomeminiFlac(trackFarmPath(colon)), isStreamed: async (colon) => (await lstat(trackFarmPath(colon))).isSymbolicLink() })
+    const kept = (it: StreamConvertItem): boolean => keepsColon(ipodGate, it.ipodPath) || recent.has(it.ipodPath) || cameBack.has(it.ipodPath) || playerTouches.has(it.ipodPath, now)
+    ipodLocal.sawOffloadable(items.filter((it) => !kept(it)).length)   // the Device page's room line (ipod-ready-on-mac.ts roomLine)
     // The library's record NOW decides, never the row's (stream-convert-pass.ts).
     const { keep, changed } = await runConvertPass({
       now, items, maxAgeMs: STREAM_CONVERT_MAX_AGE_MS, batch: hub ? OFFLOAD_CONVERT_BATCH : null,
       tracks: (((await libraryCache.get()) as CachedLibrary).tracks || []) as QueueTrack[],
-      kept: (it) => keepsColon(ipodGate, it.ipodPath) || recent.has(it.ipodPath) || cameBack.has(it.ipodPath) || playerTouches.has(it.ipodPath, now),
+      kept,
       needsPlayable: (it) => wantsHomeminiFlac(trackFarmPath(it.ipodPath)),
       askPlayable: async (ids) => playableVerdicts(await askVariants(ids, true)),
       away: isAwayFromHome,

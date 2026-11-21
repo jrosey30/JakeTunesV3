@@ -15,7 +15,7 @@
  *     library symlink is never replaced.
  */
 
-import { createHash } from 'crypto'
+import { createHash, randomBytes } from 'crypto'
 import { dirname, join } from 'path'
 import { colonPathToAbs, type LstatLike } from './activity-boardable.ts'
 
@@ -111,6 +111,11 @@ async function fetchHomemini(opts: MaterializeTrackOpts): Promise<
   return { ok: true, buffer: audio.buffer }
 }
 
+/** A temp name no other write of the same song can have. */
+export function materializeTmpPath(abs: string): string {
+  return `${abs}.dl-${process.pid}-${randomBytes(6).toString('hex')}.tmp`
+}
+
 export async function materializeTrackFromHomemini(opts: MaterializeTrackOpts): Promise<MaterializeTrackResult> {
   const colon = String(opts.colonPath || '').trim()
   if (!colon) return { ok: false, error: 'no path' }
@@ -127,10 +132,11 @@ export async function materializeTrackFromHomemini(opts: MaterializeTrackOpts): 
   if (!audio.ok) return audio
   const late = await refuseIfFloor(opts, audio.buffer.length)
   if (late) return { ok: false, error: late }
-  const tmp = `${abs}.dl.tmp`
+  // Its own temp name per write (review of #466): two writers of one song (the iPod
+  // download and a Sync's fetch, or a Download click) never share or delete each other's.
+  const tmp = materializeTmpPath(abs)
   try {
     await opts.mkdir(dirname(abs), { recursive: true })
-    try { await opts.unlink(tmp) } catch { /* no stale tmp */ }
     await opts.writeFile(tmp, audio.buffer)
     await opts.rename(tmp, abs)
   } catch (err) {

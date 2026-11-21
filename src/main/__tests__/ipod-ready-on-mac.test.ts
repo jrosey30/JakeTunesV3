@@ -103,3 +103,38 @@ describe('what a list iPod’s Sync does after fetching its songs', () => {
     assert.deepEqual(listFetchOutcome(answer({ stopped: true }), { missing: [1] }, 1), { kind: 'stopped' })
   })
 })
+
+describe('review of #466: plain lines the Device page shows', () => {
+  it('a fetch that stopped for a reason Jake can act on says that reason, not "try again later"', async () => {
+    const { NO_ROOM_FOR_SYNC_LINE, notTheSameFileLine } = await import('../../common/ipod-ready-on-mac.ts')
+    const none = { landed: [], gone: [], stopped: false }
+    assert.deepEqual(listFetchOutcome({ ...none, failed: [1, 2], reason: NO_ROOM_FOR_SYNC_LINE }, { missing: [1, 2] }, 2), { kind: 'stuck', error: NO_ROOM_FOR_SYNC_LINE })
+    assert.equal(notTheSameFileLine(1), '1 song on homemini isn’t the same file this Mac had, so Sync can’t use it yet.')
+    assert.equal(notTheSameFileLine(2), '2 songs on homemini aren’t the same file this Mac had, so Sync can’t use them yet.')
+    // A reason with nothing failed changes nothing.
+    assert.equal(listFetchOutcome({ ...none, failed: [], reason: NO_ROOM_FOR_SYNC_LINE }, { missing: [] }, 1).kind, 'go')
+  })
+
+  it('this Mac’s room: a hold is always said; full with nothing left to move off is said; otherwise nothing', async () => {
+    const { roomLine } = await import('../../common/ipod-ready-on-mac.ts')
+    const GB = 1024 ** 3
+    assert.equal(roomLine({ hold: true, freeBytes: 200 * GB, offloadable: 10 }), 'Nothing is being moved off this Mac until homemini answers.')
+    assert.equal(roomLine({ hold: true, freeBytes: 12.6 * GB, offloadable: null }), 'This Mac is almost full (12 GB free), and nothing can be moved off it until homemini answers.')
+    assert.equal(roomLine({ hold: false, freeBytes: 12 * GB, offloadable: 0 }), 'This Mac is almost full (12 GB free), and everything left on it is needed by an iPod or was just added or played.')
+    assert.equal(roomLine({ hold: false, freeBytes: 12 * GB, offloadable: 40 }), null, 'the offload can still make room')
+    assert.equal(roomLine({ hold: false, freeBytes: 12 * GB, offloadable: null }), null, 'not known yet: nothing claimed')
+    assert.equal(roomLine({ hold: false, freeBytes: 200 * GB, offloadable: 0 }), null)
+    assert.equal(roomLine({ hold: false, freeBytes: Number.NaN, offloadable: 0 }), null)
+  })
+
+  it('the wiring: the ready check carries the room line and the Device page shows it', async () => {
+    const { readFile } = await import('node:fs/promises')
+    const main = await readFile(new URL('../ipod-local-start.ts', import.meta.url), 'utf-8')
+    assert.match(main, /const room = roomLine\(\{ hold: gate\?\.kind === 'hold', freeBytes: free, offloadable \}\)/)
+    assert.match(main, /stoppedBecause, room \} \}/)
+    const index = await readFile(new URL('../index.ts', import.meta.url), 'utf-8')
+    assert.match(index, /ipodLocal\.sawOffloadable\(items\.filter\(\(it\) => !kept\(it\)\)\.length\)/)
+    const view = await readFile(new URL('../../renderer/views/DeviceView.tsx', import.meta.url), 'utf-8')
+    assert.match(view, /\{ready\?\.room && <span>\{ready\.room\}<\/span>\}/)
+  })
+})

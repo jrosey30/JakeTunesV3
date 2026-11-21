@@ -22,6 +22,8 @@ export interface ReadyOnMac {
   downloading: boolean
   /** Why the background download isn't getting them (plain words), or null. */
   stoppedBecause: string | null
+  /** One plain line about this Mac's room, or null (roomLine). Absent from an older main. */
+  room?: string | null
 }
 
 const n = (v: number): string => v.toLocaleString('en-US')
@@ -98,7 +100,36 @@ export function idsLeavingOff(planIds: readonly number[], r: Pick<ReadyOnMac, 'm
  *   • stuck: a song that could still be had didn't arrive after every try
  *     (homemini not answering, no room). One error line; nothing on the iPod changed.
  */
-export interface SyncFetchAnswer { landed: number[]; gone: number[]; failed: number[]; stopped: boolean }
+export interface SyncFetchAnswer { landed: number[]; gone: number[]; failed: number[]; stopped: boolean; reason?: string | null }
+
+/** A Sync's fetch stopped because this Mac has no room (main/ipod-sync-fetch.ts): no retries. */
+export const NO_ROOM_FOR_SYNC_LINE = 'Not enough room on this Mac for this iPod’s songs. Free up some space, then press Sync again.'
+
+/**
+ * Songs whose file on homemini isn't the file this Mac had (a re-tag changes the
+ * bytes too): not "gone", and not tried again, because trying can't help.
+ */
+export function notTheSameFileLine(count: number): string {
+  const one = count === 1
+  return `${songs(count)} on homemini ${one ? 'isn’t' : 'aren’t'} the same file this Mac had, so Sync can’t use ${one ? 'it' : 'them'} yet.`
+}
+
+/** Under this much free, the Device page says how full this Mac is. */
+export const ROOM_LOW_BYTES = 20 * 1024 ** 3
+
+/**
+ * The one line about this Mac's room on the Device page (review of #466: a hold or a
+ * full Mac was said only in main.log). `hold`: the iPod lists can't be read, so nothing
+ * is moved off this Mac. `offloadable`: songs the offload could still move now (null =
+ * not known yet). Null when there is nothing worth saying.
+ */
+export function roomLine(r: { hold: boolean; freeBytes: number; offloadable: number | null }): string | null {
+  const low = Number.isFinite(r.freeBytes) && r.freeBytes < ROOM_LOW_BYTES
+  const gb = Number.isFinite(r.freeBytes) ? Math.max(0, Math.floor(r.freeBytes / 1024 ** 3)) : null
+  if (r.hold) return low ? `This Mac is almost full (${gb} GB free), and nothing can be moved off it until homemini answers.` : 'Nothing is being moved off this Mac until homemini answers.'
+  if (low && r.offloadable === 0) return `This Mac is almost full (${gb} GB free), and everything left on it is needed by an iPod or was just added or played.`
+  return null
+}
 
 export type ListFetchOutcome =
   | { kind: 'go'; leftOff: number[] }
@@ -111,6 +142,7 @@ export function listFetchOutcome(
   asked: number,
 ): ListFetchOutcome {
   if (answer?.stopped) return { kind: 'stopped' }
+  if (answer?.reason && answer.failed.length > 0) return { kind: 'stuck', error: answer.reason }
   if (!answer) return { kind: 'stuck', error: `Can’t get ${songs(Math.max(1, asked))} right now. Try Sync again later.` }
   if (!after) return { kind: 'stuck', error: 'Couldn’t get ready to sync. Press Sync again.' }
   const gone = new Set(answer.gone)

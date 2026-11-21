@@ -191,6 +191,20 @@ describe('fetchResumable against a homemini-shaped server', () => {
     assert.match(String(await verifyFetched(part, { id: 1, colon: colon(1), bytes: 1, fingerprint: 'sha1:0000000000000000|1' })), /fingerprint/)
   })
 
+  // Review of #466: the part's writer had no 'error' listener, so a full disk (or any
+  // write failure) was an unhandled 'error' event and took the main process down.
+  it('a write that fails (full disk, anything) is a plain failure, never a crash', async () => {
+    const { mkdir } = await import('node:fs/promises')
+    const part = join(dir, 'e.part')
+    // Between the request and the write the part path becomes a directory: opening it to write fails.
+    const sabotage: typeof fetch = async (u, init) => { await mkdir(part, { recursive: true }); return fetch(u, init) }
+    const r = await fetchResumable({ url, partPath: part, fetchImpl: sabotage, shouldStop: () => false })
+    assert.equal(r.ok, false)
+    assert.match((r as { error: string }).error, /couldn’t write the download/)
+    assert.notEqual((r as { transport?: boolean }).transport, true, 'not homemini’s fault: not counted against it')
+    await rm(part, { recursive: true, force: true })
+  })
+
   it('homemini unreachable is a transport failure, nothing written', async () => {
     const part = join(dir, 'd.part')
     const r = await fetchResumable({ url: 'http://127.0.0.1:1/audio/1', partPath: part, fetchImpl: fetch, shouldStop: () => false })

@@ -8,6 +8,7 @@ import { execFile, execSync } from 'child_process'
 import { promisify } from 'util'
 import { remountUnmountArgSets } from './remount-unmount-args.ts'
 import { withFileWriteLock } from './audio-write-guard.ts'
+import { atBackgroundPriority } from './background-priority.ts'
 
 export { remountUnmountArgSets } from './remount-unmount-args.ts'
 
@@ -788,7 +789,9 @@ async function convertToIpodSafeAlac(src: string, dest: string, readTimeoutMs = 
     // up to 48kHz; only downsample if the source is higher-res.
     // readTimeoutMs is caller-scaled when the SOURCE is slow media (CD
     // rips read at ~realtime on a slow drive/disc — see convertAudio).
-    await execP('ffmpeg', [
+    // Both steps at background priority (background-priority.ts): this is the
+    // iPod sync's convert, and at normal priority it made Jake's music pop.
+    const [decodeCmd, decodeArgs] = atBackgroundPriority('ffmpeg', [
       '-y', '-i', src,
       '-map', '0:a:0',
       '-sample_fmt', 's16',
@@ -800,12 +803,14 @@ async function convertToIpodSafeAlac(src: string, dest: string, readTimeoutMs = 
       '-f', 'wav',
       '-loglevel', 'error',
       wavTmp,
-    ], { timeout: readTimeoutMs, maxBuffer: 64 * 1024 * 1024 })
+    ])
+    await execP(decodeCmd, decodeArgs, { timeout: readTimeoutMs, maxBuffer: 64 * 1024 * 1024 })
 
     // Step 2: afconvert → ALAC
-    await execP('afconvert', [
+    const [encodeCmd, encodeArgs] = atBackgroundPriority('afconvert', [
       '-f', 'm4af', '-d', 'alac', wavTmp, dest,
-    ], { timeout: 300000, maxBuffer: 64 * 1024 * 1024 })
+    ])
+    await execP(encodeCmd, encodeArgs, { timeout: 300000, maxBuffer: 64 * 1024 * 1024 })
   } finally {
     // Always clean up the WAV scratch file, even on failure.
     await unlink(wavTmp).catch(() => {})
