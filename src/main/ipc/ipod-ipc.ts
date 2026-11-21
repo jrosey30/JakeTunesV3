@@ -12,7 +12,7 @@ import { join } from 'path'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
-import { findIpodMount, isIpodMount, volumeNameFromMount, ejectVolume, IS_MAC } from '../platform.ts'
+import { findIpodMount, isIpodMount, volumeNameFromMount, ejectVolume, noteIpodEjectStarted, noteIpodEjectEnded, IS_MAC } from '../platform.ts'
 import { STATE_DIR } from '../state-dir.ts'
 import { identifyIpod, renameIpodMarker, loadIpodRegistry } from '../ipod-identity.ts'
 import { renameIpod, renameMacVolume, queueHomeminiName } from '../ipod-rename.ts'
@@ -159,7 +159,10 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
         host.setMount({ mount, volume })
       }
       if (!mount) return { ok: false, error: 'No iPod detected' }
-      await ejectVolume(mount)
+      // The sidebar poll's diskutil remount stays off during the eject and
+      // 10 s after it, or it would mount the iPod straight back.
+      noteIpodEjectStarted()
+      try { await ejectVolume(mount) } finally { noteIpodEjectEnded() }
       host.setMount({ mount: null, volume: null, missStreak: 0 })
       return { ok: true }
     } catch (err) {

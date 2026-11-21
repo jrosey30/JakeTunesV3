@@ -5,8 +5,11 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import {
-  createIpodDetector, IPOD_NEGATIVE_CACHE_MS, IPOD_DISKUTIL_EVERY_MS, type IpodDetectDeps,
+  createIpodDetector, IPOD_NEGATIVE_CACHE_MS, IPOD_DISKUTIL_EVERY_MS, IPOD_EJECT_QUIET_MS, type IpodDetectDeps,
 } from '../platform.ts'
+import { readFileSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { startVolumesWatch, type WatchFn } from '../volumes-watch.ts'
 
 function rig(over: Partial<IpodDetectDeps> = {}) {
@@ -75,10 +78,11 @@ describe('iPod detection — a hung network mount', () => {
     })
     state.mounts = ['/Volumes/Movies', '/Volumes/Macintosh HD']
     const t0 = Date.now()
-    assert.equal(await det.find(), null)
+    // The sidebar poll is the time-boxed caller.
+    assert.equal(await det.find({ remount: 'background' }), null)
     assert.ok(Date.now() - t0 < 500)
     advance(IPOD_NEGATIVE_CACHE_MS)
-    assert.equal(await det.find(), null)
+    assert.equal(await det.find({ remount: 'background' }), null)
     assert.equal(calls, 1, 'the stalled stat is reused, never a second one on the same share')
     assert.ok(state.logs.some((l) => l.includes('slow')))
   })
@@ -105,6 +109,79 @@ describe('iPod detection — diskutil fallback', () => {
   it('other callers still wait for it', async () => {
     const { det } = rig({ remount: async () => '/Volumes/JACOBROSENB' })
     assert.equal(await det.find(), '/Volumes/JACOBROSENB')
+  })
+})
+
+describe('iPod detection — only the sidebar poll is time-boxed', () => {
+  it('a waiting caller finds an iPod whose stat takes ~1 s, and a background poll in that window does not poison it', async () => {
+    let release!: (v: boolean) => void
+    let calls = 0
+    const { det, state } = rig({
+      isIpod: (m) => {
+        if (m !== '/Volumes/JACOBROSENB') return Promise.resolve(false)
+        calls++
+        return new Promise<boolean>((r) => { release = r })
+      },
+      checkBudgetMs: 30,
+    })
+    state.mounts = ['/Volumes/Macintosh HD', '/Volumes/JACOBROSENB']
+    const waiting = det.find()                           // sync / capacity / eject: waits
+    assert.equal(await det.find({ remount: 'background' }), null, 'the poll moves on after its budget')
+    assert.equal(det.negativeCacheUntil(), 0, 'a slow check never sets the negative cache')
+    setTimeout(() => release(true), 1_000)
+    assert.equal(await waiting, '/Volumes/JACOBROSENB')
+    assert.equal(calls, 1, 'the poll shared the waiting caller\'s check')
+  })
+
+  it('a waiting caller does not time out a slow volume into a miss', async () => {
+    const { det, state } = rig({
+      isIpod: (m) => new Promise<boolean>((r) => setTimeout(() => r(m === '/Volumes/JACOBROSENB'), 120)),
+      checkBudgetMs: 20,
+    })
+    state.mounts = ['/Volumes/JACOBROSENB']
+    assert.equal(await det.find(), '/Volumes/JACOBROSENB')
+  })
+})
+
+describe('iPod detection — a /Volumes change drops checks in flight', () => {
+  it('a stat hanging on a vanished volume cannot answer for a new one at the same path', async () => {
+    let calls = 0
+    const { det, state } = rig({
+      isIpod: (m) => {
+        if (m !== '/Volumes/JACOBROSENB') return Promise.resolve(false)
+        calls++
+        return calls === 1 ? never() : Promise.resolve(true)   // the old volume's stat hangs
+      },
+      checkBudgetMs: 30,
+    })
+    state.mounts = ['/Volumes/JACOBROSENB']
+    assert.equal(await det.find({ remount: 'background' }), null)
+    det.noteVolumesChanged()                                  // unplugged, a new iPod mounts there
+    assert.equal(await det.find({ remount: 'background' }), '/Volumes/JACOBROSENB')
+    assert.equal(calls, 2, 'a fresh stat, not the hung one')
+  })
+})
+
+describe('iPod detection — eject', () => {
+  it('the poll never remounts during an eject or for 10 s after one', async () => {
+    const { det, state, advance } = rig()
+    det.noteEjectStarted()
+    assert.equal(await det.find({ remount: 'background' }), null)
+    assert.equal(state.remounts, 0, 'not while the eject runs')
+    advance(IPOD_DISKUTIL_EVERY_MS)
+    det.noteEjectEnded()
+    advance(IPOD_NEGATIVE_CACHE_MS)
+    assert.equal(await det.find({ remount: 'background' }), null)
+    assert.equal(state.remounts, 0, 'not right after it')
+    advance(IPOD_EJECT_QUIET_MS)
+    await det.find({ remount: 'background' })
+    assert.equal(state.remounts, 1, 'back once the quiet window is over')
+  })
+
+  it('eject-ipod brackets the eject with the notes, ended in a finally', () => {
+    const here = dirname(fileURLToPath(import.meta.url))
+    const src = readFileSync(join(here, '..', 'ipc', 'ipod-ipc.ts'), 'utf-8')
+    assert.match(src, /noteIpodEjectStarted\(\)\s*\n\s*try \{ await ejectVolume\(mount\) \} finally \{ noteIpodEjectEnded\(\) \}/)
   })
 })
 

@@ -229,6 +229,8 @@ export const IPOD_FRESH_CHANGE_MS = 5_000
 export const IPOD_CHECK_BUDGET_MS = 500
 /** The diskutil remount fallback runs at most this often. */
 export const IPOD_DISKUTIL_EVERY_MS = 10_000
+/** The sidebar poll's background remount stays off this long after an eject ends. */
+export const IPOD_EJECT_QUIET_MS = 10_000
 /** A /Volumes change older than this is not the cause of a FOUND (no ms in the log line). */
 const IPOD_CHANGE_TIMING_WINDOW_MS = 60_000
 
@@ -245,6 +247,10 @@ export interface IpodDetectDeps {
 export interface IpodDetector {
   find: (opts?: { remount?: 'wait' | 'background' }) => Promise<string | null>
   noteVolumesChanged: () => void
+  /** An eject started: the poll's background remount must not mount the iPod back. */
+  noteEjectStarted: () => void
+  /** The eject ended (either way): the background remount stays off IPOD_EJECT_QUIET_MS more. */
+  noteEjectEnded: () => void
   /** Test/debug view of the cache state. */
   negativeCacheUntil: () => number
 }
@@ -266,16 +272,27 @@ export function createIpodDetector(deps: IpodDetectDeps): IpodDetector {
   let firstChangeAt = 0           // the first change of the current burst, for the FOUND timing
   let lastRemountAt = -Infinity
   let remountRun: Promise<string | null> | null = null
+  let ejectsInFlight = 0
+  let lastEjectEndedAt = -Infinity
+  // One check per mount at a time. Emptied on a /Volumes change, so a stat
+  // still hanging on a volume that went away can't answer for a new volume
+  // mounted at the same path.
   const inflight = new Map<string, Promise<boolean>>()
 
   const checkMount = (m: string): Promise<boolean> => {
     let p = inflight.get(m)
     if (!p) {
-      p = deps.isIpod(m).catch(() => false).finally(() => { inflight.delete(m) })
+      const mine: Promise<boolean> = deps.isIpod(m).catch(() => false).finally(() => {
+        if (inflight.get(m) === mine) inflight.delete(m)
+      })
+      p = mine
       inflight.set(m, p)
     }
     return p
   }
+
+  const ejectQuiet = (): boolean =>
+    ejectsInFlight > 0 || deps.now() - lastEjectEndedAt < IPOD_EJECT_QUIET_MS
 
   const found = (m: string, scanned: number): string => {
     negativeUntil = 0
@@ -303,14 +320,19 @@ export function createIpodDetector(deps: IpodDetectDeps): IpodDetector {
   const find = async (opts?: { remount?: 'wait' | 'background' }): Promise<string | null> => {
     if (deps.now() < negativeUntil) return null
     const mounts = await deps.listMounts().catch(() => [] as string[])
+    const background = opts?.remount === 'background'
     const results = new Map<string, boolean | 'slow'>()
-    // Every mount at once; the first iPod to answer wins. A volume that
-    // hasn't answered within the budget is left out of this pass.
+    // Every mount at once; the first iPod to answer wins. Only the sidebar
+    // poll is time-boxed: a volume that hasn't answered within the budget is
+    // left out of ITS pass. Every other caller (sync, activity, capacity,
+    // eject, cold start) waits for each check, as before Brief 264, so a
+    // slow spin-up is never read as "no iPod".
     const hit = await new Promise<string | null>((resolve) => {
       if (mounts.length === 0) { resolve(null); return }
       let pending = mounts.length
       for (const m of mounts) {
-        void within(checkMount(m), budget, 'slow' as const).then((r) => {
+        const check: Promise<boolean | 'slow'> = background ? within(checkMount(m), budget, 'slow' as const) : checkMount(m)
+        void check.then((r) => {
           results.set(m, r)
           if (r === true) resolve(m)
           if (--pending === 0) resolve(null)
@@ -319,7 +341,11 @@ export function createIpodDetector(deps: IpodDetectDeps): IpodDetector {
     })
     if (hit) return found(hit, mounts.length)
 
-    if (deps.now() - lastChangeAt >= IPOD_FRESH_CHANGE_MS) negativeUntil = deps.now() + IPOD_NEGATIVE_CACHE_MS
+    // A miss is cached only when every volume really answered: one that was
+    // merely slow may be the iPod spinning up, and caching that would blind
+    // the waiting callers too.
+    const anySlow = [...results.values()].some((r) => r === 'slow') || results.size < mounts.length
+    if (!anySlow && deps.now() - lastChangeAt >= IPOD_FRESH_CHANGE_MS) negativeUntil = deps.now() + IPOD_NEGATIVE_CACHE_MS
     const checks = mounts.map((m) => ({ mount: m, isIpod: results.get(m) ?? 'slow' }))
     const state = `none:${checks.map((c) => `${c.mount}${c.isIpod === 'slow' ? '(slow)' : ''}`).join(',')}`
     if (lastLogState !== state) {
@@ -329,9 +355,11 @@ export function createIpodDetector(deps: IpodDetectDeps): IpodDetector {
 
     // The iPod might be physically connected but unmounted (a safety-eject,
     // a reset): diskutil still lists it.
-    if (remountRun) return opts?.remount === 'background' ? null : remountRun
-    if (opts?.remount === 'background') {
-      if (deps.now() - lastRemountAt >= IPOD_DISKUTIL_EVERY_MS) void runRemount(mounts)
+    if (remountRun) return background ? null : remountRun
+    if (background) {
+      // Never during or just after an eject: the poll would mount the iPod
+      // Jake just ejected right back (diskutil eject leaves it listed).
+      if (!ejectQuiet() && deps.now() - lastRemountAt >= IPOD_DISKUTIL_EVERY_MS) void runRemount(mounts)
       return null
     }
     return runRemount(mounts)
@@ -342,9 +370,16 @@ export function createIpodDetector(deps: IpodDetectDeps): IpodDetector {
     if (!firstChangeAt || t - firstChangeAt > IPOD_CHANGE_TIMING_WINDOW_MS) firstChangeAt = t
     lastChangeAt = t
     negativeUntil = 0
+    inflight.clear()
   }
 
-  return { find, noteVolumesChanged, negativeCacheUntil: () => negativeUntil }
+  const noteEjectStarted = (): void => { ejectsInFlight++ }
+  const noteEjectEnded = (): void => {
+    ejectsInFlight = Math.max(0, ejectsInFlight - 1)
+    lastEjectEndedAt = deps.now()
+  }
+
+  return { find, noteVolumesChanged, noteEjectStarted, noteEjectEnded, negativeCacheUntil: () => negativeUntil }
 }
 
 /**
@@ -402,6 +437,10 @@ export function findIpodMount(opts?: { remount?: 'wait' | 'background' }): Promi
 export function noteVolumesChanged(): void {
   ipodDetector.noteVolumesChanged()
 }
+
+/** eject-ipod brackets its eject with these so the sidebar poll doesn't remount it. */
+export function noteIpodEjectStarted(): void { ipodDetector.noteEjectStarted() }
+export function noteIpodEjectEnded(): void { ipodDetector.noteEjectEnded() }
 
 /**
  * Eject a mounted volume. Cross-platform wrapper.
