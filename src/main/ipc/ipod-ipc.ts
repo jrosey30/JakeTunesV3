@@ -114,7 +114,8 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
       if ((host.isSyncInFlight?.() || renameInFlight) && state.mount) {
         return { mounted: true, name: state.volume }
       }
-      let mount = await findIpodMount()
+      // The poll never waits on the diskutil remount fallback (Brief 264).
+      let mount = await findIpodMount({ remount: 'background' })
       // findIpodMount scans /Volumes, which can transiently miss a flapping
       // fskit mount even while it's fully readable — re-stat the last-known
       // iTunesDB directly before believing it's gone.

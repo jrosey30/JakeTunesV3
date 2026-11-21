@@ -121,6 +121,7 @@ import {
   nativeThumbJpegDownOnly,
 } from './artwork-engine.ts'; import { createAlbumArtServer, pregenerateThumbs } from './album-art-serve.ts'
 import { registerIpodIpc } from './ipc/ipod-ipc.ts'
+import { startVolumesWatch, type VolumesWatch } from './volumes-watch.ts'
 import { registerSyncIpc, type SyncConvertOptions } from './ipc/sync-ipc.ts'
 import { createSyncEngine, type VerifyTrackInput, type VerifyTrackUpdate } from './sync-engine/index.ts'
 import { createDevicePlaylists } from './ipod-device-playlists-run.ts'
@@ -255,6 +256,7 @@ import {
   listMountPoints,
   volumeNameFromMount,
   findIpodMount,
+  noteVolumesChanged,
   isIpodMount,
   ejectVolume,
   remountVolume,
@@ -1140,6 +1142,19 @@ const sidebarOrderPublisher = createSidebarOrderPublisher({
   warn: (m) => quietWarn('sidebar-order', m),
 })
 registerUiStateIpc(ipc, { onSidebarOrder: (raw) => { void sidebarOrderPublisher.publish(raw) } })
+// Brief 264: a plugged-in iPod is seen the moment macOS mounts it. /Volumes
+// changing drops the detector's negative cache at once and, once the burst
+// settles (~300 ms), asks the sidebar to check now; its 2.5 s poll stays as
+// the backup, and carries on alone if the watcher can't run.
+let volumesWatch: VolumesWatch | null = null
+if (IS_MAC) {
+  void app.whenReady().then(() => {
+    volumesWatch = startVolumesWatch({
+      onRawChange: noteVolumesChanged,
+      onSettled: () => sendToRenderer('ipod-volumes-changed'),
+    })
+  })
+}
 void app.whenReady().then(() => setTimeout(() => {
   void readSavedSidebarOrder().then((raw) => { if (raw !== null) void sidebarOrderPublisher.publish(raw) })
 }, 20_000))
@@ -10919,6 +10934,8 @@ let downloadQueueStore: DownloadQueueStore | null = null
 let sidecarFlush: Promise<unknown> = Promise.resolve()
 app.on('before-quit', (e) => {
   unregisterMediaKeyShortcuts()
+  volumesWatch?.close()
+  volumesWatch = null
   void stopInboxWatcher().catch(() => { /* shutting down, ignore */ })
   if (quitDeferralStarted) return
   quitDeferralStarted = true

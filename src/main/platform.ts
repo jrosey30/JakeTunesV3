@@ -126,7 +126,7 @@ const NETWORK_FS_RE = /\b(smbfs|afpfs|nfs|webdav|autofs|ftp)\b/i
 
 async function macNetworkMountSet(): Promise<Set<string>> {
   try {
-    const { stdout } = await execP('mount', [])
+    const { stdout } = await execP('mount', [], { timeout: 3000 })
     const netMounts = new Set<string>()
     for (const line of stdout.split('\n')) {
       // "//jake@ds225/JakeShared on /Volumes/JakeShared (smbfs, nodev, ...)"
@@ -202,84 +202,205 @@ export async function isIpodMount(mountPoint: string): Promise<boolean> {
 /**
  * Find the first mounted iPod on the system, or null if none is connected.
  * Returns the mount point (full path), not just the volume name.
- * 4.5: diagnostic logging — every check logs the mount list and the
- * iTunesDB stat results so a "iPod plugged in but not appearing" bug
- * is debuggable from a single dev-console open instead of needing
- * fresh instrumentation each time.
+ * 4.5: diagnostic logging — the result is logged on STATE CHANGES so a
+ * "iPod plugged in but not appearing" bug is debuggable from one console.
+ *
+ * Brief 264 (2026-11-20, "iPods are recognised too slowly"): a miss used to
+ * blind the check for 10 s (answer null without looking) and then wait on a
+ * `diskutil list` + `diskutil mount` pass, so a freshly plugged iPod could sit
+ * unseen for 10 s plus macOS's own mount time. Now:
+ *   - main watches /Volumes (volumes-watch.ts) and calls noteVolumesChanged(),
+ *     which drops the negative cache, and a miss within 5 s of a change never
+ *     sets it (the iPod may still be mid-mount);
+ *   - the negative cache is 2 s;
+ *   - every mount is checked at once and each check is time-boxed (500 ms):
+ *     the first iPod found wins, and a stalled volume (a sleeping network
+ *     share the mount table didn't name) only costs itself, never the answer.
+ *     A check still running is reused, never stacked, so a hung share can't
+ *     fill the fs threadpool;
+ *   - the diskutil remount fallback runs at most once every 10 s, and the
+ *     sidebar poll (`{ remount: 'background' }`) never waits on it: if it
+ *     mounts an iPod, /Volumes changes and the watcher brings the check back.
  */
-// The renderer's hotplug poll calls this every ~2.5s. A short negative
-// cache keeps the steady state (no iPod, none appearing) at zero fs work
-// most ticks, and the result log fires on STATE CHANGES only — 104
-// identical "NO iPod found" lines in 4 minutes buried every real signal
-// in the console (observed 2026-07-08 while hunting the beachball).
-let ipodNegativeCacheUntil = 0
-let lastIpodLogState: string | null = null
+export const IPOD_NEGATIVE_CACHE_MS = 2_000
+/** A miss this soon after a /Volumes change does not set the negative cache. */
+export const IPOD_FRESH_CHANGE_MS = 5_000
+/** One volume's iPod check may take this long before this pass moves on without it. */
+export const IPOD_CHECK_BUDGET_MS = 500
+/** The diskutil remount fallback runs at most this often. */
+export const IPOD_DISKUTIL_EVERY_MS = 10_000
+/** A /Volumes change older than this is not the cause of a FOUND (no ms in the log line). */
+const IPOD_CHANGE_TIMING_WINDOW_MS = 60_000
 
-export async function findIpodMount(): Promise<string | null> {
-  if (Date.now() < ipodNegativeCacheUntil) return null
-  const mounts = await listMountPoints()
-  const checks: { mount: string; isIpod: boolean }[] = []
-  for (const m of mounts) {
-    const hit = await isIpodMount(m)
-    checks.push({ mount: m, isIpod: hit })
-    if (hit) {
-      ipodNegativeCacheUntil = 0
-      if (lastIpodLogState !== `found:${m}`) {
-        lastIpodLogState = `found:${m}`
-        console.log('[ipod-detect] FOUND iPod at', m, '— mounts scanned:', mounts.length)
-      }
+export interface IpodDetectDeps {
+  listMounts: () => Promise<string[]>
+  isIpod: (mount: string) => Promise<boolean>
+  /** The macOS remount fallback: mounts an unmounted external HFS volume if it is an iPod. */
+  remount: (mounts: string[]) => Promise<string | null>
+  now: () => number
+  log: (...args: unknown[]) => void
+  checkBudgetMs?: number
+}
+
+export interface IpodDetector {
+  find: (opts?: { remount?: 'wait' | 'background' }) => Promise<string | null>
+  noteVolumesChanged: () => void
+  /** Test/debug view of the cache state. */
+  negativeCacheUntil: () => number
+}
+
+/** Resolves to the promise's value, or `timedOut` once `ms` pass first. The promise itself keeps running. */
+function within<T, U>(p: Promise<T>, ms: number, timedOut: U): Promise<T | U> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    p,
+    new Promise<U>((resolve) => { timer = setTimeout(() => resolve(timedOut), ms) }),
+  ]).finally(() => { if (timer) clearTimeout(timer) })
+}
+
+export function createIpodDetector(deps: IpodDetectDeps): IpodDetector {
+  const budget = deps.checkBudgetMs ?? IPOD_CHECK_BUDGET_MS
+  let negativeUntil = 0
+  let lastLogState: string | null = null
+  let lastChangeAt = 0            // the latest /Volumes change
+  let firstChangeAt = 0           // the first change of the current burst, for the FOUND timing
+  let lastRemountAt = -Infinity
+  let remountRun: Promise<string | null> | null = null
+  const inflight = new Map<string, Promise<boolean>>()
+
+  const checkMount = (m: string): Promise<boolean> => {
+    let p = inflight.get(m)
+    if (!p) {
+      p = deps.isIpod(m).catch(() => false).finally(() => { inflight.delete(m) })
+      inflight.set(m, p)
+    }
+    return p
+  }
+
+  const found = (m: string, scanned: number): string => {
+    negativeUntil = 0
+    if (lastLogState !== `found:${m}`) {
+      lastLogState = `found:${m}`
+      const since = firstChangeAt && deps.now() - firstChangeAt <= IPOD_CHANGE_TIMING_WINDOW_MS
+        ? ` — ${deps.now() - firstChangeAt} ms after /Volumes changed`
+        : ''
+      deps.log(`[ipod-detect] FOUND iPod at ${m}${since} — mounts scanned: ${scanned}`)
+    }
+    firstChangeAt = 0
+    return m
+  }
+
+  const runRemount = (mounts: string[]): Promise<string | null> => {
+    if (remountRun) return remountRun
+    lastRemountAt = deps.now()
+    remountRun = deps.remount(mounts).catch(() => null).then((m) => {
+      if (m) found(m, mounts.length)
       return m
-    }
-  }
-  // No match. Dump what we saw — a typical "I plugged it in!" report
-  // is either (a) mount missing entirely from /Volumes (macOS didn't
-  // mount it), or (b) mount present but no iPod_Control/iTunes/iTunesDB
-  // (uninitialized iPod, or wrong device).
-  ipodNegativeCacheUntil = Date.now() + 10_000
-  const state = `none:${checks.map((c) => c.mount).join(',')}`
-  if (lastIpodLogState !== state) {
-    lastIpodLogState = state
-    console.log('[ipod-detect] NO iPod found. Checked:', JSON.stringify(checks))
+    }).finally(() => { remountRun = null })
+    return remountRun
   }
 
-  // macOS-only fallback: the iPod might be physically connected but
-  // unmounted (e.g. previous sync triggered a safety-eject, or the
-  // device was reset). `diskutil list -plist external` will still
-  // show it as a physical disk. If any external HFS partition is
-  // found that isn't currently mounted, try to mount it and see if
-  // it turns out to be an iPod.
-  if (IS_MAC) {
-    try {
-      const { stdout } = await execP('diskutil', ['list', '-plist', 'external'])
-      // Cheap regex parse: look for disk identifiers followed by HFS
-      // partitions. We don't need a full plist parser for this.
-      const matches = stdout.matchAll(/<key>DeviceIdentifier<\/key>\s*<string>(disk\d+s\d+)<\/string>[\s\S]*?<key>Content<\/key>\s*<string>Apple_HFS<\/string>/g)
-      for (const m of matches) {
-        const id = m[1]
-        // Skip partitions that are already mounted.
-        if (mounts.some(mp => mp.includes(id))) continue
-        try {
-          const { stdout: mountOut } = await execP('diskutil', ['mount', id], { timeout: 15000 })
-          const mm = mountOut.match(/on (\/Volumes\/[^\s]+)/)
-          const mountedAt = mm ? mm[1] : null
-          if (mountedAt && await isIpodMount(mountedAt)) {
-            // Success on the remount path must clear the negative cache
-            // set above, or the next poll would report null for 10s
-            // while the iPod is sitting there mounted.
-            ipodNegativeCacheUntil = 0
-            lastIpodLogState = `found:${mountedAt}`
-            return mountedAt
-          }
-        } catch {
-          /* not mountable or not an iPod — skip */
-        }
+  const find = async (opts?: { remount?: 'wait' | 'background' }): Promise<string | null> => {
+    if (deps.now() < negativeUntil) return null
+    const mounts = await deps.listMounts().catch(() => [] as string[])
+    const results = new Map<string, boolean | 'slow'>()
+    // Every mount at once; the first iPod to answer wins. A volume that
+    // hasn't answered within the budget is left out of this pass.
+    const hit = await new Promise<string | null>((resolve) => {
+      if (mounts.length === 0) { resolve(null); return }
+      let pending = mounts.length
+      for (const m of mounts) {
+        void within(checkMount(m), budget, 'slow' as const).then((r) => {
+          results.set(m, r)
+          if (r === true) resolve(m)
+          if (--pending === 0) resolve(null)
+        })
       }
-    } catch {
-      /* diskutil not available or query failed — give up */
+    })
+    if (hit) return found(hit, mounts.length)
+
+    if (deps.now() - lastChangeAt >= IPOD_FRESH_CHANGE_MS) negativeUntil = deps.now() + IPOD_NEGATIVE_CACHE_MS
+    const checks = mounts.map((m) => ({ mount: m, isIpod: results.get(m) ?? 'slow' }))
+    const state = `none:${checks.map((c) => `${c.mount}${c.isIpod === 'slow' ? '(slow)' : ''}`).join(',')}`
+    if (lastLogState !== state) {
+      lastLogState = state
+      deps.log('[ipod-detect] NO iPod found. Checked:', JSON.stringify(checks))
     }
+
+    // The iPod might be physically connected but unmounted (a safety-eject,
+    // a reset): diskutil still lists it.
+    if (remountRun) return opts?.remount === 'background' ? null : remountRun
+    if (opts?.remount === 'background') {
+      if (deps.now() - lastRemountAt >= IPOD_DISKUTIL_EVERY_MS) void runRemount(mounts)
+      return null
+    }
+    return runRemount(mounts)
   }
 
+  const noteVolumesChanged = (): void => {
+    const t = deps.now()
+    if (!firstChangeAt || t - firstChangeAt > IPOD_CHANGE_TIMING_WINDOW_MS) firstChangeAt = t
+    lastChangeAt = t
+    negativeUntil = 0
+  }
+
+  return { find, noteVolumesChanged, negativeCacheUntil: () => negativeUntil }
+}
+
+/**
+ * macOS-only fallback: the iPod might be physically connected but
+ * unmounted (e.g. previous sync triggered a safety-eject, or the
+ * device was reset). `diskutil list -plist external` will still
+ * show it as a physical disk. If any external HFS partition is
+ * found that isn't currently mounted, try to mount it and see if
+ * it turns out to be an iPod.
+ */
+async function diskutilRemountIpod(mounts: string[]): Promise<string | null> {
+  if (!IS_MAC) return null
+  try {
+    const { stdout } = await execP('diskutil', ['list', '-plist', 'external'], { timeout: 10000 })
+    // Cheap regex parse: look for disk identifiers followed by HFS
+    // partitions. We don't need a full plist parser for this.
+    const matches = stdout.matchAll(/<key>DeviceIdentifier<\/key>\s*<string>(disk\d+s\d+)<\/string>[\s\S]*?<key>Content<\/key>\s*<string>Apple_HFS<\/string>/g)
+    for (const m of matches) {
+      const id = m[1]
+      // Skip partitions that are already mounted.
+      if (mounts.some(mp => mp.includes(id))) continue
+      try {
+        const { stdout: mountOut } = await execP('diskutil', ['mount', id], { timeout: 15000 })
+        const mm = mountOut.match(/on (\/Volumes\/[^\s]+)/)
+        const mountedAt = mm ? mm[1] : null
+        if (mountedAt && await isIpodMount(mountedAt)) return mountedAt
+      } catch {
+        /* not mountable or not an iPod — skip */
+      }
+    }
+  } catch {
+    /* diskutil not available or query failed — give up */
+  }
   return null
+}
+
+const ipodDetector = createIpodDetector({
+  listMounts: listMountPoints,
+  isIpod: isIpodMount,
+  remount: diskutilRemountIpod,
+  now: () => Date.now(),
+  log: (...args) => console.log(...args),
+})
+
+/**
+ * The sidebar poll passes `{ remount: 'background' }` so it never waits on
+ * diskutil; every other caller (sync recovery, eject, capacity) keeps the old
+ * behaviour of waiting for the remount fallback.
+ */
+export function findIpodMount(opts?: { remount?: 'wait' | 'background' }): Promise<string | null> {
+  return ipodDetector.find(opts)
+}
+
+/** /Volumes changed (volumes-watch.ts): look again at once, and don't cache a miss mid-mount. */
+export function noteVolumesChanged(): void {
+  ipodDetector.noteVolumesChanged()
 }
 
 /**
