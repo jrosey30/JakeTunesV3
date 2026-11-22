@@ -23,6 +23,19 @@ across two different probes — any probe whose `answer` prose quotes a track
 title can fire it. Option (a) below fixes the whole class, and both captured
 excerpts confirm the model's underlying behavior was correct each time.
 
+**2026-11-22 update — a THIRD probe joined the class after a 28-night quiet
+stretch.** `v3-grd-05` ("Which Van Halen tracks do I have?", a normal probe)
+scored 0 as `unparseable (reply was not JSON)` on run `B3-20261122`. The
+raw_excerpt shows the same mechanical signature: a correct reply — valid JSON
+citing 5 tracks (Little Guitars / Spanish Fly / Everybody Wants Some!! /
+Summer Nights / On Fire) — wrapped in ```json fences. All 5 verified REAL and
+on-predicate against library.json (106 Van Halen tracks) the same night, so
+grd-05 would have scored 1 under option (a). That makes 5 flake nights
+(10-14, 10-18, 10-22, 10-24, 11-22) across three different probes, and
+re-confirms the flake is stochastic formatting, not drift: 28 clean nights,
+then an ordinary artist question fired it. Nightly grounding read 0.900
+instead of the true 0.950 (grd-15 trap only).
+
 ## What PR #194's raw_excerpt capture revealed (2026-10-22)
 
 The model's behavior was CORRECT — it cited zero tracks and refused the
