@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { IPOD_COLORS } from '../../common/ipod-covers'
 import type { IpodSetupLook, OnboardingCheck } from '../../common/ipod-onboarding'
+import { IpodModelChoices } from './IpodArtworkAsk'
 
 type Look = Extract<IpodSetupLook, { ok: true }>
 /** Notes from "Set up this iPod", shown once by the strip that follows it. */
@@ -184,6 +185,21 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
         <>
           <span className="ipod-id-note ipod-id-note--strong">{step.line}</span>
           <Checks checks={step.checks} />
+          {step.checks.some((c) => c.id === 'covers' && c.status === 'stop') && (
+            // "Which iPod is this?" for album covers, answered before the first sync (2026-11-23).
+            <span className="ipod-id-note" role="group" aria-label="Which iPod is this?">
+              <IpodModelChoices
+                disabled={!!busy}
+                onPick={(family) => {
+                  void run('Checking…', async () => {
+                    const r = await window.electronAPI.ipodSetupCovers?.({ family })
+                    if (!r?.ok) { setError(r?.error ?? 'Couldn’t save that. Try again.'); return }
+                    await settle()
+                  })
+                }}
+              />
+            </span>
+          )}
           <div className="ipod-id-actions">
             <button type="button" className="device-itunes-btn" disabled={!!busy} onClick={() => { void run('Checking…', () => settle({ recheck: true })) }}>Check again</button>
           </div>

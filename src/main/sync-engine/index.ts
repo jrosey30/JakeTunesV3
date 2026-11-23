@@ -29,7 +29,8 @@ import type { IpodModel } from '../../common/ipod-covers.ts'
 import type { SyncConvertOptions } from '../ipc/sync-ipc.ts'
 import { bindActivityReplacements, runActivitySync } from '../ipod-activity-engine.ts'
 import { ensureContiguousDb } from '../ipod-db-contiguity.ts'
-import { clearLocalArtwork, installArtworkOnIpod, prepareArtworkArgs } from '../ipod-artwork.ts'
+import { artworkFamilyByUsb, clearLocalArtwork, installArtworkOnIpod, prepareArtworkArgs } from '../ipod-artwork.ts'
+import { realIpodSetupSystem } from '../ipod-onboarding-system.ts'
 import { resolveArtworkFile } from '../artwork-engine.ts'
 import { orderForIpodCatalog, conformCatalogIdOrder } from '../ipod-catalog-order.ts'
 import {
@@ -437,6 +438,7 @@ export function createSyncEngine(host: SyncEngineHost) {
         // A list-only iPod gets no library loader at all — its set is its list.
         loadReplacementTracks: listOnlyIpod ? undefined : bindActivityReplacements(getLibraryTracks, getConcertOwnedTrackIds),
         resolveArtworkFile,
+        artworkFamilyByUsb: () => { const m = host.getMount(); return m ? artworkFamilyByUsb(m, realIpodSetupSystem.usb) : Promise.resolve(null) },
       }, { tracks, playlists, convertOptions, listOnly: listOnlyIpod, ipodName, ipodModel })
     }
     if (syncOpts?.wipeFirst) {
@@ -1729,8 +1731,11 @@ export function createSyncEngine(host: SyncEngineHost) {
     // db_reader builds ArtworkDB + .ithmb here on the Mac for a colour iPod
     // only (core/ipod_artwork.py), and leaves this folder empty for a mini.
     const localArt = join(app.getPath('temp'), `jaketunes-artwork-${process.pid}`)
+    // This iPod's own state folder, as the activity engine passes it: its thumbnail cache and the
+    // model remembered for it (a list iPod syncs here too, so a colour one did get no covers).
     const artArgs = await prepareArtworkArgs(tracks, resolveArtworkFile, localArt,
-      (line) => console.log(`sync-to-ipod: ${line}`))
+      (line) => console.log(`sync-to-ipod: ${line}`),
+      { ipodStateDir: syncStateDir, usbFamily: () => artworkFamilyByUsb(IPOD_MOUNT, realIpodSetupSystem.usb) })
     return await new Promise((resolve) => {
       const input = JSON.stringify({ tracks, playlists, masterName: ipodName })
       const py = spawn(PYTHON_CMD ?? 'python3', [

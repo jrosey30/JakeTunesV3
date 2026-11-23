@@ -14,7 +14,8 @@ import { tmpdir } from 'os'
 import { dirname, join, resolve } from 'path'
 import { registerIpodOnboardingIpc, type IpodOnboardingHost } from '../ipc/ipod-onboarding-ipc.ts'
 import type { IpcRegistrar } from '../ipc-register.ts'
-import { identifyIpod, registerIpod, resolveIpodState, setIpodSyncHealthGate } from '../ipod-identity.ts'
+import { identifyIpod, ipodStateDirFor, registerIpod, resolveIpodState, setIpodSyncHealthGate } from '../ipod-identity.ts'
+import { rememberedArtworkFamily } from '../ipod-artwork.ts'
 import { CARD_TEST_DIR, readOnboardingRecords } from '../ipod-onboarding.ts'
 import { buildBlankCatalog } from '../ipod-blank-catalog.ts'
 import { driveIdFromDiskutil } from '../ipod-onboarding-system.ts'
@@ -57,7 +58,7 @@ async function snapshot(dir: string): Promise<Record<string, number>> {
 }
 
 /** The handlers, registered for real, with the Mac's answers supplied here. */
-async function rig(over: { replica?: () => Promise<boolean> } = {}) {
+async function rig(over: { replica?: () => Promise<boolean>; artworkModelsFile?: string } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'jt-ipod-ipc-'))
   const mount = join(root, 'IPOD')
   const stateDir = join(root, 'state')
@@ -77,6 +78,7 @@ async function rig(over: { replica?: () => Promise<boolean> } = {}) {
     libraryTracks: async () => [1, 2, 3, 4, 5].map((id) => ({ id, fileSize: 30_000_000 })),
     isReplica: over.replica ?? (async () => false),
     sleep: async () => undefined,
+    ...(over.artworkModelsFile ? { artworkModelsFile: over.artworkModelsFile } : {}),
     system: {
       mountTable: async () => (state.noTable ? '' : `/dev/disk9s2 on ${mount} (${drive.fs}, local, nodev)\n`),
       driveId: async () => {
@@ -622,5 +624,67 @@ describe('finding 6: the test folder', () => {
     const l = await t.pick(EIGHTIES)
     assert.equal(l.step.step, 'prepare')
     assert.equal(await stat(join(t.mount, CARD_TEST_DIR)).then(() => true, () => false), false)
+  })
+})
+
+// 2026-11-23: Indie Sleaze (a nano with a 0-byte SysInfo) was set up and synced with no covers,
+// and the only place to say which iPod it was showed up after that sync.
+describe('album covers: which iPod, before the first sync', () => {
+  const MODELS = join(CORE, 'ipod_artwork_models.json')
+  const blankSysInfo = (mount: string) => writeFile(join(mount, 'iPod_Control', 'Device', 'SysInfo'), '')
+
+  test('nothing names it: set-up stops on "Which iPod is this?"; the answer lets it go on and is kept with the iPod', async () => {
+    const t = await rig({ artworkModelsFile: MODELS })
+    await blankSysInfo(t.mount)
+    t.drive.usb = { vendor: 'Apple Inc.', productId: 0x1262, serial: '000A2700AAAA0002' }
+    const stopped = await t.pick(EIGHTIES)
+    assert.equal(stopped.step.step, 'checks', JSON.stringify(stopped.step))
+    assert.equal(stopped.step.step === 'checks' && stopped.step.blocked, true)
+    assert.ok(stopped.step.step === 'checks' && stopped.step.checks.some((c) => c.id === 'covers' && c.status === 'stop' && c.line === 'Which iPod is this?'))
+    const early = await t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false })
+    assert.equal(early.ok, false, 'no set-up while the question is open')
+    assert.equal((await t.call('ipod-setup:covers', { family: 'zune' })).ok, false, 'only a family the table knows')
+    const answered = await t.call('ipod-setup:covers', { family: 'nano-2g' })
+    assert.equal(answered.ok, true, String(answered.error))
+    assert.equal((await t.pick(EIGHTIES)).step.step, 'prepare')
+    const done = await t.call<{ ok: boolean; error?: string; device: { id: string } }>('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false })
+    assert.equal(done.ok, true, String(done.error))
+    const id = await identifyIpod(t.mount, t.stateDir)
+    assert.ok(id.status === 'known')
+    assert.equal(await rememberedArtworkFamily(ipodStateDirFor(t.stateDir, id.status === 'known' ? id.device : null)), 'nano-2g')
+  })
+
+  test('"No colour screen" is an answer', async () => {
+    const t = await rig({ artworkModelsFile: MODELS })
+    await blankSysInfo(t.mount)
+    t.drive.usb = { vendor: 'Apple Inc.', productId: 0x1202, serial: '000A2700AAAA0003' }
+    assert.equal((await t.pick(EIGHTIES)).step.step, 'checks')
+    assert.equal((await t.call('ipod-setup:covers', { family: 'none' })).ok, true)
+    assert.equal((await t.pick(EIGHTIES)).step.step, 'prepare')
+  })
+
+  test('the answer belongs to the drive it was given for: another iPod at the same path is asked again', async () => {
+    const t = await rig({ artworkModelsFile: MODELS })
+    await blankSysInfo(t.mount)
+    t.drive.usb = { vendor: 'Apple Inc.', productId: 0x1262, serial: '000A2700AAAA0004' }
+    await t.pick(EIGHTIES)
+    assert.equal((await t.call('ipod-setup:covers', { family: 'video' })).ok, true)
+    await t.swapCard('BBBB2222-0000-0000-0000-000000000002|249500000000', '000A2700AAAA0005')
+    await blankSysInfo(t.mount)
+    t.drive.usb = { vendor: 'Apple Inc.', productId: 0x1262, serial: '000A2700AAAA0005' }
+    const again = await t.pick(EIGHTIES)
+    assert.ok(again.step.step === 'checks' && again.step.checks.some((c) => c.id === 'covers' && c.status === 'stop'))
+  })
+
+  test('known by its USB id (Jake’s nano, 0x1260): no question, and set-up remembers the family', async () => {
+    const t = await rig({ artworkModelsFile: MODELS })
+    await blankSysInfo(t.mount)
+    t.drive.usb = { vendor: 'Apple Inc.', productId: 0x1260, serial: '000A2700AAAA0006' }
+    const picked = await t.pick(EIGHTIES)
+    assert.equal(picked.step.step, 'prepare', JSON.stringify(picked.step))
+    const done = await t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false })
+    assert.equal(done.ok, true, String(done.error))
+    const id = await identifyIpod(t.mount, t.stateDir)
+    assert.equal(await rememberedArtworkFamily(ipodStateDirFor(t.stateDir, id.status === 'known' ? id.device : null)), 'nano-2g')
   })
 })

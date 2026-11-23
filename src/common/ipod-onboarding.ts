@@ -24,7 +24,11 @@ import type { IpodModel } from './ipod-covers.ts'
 
 // ── What kind of iPod ────────────────────────────────────────────────────────
 
-export type IpodHardware = 'mini-1g' | 'mini-2g' | 'mini' | '3g' | '4g' | 'classic' | 'other' | 'unknown'
+export type IpodHardware =
+  | 'mini-1g' | 'mini-2g' | 'mini' | '3g' | '4g' | 'classic'
+  // The colour iPods the album-cover table knows (core/ipod_artwork_models.json), 2026-11-23.
+  | 'photo' | 'video' | 'nano-1g' | 'nano-2g'
+  | 'other' | 'unknown'
 
 /** iPod_Control/Device/SysInfo, the fields this needs. Every one may be missing. */
 export interface IpodSysInfo {
@@ -102,10 +106,24 @@ const MODEL_NUMBERS: ReadonlyArray<[RegExp, IpodHardware]> = [
   [/^(9268|9282|9787)/, '4g'],
   [/^(B029|B147|B145|B150|B562|B565|C293|C297)/i, 'classic'],
 ]
-// USB product ids (Apple, vendor 0x05ac) for the disk-mode device.
+// USB product ids (Apple, vendor 0x05ac) for the disk-mode device. Each id is in the
+// linux-usb.org usb.ids database (version 2026.06.26, vendor 05ac): 1201 "3G iPod",
+// 1203 "iPod 4.Gen Grayscale 40G", 1204 "iPod [Photo]", 1205 "iPod Mini 1.Gen/2.Gen",
+// 1209 "iPod Video", 120a "iPod Nano", 1260 "iPod Nano 2.Gen", 1261 "iPod Classic".
+// The colour ones are also each model's USB_PRODUCT_ID in Rockbox's
+// firmware/export/config/ipod{color,video,nano1g,nano2g}.h. 0x1260 was measured on
+// Jake's "Indie Sleaze" nano (ioreg idProduct 4704, 2026-11-23), whose SysInfo was empty:
+// before this the app couldn't tell it was a nano and its first sync wrote no covers.
+// 0x1204 is the iPod photo and the iPod with colour display (one family in the cover table).
 const USB_PRODUCTS: ReadonlyMap<number, IpodHardware> = new Map([
-  [0x1201, '3g'], [0x1203, '4g'], [0x1205, 'mini'], [0x1261, 'classic'],
+  [0x1201, '3g'], [0x1203, '4g'], [0x1204, 'photo'], [0x1205, 'mini'],
+  [0x1209, 'video'], [0x120a, 'nano-1g'], [0x1260, 'nano-2g'], [0x1261, 'classic'],
 ])
+
+/** The hardware a USB product id names, or null for an id this file doesn't know. */
+export function hardwareForUsb(productId: number | null | undefined): IpodHardware | null {
+  return productId != null ? USB_PRODUCTS.get(productId) ?? null : null
+}
 
 export interface IpodUsbFacts { vendor: string | null; productId: number | null; serial: string | null }
 
@@ -130,6 +148,10 @@ export function hardwareName(hw: IpodHardware): string {
     case '3g': return 'iPod (3rd generation)'
     case '4g': return 'iPod (4th generation)'
     case 'classic': return 'iPod Classic'
+    case 'photo': return 'iPod photo'
+    case 'video': return 'iPod Video'
+    case 'nano-1g': return 'iPod nano (1st generation)'
+    case 'nano-2g': return 'iPod nano (2nd generation)'
     case 'other': return 'a kind of iPod JakeTunes hasn’t synced before'
     case 'unknown': return 'an unknown iPod'
   }
@@ -143,8 +165,41 @@ export function coverModelFor(hw: IpodHardware): IpodModel | null {
   return null
 }
 
+/**
+ * The album-cover family (core/ipod_artwork_models.json `family`) for this hardware: a colour
+ * family, 'none' for an iPod with no colour screen, or null when this file can't say (the
+ * Classic, which the cover table doesn't know; 'other'; 'unknown'). core/ipod_artwork.py still
+ * reads SysInfo first; this answers only when the iPod itself names nothing.
+ */
+export function artworkFamilyFor(hw: IpodHardware): string | null {
+  switch (hw) {
+    case 'photo': case 'video': case 'nano-1g': case 'nano-2g': return hw
+    case 'mini': case 'mini-1g': case 'mini-2g': case '3g': case '4g': return 'none'
+    default: return null
+  }
+}
+/** Every colour family artworkFamilyFor can answer (the test holds them to the cover table). */
+export const ARTWORK_FAMILIES_BY_HARDWARE: readonly string[] = ['photo', 'video', 'nano-1g', 'nano-2g']
+
+/**
+ * Must Jake say which iPod this is before its first sync? Only when nothing else will: the
+ * hardware gives no cover family, SysInfo names no model (core/ipod_artwork.py decides from it
+ * when it does, covers or none), nothing is remembered or answered, and it isn't the Classic
+ * (stopped by its own check). Jake, 2026-11-23, after a nano's first sync wrote no covers:
+ * "thats the whole point of the ipod set up. to prevent things like this!!"
+ */
+export function needsArtworkAnswer(facts: Pick<IpodDeviceFacts, 'sysInfo' | 'usb' | 'artworkFamily'>): boolean {
+  if (facts.artworkFamily) return false
+  if (facts.sysInfo?.modelNumStr?.trim()) return false
+  const hw = detectHardware(facts.sysInfo, facts.usb)
+  if (hw === 'classic') return false
+  return artworkFamilyFor(hw) === null
+}
+
 /** The biggest disk Apple shipped in it. Anything well past that is a modded card. */
-const STOCK_MAX_GB: Partial<Record<IpodHardware, number>> = { 'mini-1g': 4, 'mini-2g': 6, mini: 6, '3g': 40, '4g': 60 }
+const STOCK_MAX_GB: Partial<Record<IpodHardware, number>> = {
+  'mini-1g': 4, 'mini-2g': 6, mini: 6, '3g': 40, '4g': 60, photo: 60, video: 80, 'nano-1g': 4, 'nano-2g': 8,
+}
 export function isModdedStorage(hw: IpodHardware, totalBytes: number | null): boolean | null {
   const stock = STOCK_MAX_GB[hw]
   if (stock === undefined || totalBytes === null) return null
@@ -192,6 +247,9 @@ export interface IpodDeviceFacts {
   syncInFlight: boolean
   /** Only the MacBook (the hub) works with iPods. */
   role: 'hub' | 'replica'
+  /** Which iPod this is for album covers, as Jake answered it during set-up or this Mac
+   *  remembers it (main/ipod-artwork.ts): a cover family or 'none'. Absent/null = no answer. */
+  artworkFamily?: string | null
 }
 
 /** Which list this iPod is for. Jake picks; nothing is inferred from the model. */
@@ -244,7 +302,7 @@ export interface IpodOnboardingRecord {
 }
 
 const ID = /^[a-z0-9-]{6,64}$/
-const HARDWARE = new Set<IpodHardware>(['mini-1g', 'mini-2g', 'mini', '3g', '4g', 'classic', 'other', 'unknown'])
+const HARDWARE = new Set<IpodHardware>(['mini-1g', 'mini-2g', 'mini', '3g', '4g', 'classic', 'photo', 'video', 'nano-1g', 'nano-2g', 'other', 'unknown'])
 const EVENTS = new Set<OnboardingEvent>(['set-up', 'set-up-again', 'moved-to-another-list', 'released', 'checked', 'new-card-or-body'])
 const str = (v: unknown, max = 200): string | null => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null)
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null)
@@ -375,6 +433,10 @@ export function onboardingChecks(facts: IpodDeviceFacts, target: OnboardingTarge
   else if (hw === 'unknown') add('model', 'unknown', 'Couldn’t tell which iPod model this is.')
   else if (hw === 'other' || hw === '4g') add('model', 'warn', `This is ${hardwareName(hw)}. JakeTunes has only synced minis so far.`)
   else add('model', 'ok', `${hardwareName(hw)}${facts.sysInfo?.modelNumStr ? `, model ${facts.sysInfo.modelNumStr}` : ''}.`)
+
+  // Album covers: an iPod nothing names could have a colour screen, and its first sync would
+  // write no covers (2026-11-23). Jake answers here, before that sync; 'No colour screen' counts.
+  if (needsArtworkAnswer(facts)) add('covers', 'stop', 'Which iPod is this?')
 
   // Firmware
   const fw = facts.sysInfo?.firmware ?? null

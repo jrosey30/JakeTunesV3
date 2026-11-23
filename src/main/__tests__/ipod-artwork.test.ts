@@ -7,11 +7,11 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdtemp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ARTWORK_CACHE_DIR, artworkFamilies, artworkOutcome, artworkPathsFor, installArtworkOnIpod, prepareArtworkArgs, rememberArtworkFamily, rememberedArtworkFamily } from '../ipod-artwork.ts'
+import { ARTWORK_CACHE_DIR, artworkFamilies, artworkFamilyByUsb, artworkOutcome, artworkPathsFor, installArtworkOnIpod, prepareArtworkArgs, rememberArtworkFamily, rememberedArtworkFamily } from '../ipod-artwork.ts'
 
 describe('artworkPathsFor / prepareArtworkArgs', () => {
   test('album artist first, then the song artist; rows are not changed', async () => {
@@ -154,5 +154,63 @@ describe('core/tests/test_ipod_artwork_table.py', () => {
     if (r.error && (r.error as NodeJS.ErrnoException).code === 'ENOENT') return // no python3 on this runner
     assert.equal(r.status, 0, `${r.stdout.slice(-3000)}\n${r.stderr.slice(-2000)}`)
     assert.match(r.stdout, /all ok/)
+  })
+})
+
+// 2026-11-23: an iPod set up before set-up settled its model (Indie Sleaze, 0-byte SysInfo):
+// the sync asks its USB id, and keeps the answer.
+describe('the sync path: the USB id when nothing is remembered', () => {
+  const row = [{ id: 7, artist: 'A', album: 'B' }]
+  const nanoUsb = async () => ({ vendor: 'Apple Inc.', productId: 0x1260, serial: 'S' })
+
+  test('nothing remembered: the USB id names the family, it is used and remembered', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jt-art-'))
+    const ipod = join(root, 'ipod-pools', 'indie')
+    const lines: string[] = []
+    const args = await prepareArtworkArgs(row, async () => '/art/b.jpg', join(root, 'art'), (l) => lines.push(l), { ipodStateDir: ipod, usbFamily: async () => 'nano-2g' })
+    assert.deepEqual(args.slice(-2), ['--artwork-family', 'nano-2g'])
+    assert.equal(await rememberedArtworkFamily(ipod), 'nano-2g')
+    assert.ok(lines.some((l) => /USB id/.test(l)))
+  })
+
+  test('an answer already remembered wins, and the USB is not asked', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jt-art-'))
+    const ipod = join(root, 'ipod-pools', 'x')
+    await rememberArtworkFamily(ipod, 'video', ['video'])
+    let asked = 0
+    const args = await prepareArtworkArgs(row, async () => null, join(root, 'art'), () => {}, { ipodStateDir: ipod, usbFamily: async () => { asked++; return 'nano-2g' } })
+    assert.deepEqual(args.slice(-2), ['--artwork-family', 'video'])
+    assert.equal(asked, 0)
+  })
+
+  test('no USB answer, a failing one, or a family the table doesn’t know: no family, nothing remembered', async () => {
+    for (const usbFamily of [async () => null, async () => { throw new Error('system_profiler timed out') }, async () => 'zune']) {
+      const root = await mkdtemp(join(tmpdir(), 'jt-art-'))
+      const ipod = join(root, 'ipod-pools', 'x')
+      const args = await prepareArtworkArgs(row, async () => null, join(root, 'art'), () => {}, { ipodStateDir: ipod, usbFamily })
+      assert.equal(args.includes('--artwork-family'), false)
+      assert.equal(await rememberedArtworkFamily(ipod), null)
+    }
+  })
+
+  test('artworkFamilyByUsb: empty SysInfo + 0x1260 is the nano; a model in SysInfo means the USB is never asked', async () => {
+    const mount = await mkdtemp(join(tmpdir(), 'jt-art-ipod-'))
+    await mkdir(join(mount, 'iPod_Control', 'Device'), { recursive: true })
+    await writeFile(join(mount, 'iPod_Control', 'Device', 'SysInfo'), '')
+    assert.equal(await artworkFamilyByUsb(mount, nanoUsb), 'nano-2g')
+    assert.equal(await artworkFamilyByUsb(mount, async () => ({ vendor: null, productId: 0x1205, serial: null })), 'none')
+    assert.equal(await artworkFamilyByUsb(mount, async () => ({ vendor: null, productId: 0x1262, serial: null })), null)
+    assert.equal(await artworkFamilyByUsb(mount, async () => { throw new Error('no') }), null)
+    await writeFile(join(mount, 'iPod_Control', 'Device', 'SysInfo'), 'ModelNumStr: MA477\n')
+    let asked = 0
+    assert.equal(await artworkFamilyByUsb(mount, async () => { asked++; return null }), null)
+    assert.equal(asked, 0)
+  })
+
+  test('both sync engines hand the iPod’s state folder and the USB fallback to prepareArtworkArgs', () => {
+    const src = (rel: string) => readFileSync(join(import.meta.dirname, '..', rel), 'utf-8')
+    assert.match(src('ipod-activity-engine.ts'), /\{ ipodStateDir: host\.stateDir, usbFamily: host\.artworkFamilyByUsb \}/)
+    assert.match(src('sync-engine/index.ts'), /\{ ipodStateDir: syncStateDir, usbFamily: \(\) => artworkFamilyByUsb\(IPOD_MOUNT, realIpodSetupSystem\.usb\) \}/)
+    assert.match(src('sync-engine/index.ts'), /artworkFamilyByUsb: \(\) =>/)
   })
 })

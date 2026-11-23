@@ -901,6 +901,7 @@ declare global {
       ipodSetupSameIpod?: (arg: { typed: string }) => Promise<{ ok: boolean; error?: string }>
       ipodSetupPrepare?: (arg: { listId: string; name: string | null; color: string | null; typed: string | null; matchCover: boolean }) => Promise<{ ok: boolean; error?: string; did?: string[]; notes?: string[] }>
       ipodSetupChecked?: () => Promise<{ ok: boolean; error?: string }>
+      ipodSetupCovers?: (arg: { family: string }) => Promise<{ ok: boolean; error?: string }>
       onIpodDeviceChanged?: (callback: () => void) => () => void
       onIpodVolumesChanged?: (callback: () => void) => () => void
       analyzeTrack: (trackId: number, colonPath: string, fingerprint: string) => Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }>

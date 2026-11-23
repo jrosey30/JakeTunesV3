@@ -164,6 +164,9 @@ export interface ActivitySyncHost {
    *  a colour iPod gets album art (core/ipod_artwork.py decides which iPods;
    *  a mini gets none). Unset: no art is looked for. */
   resolveArtworkFile?: (artist: string, album: string) => Promise<string | null>
+  /** The cover family the plugged-in iPod's USB id names, when its SysInfo names no model
+   *  (ipod-artwork.ts artworkFamilyByUsb). Unset: only what is remembered for the iPod. */
+  artworkFamilyByUsb?: () => Promise<string | null>
   /** Tests only: a fake card has no device node to unmount. Production leaves it unset. */
   remountVolume?: typeof platformRemountVolume
   /** Tests only: force the contiguity step to fail. Production leaves it unset. */
@@ -1365,7 +1368,7 @@ async function runActivitySyncHolding(
     // Album covers for a colour iPod (ipod-artwork.ts); nothing for a mini.
     const localArt = join(host.tempDir, `jaketunes-artwork-${host.pid}`)
     const artArgs = host.resolveArtworkFile
-      ? await prepareArtworkArgs(tracks, host.resolveArtworkFile, localArt, (line) => console.log(`activity-sync: ${line}`), { ipodStateDir: host.stateDir })
+      ? await prepareArtworkArgs(tracks, host.resolveArtworkFile, localArt, (line) => console.log(`activity-sync: ${line}`), { ipodStateDir: host.stateDir, usbFamily: host.artworkFamilyByUsb })
       : []
     const written = await spawnJson(
       python,

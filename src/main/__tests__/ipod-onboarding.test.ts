@@ -6,9 +6,12 @@ import {
   confirmationPhrase, coverMismatch, detectHardware, deviceSerial, firmwareFromBuildId, firstSyncEstimate, ipodHealthCheck,
   isModdedStorage, onboardedLine, onboardingChecks, onboardingStep, onboardingWriteRefusal, parseOnboardingDoc, parseSysInfo,
   proofChecklist, recordForWipedIpod, suggestedIpodName,
+  ARTWORK_FAMILIES_BY_HARDWARE, artworkFamilyFor, hardwareForUsb, hardwareName, needsArtworkAnswer,
   type IpodDeviceFacts, type IpodOnboardingRecord, type OnboardingInput, type OnboardingProgress, type OnboardingTarget,
 } from '../../common/ipod-onboarding.ts'
 import type { IpodDeviceMarker } from '../../common/ipod-identity.ts'
+import { readFileSync } from 'node:fs'
+import { resolve as resolvePath } from 'node:path'
 
 // SysInfo as Jake's own two minis report it (the board, model and software lines), and a 3rd generation.
 const SYS_MINI_2G = 'BoardHwName: iPod Q22B\npszSerialNumber: JQ5123ABCDE\nModelNumStr: M9803\nFirewireGuid: 0x000A27001234ABCD\nvisibleBuildID: 0x01418000 (1.4.1)\niPodFamily: 3\nupdaterFamily: 7\n'
@@ -476,5 +479,67 @@ describe('the record and the words', () => {
     assert.ok(full && full.totalBytes <= 249 * GB - 300 * 1024 * 1024 && full.totalBytes > 247 * GB)
     assert.match(full?.line ?? '', /Songs already on the iPod are not touched/)
     assert.equal(cardTestPlan(100 * 1024 * 1024), null, 'no room to test is said, not attempted')
+  })
+})
+
+// 2026-11-23: Indie Sleaze, a 2nd-generation nano with a 0-byte SysInfo, was set up with no
+// question asked and its first sync wrote no covers. Its USB id (0x1260) said what it was.
+describe('album covers: which iPod, settled at set-up', () => {
+  const usb = (productId: number | null) => ({ vendor: 'Apple Inc.', productId, serial: '000A2700AAAA0001' })
+  const empty = parseSysInfo('')
+
+  test('the colour iPods by USB id (usb.ids / Rockbox), and Jake’s nano', () => {
+    assert.equal(hardwareForUsb(0x1260), 'nano-2g', 'measured on Indie Sleaze')
+    assert.equal(hardwareForUsb(0x120a), 'nano-1g')
+    assert.equal(hardwareForUsb(0x1209), 'video')
+    assert.equal(hardwareForUsb(0x1204), 'photo')
+    assert.equal(hardwareForUsb(0x1262), null, 'a 3rd-generation nano is not in the cover table')
+    assert.equal(hardwareForUsb(null), null)
+    assert.equal(detectHardware(empty, usb(0x1260)), 'nano-2g')
+    assert.equal(hardwareName('nano-2g'), 'iPod nano (2nd generation)')
+    assert.equal(detectHardware(empty, usb(0x1262)), 'other')
+  })
+
+  test('hardware → cover family: colour families, none for the grey screens, null when unknown', () => {
+    assert.equal(artworkFamilyFor('nano-2g'), 'nano-2g')
+    assert.equal(artworkFamilyFor('video'), 'video')
+    assert.equal(artworkFamilyFor('mini-2g'), 'none')
+    assert.equal(artworkFamilyFor('3g'), 'none')
+    assert.equal(artworkFamilyFor('classic'), null)
+    assert.equal(artworkFamilyFor('other'), null)
+    assert.equal(artworkFamilyFor('unknown'), null)
+  })
+
+  test('every family it can answer is a colour family in core/ipod_artwork_models.json', () => {
+    const table = JSON.parse(readFileSync(resolvePath(import.meta.dirname, '../../../core/ipod_artwork_models.json'), 'utf-8')) as { families: Array<{ family: string; artwork: boolean }> }
+    const colour = new Set(table.families.filter((f) => f.artwork).map((f) => f.family))
+    for (const f of ARTWORK_FAMILIES_BY_HARDWARE) assert.ok(colour.has(f), `${f} is in the table`)
+    assert.equal(ARTWORK_FAMILIES_BY_HARDWARE.length, colour.size, 'and every colour family in the table has a USB id')
+  })
+
+  test('nothing names it: the checks stop on "Which iPod is this?" until Jake answers ("No colour screen" counts)', () => {
+    const blank = facts({ sysInfo: empty, usb: usb(0x1262) })
+    const stop = onboardingChecks(blank, list()).find((c) => c.id === 'covers')
+    assert.deepEqual(stop, { id: 'covers', status: 'stop', line: 'Which iPod is this?' })
+    const step = onboardingStep(input({ facts: blank, target: list(), name: '80sPod' }))
+    assert.equal(step.step === 'checks' && step.blocked, true)
+    assert.equal(onboardingActionRefusal('prepare', step), 'Fix the problems above first.')
+    for (const answer of ['nano-2g', 'none']) {
+      const answered = facts({ sysInfo: empty, usb: usb(0x1262), artworkFamily: answer })
+      assert.equal(onboardingChecks(answered, list()).some((c) => c.id === 'covers'), false, answer)
+      assert.equal(onboardingStep(input({ facts: answered, target: list(), name: '80sPod' })).step, 'prepare', answer)
+    }
+    // No SysInfo and no USB at all: asked too.
+    assert.equal(needsArtworkAnswer({ sysInfo: null, usb: null }), true)
+  })
+
+  test('known without asking: the USB id, a model in SysInfo, a grey-screen iPod; the Classic stops on its own check', () => {
+    assert.equal(needsArtworkAnswer({ sysInfo: empty, usb: usb(0x1260) }), false, 'Indie Sleaze')
+    assert.equal(onboardingStep(input({ facts: facts({ sysInfo: empty, usb: usb(0x1260) }), target: list(), name: '80sPod' })).step, 'prepare')
+    assert.equal(needsArtworkAnswer({ sysInfo: parseSysInfo('ModelNumStr: MA477\n'), usb: null }), false, 'core/ipod_artwork.py reads the model itself')
+    assert.equal(needsArtworkAnswer({ sysInfo: parseSysInfo(SYS_MINI_2G), usb: null }), false)
+    assert.equal(needsArtworkAnswer({ sysInfo: empty, usb: usb(0x1205) }), false, 'a mini has no colour screen')
+    assert.equal(needsArtworkAnswer({ sysInfo: null, usb: usb(0x1261) }), false)
+    assert.equal(onboardingChecks(facts({ sysInfo: null, usb: usb(0x1261) }), list()).some((c) => c.id === 'covers'), false)
   })
 })
