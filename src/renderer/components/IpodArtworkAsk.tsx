@@ -14,14 +14,30 @@ export interface IpodArtworkSummary {
   skipped: string | null
 }
 
-export default function IpodArtworkAsk({ artwork }: { artwork: IpodArtworkSummary | undefined | null }) {
+/** The colour iPods the cover table knows, then "No colour screen" ('none'). Also asked
+ *  inline by iPod set-up (IpodSetupSheet), before the first sync (2026-11-23). */
+export function IpodModelChoices({ onPick, disabled }: { onPick: (family: string) => void; disabled?: boolean }) {
   const [families, setFamilies] = useState<Array<{ family: string; name: string }>>([])
+  useEffect(() => {
+    let live = true
+    void window.electronAPI.ipodArtworkFamilies?.().then((f) => { if (live) setFamilies(f ?? []) }).catch(() => undefined)
+    return () => { live = false }
+  }, [])
+  return (
+    <>
+      {families.map((f) => (
+        <span key={f.family}>
+          <button type="button" className="device-link-btn" disabled={disabled} onClick={() => onPick(f.family)}>{f.name}</button>{' · '}
+        </span>
+      ))}
+      <button type="button" className="device-link-btn" disabled={disabled} onClick={() => onPick('none')}>No colour screen</button>
+    </>
+  )
+}
+
+export default function IpodArtworkAsk({ artwork }: { artwork: IpodArtworkSummary | undefined | null }) {
   const [answered, setAnswered] = useState<string | null>(null)
   const ask = artwork?.ask === true
-  useEffect(() => {
-    if (!ask || families.length > 0) return
-    void window.electronAPI.ipodArtworkFamilies?.().then((f) => setFamilies(f ?? [])).catch(() => undefined)
-  }, [ask, families.length])
 
   if (!artwork) return null
   if (answered) return <span>Got it. Covers go on next sync.</span>
@@ -34,12 +50,7 @@ export default function IpodArtworkAsk({ artwork }: { artwork: IpodArtworkSummar
     return (
       <span role="group" aria-label="Which iPod is this?">
         No covers yet. Which iPod is this?{' '}
-        {families.map((f) => (
-          <span key={f.family}>
-            <button type="button" className="device-link-btn" onClick={() => pick(f.family)}>{f.name}</button>{' · '}
-          </span>
-        ))}
-        <button type="button" className="device-link-btn" onClick={() => pick('none')}>No colour screen</button>
+        <IpodModelChoices onPick={pick} />
       </span>
     )
   }

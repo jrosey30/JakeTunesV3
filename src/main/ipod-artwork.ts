@@ -22,6 +22,7 @@
  */
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'fs/promises'
 import { join } from 'path'
+import { ARTWORK_FAMILIES_BY_HARDWARE, artworkFamilyFor, hardwareForUsb, parseSysInfo, type IpodUsbFacts } from '../common/ipod-onboarding.ts'
 
 type Row = Record<string, unknown>
 
@@ -68,7 +69,12 @@ export async function prepareArtworkArgs(
   log: (line: string) => void,
   /** The plugged-in iPod's own state folder: its thumbnail cache, and the
    *  model Jake named for it when the iPod itself doesn't say (rememberArtworkFamily). */
-  opts: { ipodStateDir?: string } = {},
+  opts: {
+    ipodStateDir?: string
+    /** The family the plugged-in iPod's USB id names (artworkFamilyByUsb), asked only when
+     *  nothing is remembered for it; the answer is then remembered. */
+    usbFamily?: () => Promise<string | null>
+  } = {},
 ): Promise<string[]> {
   try {
     await clearLocalArtwork(localDir)
@@ -79,7 +85,15 @@ export async function prepareArtworkArgs(
     const args = ['--artwork-out', localDir, '--artwork-map', mapFile]
     if (opts.ipodStateDir) {
       args.push('--artwork-cache', join(opts.ipodStateDir, ARTWORK_CACHE_DIR))
-      const family = await rememberedArtworkFamily(opts.ipodStateDir)
+      let family = await rememberedArtworkFamily(opts.ipodStateDir)
+      if (!family && opts.usbFamily) {
+        // An iPod set up before set-up settled this (Indie Sleaze, 2026-11-23): its USB id.
+        const byUsb = await opts.usbFamily().catch(() => null)
+        if (byUsb && (await rememberArtworkFamily(opts.ipodStateDir, byUsb, ARTWORK_FAMILIES_BY_HARDWARE).catch(() => false))) {
+          family = byUsb
+          log(`this iPod is ${byUsb} by its USB id; remembered`)
+        }
+      }
       if (family) args.push('--artwork-family', family)
     }
     return args
@@ -112,6 +126,23 @@ export async function rememberArtworkFamily(ipodStateDir: string, family: string
   await writeFile(tmp, JSON.stringify({ family, at: new Date().toISOString() }))
   await rename(tmp, join(ipodStateDir, ARTWORK_MODEL_FILE))
   return true
+}
+
+/**
+ * The cover family the plugged-in iPod's USB product id names (common artworkFamilyFor), or
+ * null. Not asked when SysInfo names a model: core/ipod_artwork.py reads that first, and the
+ * USB look (system_profiler) costs seconds. Never throws.
+ */
+export async function artworkFamilyByUsb(mount: string, usb: (mount: string) => Promise<IpodUsbFacts | null>): Promise<string | null> {
+  try {
+    const sys = parseSysInfo(await readFile(join(mount, 'iPod_Control', 'Device', 'SysInfo'), 'utf-8').catch(() => ''))
+    if (sys.modelNumStr) return null
+    const hw = hardwareForUsb((await usb(mount))?.productId)
+    return hw ? artworkFamilyFor(hw) : null
+  } catch (err) {
+    console.warn(`ipod-artwork: no USB answer (${errText(err)})`)
+    return null
+  }
 }
 
 /** What the sync did about covers, from db_reader's JSON answer (its `artwork` key). */

@@ -1232,7 +1232,7 @@ registerIpodIpc(ipc, {
   onMountDetected: (mount) => void roundTripOnMount(mount).catch((err) => console.warn('[roundtrip] plug-in failed:', err instanceof Error ? err.message : err)),
   renameOnHomemini: (id, name) => ipodLists.rename(id, name),   // ipodLists is set up below; called only on a click
   onDeviceChanged: () => sendToRenderer('ipod-device-changed', null),
-  setup: { stateDir: STATE_DIR, baseUrl: () => MOBILE_BACKEND_URL.replace(/\/audio$/, ''), libraryTracks: async () => (await libraryCache.get()).tracks, isReplica: isHomeminiPlaybackClientCached },
+  setup: { stateDir: STATE_DIR, baseUrl: () => MOBILE_BACKEND_URL.replace(/\/audio$/, ''), libraryTracks: async () => (await libraryCache.get()).tracks, isReplica: isHomeminiPlaybackClientCached, artworkModelsFile: join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/ipod_artwork_models.json') },
 })
 registerSyncIpc(ipc, {
   requestSyncCancel: () => syncEngine.requestSyncCancel(),

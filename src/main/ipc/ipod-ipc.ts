@@ -50,7 +50,7 @@ export interface IpodIpcHost {
   onDeviceChanged?: () => void
   /** iPod set-up (ipod-onboarding-ipc.ts): homemini, the library, and which Mac this is. Absent = no set-up handlers,
    *  'register-ipod-device' included (it lives there since 2026-11-14, behind the same checks). */
-  setup?: Pick<IpodOnboardingHost, 'stateDir' | 'baseUrl' | 'libraryTracks' | 'isReplica'>
+  setup?: Pick<IpodOnboardingHost, 'stateDir' | 'baseUrl' | 'libraryTracks' | 'isReplica' | 'artworkModelsFile'>
 }
 
 const IPOD_MISS_THRESHOLD = 3   // ~3 polls (~7.5s) of true absence before "disconnected"

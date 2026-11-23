@@ -357,6 +357,8 @@ const electronAPI = {
     ipcRenderer.invoke('ipod-setup:prepare', arg),
   ipodSetupChecked: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('ipod-setup:checked'),
+  ipodSetupCovers: (arg: { family: string }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('ipod-setup:covers', arg),
   onIpodDeviceChanged: (callback: () => void) => {
     const handler = () => callback()
     ipcRenderer.on('ipod-device-changed', handler)

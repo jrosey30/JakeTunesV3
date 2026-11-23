@@ -18,6 +18,9 @@
  *       typed words; the record takes the new serial and size. Never automatic.
  *   'ipod-setup:prepare' ({ listId, name, color, typed, matchCover }) → only
  *       when the step is 'prepare'. Never formats, never deletes a song.
+ *   'ipod-setup:covers' ({ family }) → "Which iPod is this?" for album covers, answered during
+ *       the checks (2026-11-23). Kept for this drive only, in memory, until 'prepare' saves it
+ *       with the iPod (ipod-artwork.ts rememberArtworkFamily). Writes nothing anywhere.
  *   'ipod-setup:checked' → only at the proof step.
  *   'ipod-setup:readopt-original' → only when the look says "this looks like
  *       your Original": its ID file goes back on, unchanged.
@@ -44,8 +47,9 @@ import type { IpodDeviceMarker } from '../../common/ipod-identity.ts'
 import type { IpodList } from '../../common/ipod-list-doc.ts'
 import { checkIpodName } from '../../common/ipod-name.ts'
 import { normalizeIpodColor } from '../../common/ipod-covers.ts'
+import { artworkFamilies, rememberArtworkFamily, rememberedArtworkFamily } from '../ipod-artwork.ts'
 import {
-  STABLE_READS_NEEDED, confirmationMatches, coverMismatch, healthBlindRefusal, healthSyncRefusal, ipodHealthCheck,
+  STABLE_READS_NEEDED, artworkFamilyFor, confirmationMatches, detectHardware, coverMismatch, healthBlindRefusal, healthSyncRefusal, ipodHealthCheck,
   onboardingActionRefusal, onboardingStep, rebindRecord, replacedLabel, sameIpodOffer,
   type IpodDeviceFacts, type OnboardingAction, type OnboardingProgress, type OnboardingStep, type OnboardingTarget,
 } from '../../common/ipod-onboarding.ts'
@@ -70,6 +74,8 @@ export interface IpodOnboardingHost {
   system: IpodSetupSystem
   fetchImpl?: FetchLike
   sleep?: (ms: number) => Promise<void>
+  /** core/ipod_artwork_models.json: the colour iPods "Which iPod is this?" may name. */
+  artworkModelsFile?: string
 }
 
 const NOT_THE_HUB = 'Sync iPods on the MacBook.'
@@ -92,7 +98,8 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
   const client = () => createIpodListClient({ baseUrl: host.baseUrl(), fetchImpl, warn: (m) => console.warn(m) })
   const sleep = host.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   // What the checks found, for ONE drive (its system identity + USB serial). Never keyed by path.
-  let seen: { key: string; stable: IpodDeviceFacts['stable']; writeTest: IpodDeviceFacts['writeTest'] } | null = null
+  // `artworkFamily`: Jake's answer to "Which iPod is this?" for this drive, until set-up saves it.
+  let seen: { key: string; stable: IpodDeviceFacts['stable']; writeTest: IpodDeviceFacts['writeTest']; artworkFamily?: string | null } | null = null
 
   /** A Mac that is a replica, or can't say, is not the MacBook. */
   const isHub = (): Promise<boolean> => host.isReplica().then((r) => r !== true, () => false)
@@ -112,8 +119,15 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
     // A different drive (even at the same path, with the same name) starts from nothing.
     if (!first.driveId || !seen || seen.key !== key) seen = first.driveId ? { key, stable: null, writeTest: null } : null
     if (seen && (recheck || !seen.stable)) seen.stable = await stableReads(mount, STABLE_READS_NEEDED, 400, sleep)
-    return { ...first, stable: seen?.stable ?? null, writeTest: seen?.writeTest ?? null }
+    // Which iPod for covers: Jake's answer on this drive, else what this Mac remembers for the
+    // list the iPod already carries.
+    const remembered = first.marker ? await rememberedArtworkFamily(ipodStateDirFor(host.stateDir, first.marker)) : null
+    return { ...first, stable: seen?.stable ?? null, writeTest: seen?.writeTest ?? null, artworkFamily: seen?.artworkFamily ?? remembered }
   }
+
+  /** The families "Which iPod is this?" may name ('none' is always one). */
+  const knownFamilies = async (): Promise<string[]> =>
+    (host.artworkModelsFile ? await artworkFamilies(host.artworkModelsFile) : []).map((f) => f.family)
 
   async function listBytes(list: IpodList): Promise<number | null> {
     try {
@@ -258,6 +272,9 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
       if (!checked.ok) return { ok: false, error: checked.error }
       const color = normalizeIpodColor(arg.color) ?? (target.kind === 'list' ? target.color : null)
       const list = target.kind === 'list' ? s.lists.find((l) => l.id === target.listId) ?? null : null
+      // Covers: the answer or the USB id, read before the write (the checks above already
+      // stopped an iPod with neither).
+      const coverFamily = f.artworkFamily ?? artworkFamilyFor(detectHardware(f.sysInfo, f.usb))
       const done = await prepareIpod(mount, host.stateDir, guardFor(f, mount), {
         listId: target.kind === 'list' ? target.listId : null,
         name: checked.name, color, purpose: list?.purpose ?? null, facts: f, now: new Date().toISOString(),
@@ -266,6 +283,15 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
       })
       if (!done.ok) return done
       const notes: string[] = []
+      // Which iPod this is, for its covers: kept with the iPod before its first sync (2026-11-23).
+      if (coverFamily) {
+        const known = await knownFamilies()
+        const saved = await rememberArtworkFamily(ipodStateDirFor(host.stateDir, done.device), coverFamily, known).catch((err) => {
+          console.warn('[ipod-setup] covers:', message(err))
+          return false
+        })
+        if (!saved) console.warn(`[ipod-setup] covers: ${coverFamily} wasn't kept for ${checked.name}`)
+      }
       // The drive's own name. The ID file and the record are already right if this fails.
       if ((f.volumeLabel ?? '').toUpperCase() !== checked.macShows) {
         try {
@@ -289,6 +315,24 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
     } catch (err) {
       console.warn('[ipod-setup]', message(err))
       return { ok: false, error: 'Couldn’t set up the iPod. Try again.' }
+    }
+  }, { refuse: REFUSED_SENDER })
+
+  ipc.handle('ipod-setup:covers', async (_e, raw) => {
+    try {
+      const family = (raw as { family?: unknown } | undefined)?.family
+      if (!(await isHub())) return { ok: false, error: NOT_THE_HUB }
+      const mount = host.getMount()
+      if (!mount) { seen = null; return { ok: false, error: 'Plug in the iPod.' } }
+      if (typeof family !== 'string' || (family !== 'none' && !(await knownFamilies()).includes(family))) return { ok: false, error: 'Pick one of these.' }
+      // The answer belongs to the drive the checks are looking at; a drive with no identity gets none.
+      await readFacts(mount, false)
+      if (!seen) return { ok: false, error: 'Unplug the iPod, plug it back in, and check again.' }
+      seen.artworkFamily = family
+      return { ok: true }
+    } catch (err) {
+      console.warn('[ipod-setup]', message(err))
+      return { ok: false, error: 'Couldn’t save that. Try again.' }
     }
   }, { refuse: REFUSED_SENDER })
 
