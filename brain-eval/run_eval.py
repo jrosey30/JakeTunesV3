@@ -291,7 +291,12 @@ def run_grounding(entry, ids, vecs, qvec, by_id, titles, artists, model):
     raw = claude(GROUND_SYS, user, model, max_tokens=500)
     obj = parse_json_obj(raw)
     if obj is None:
-        return {"score": 0.0, "reason": "unparseable/no-LLM", "cited": 0, "fab": 0, "raw": (raw or "")[:160]}
+        # grd-005 diagnostic (2026-11-23): mirror the v3 distinction below — a
+        # dropped call and a non-JSON reply used to score under one label here,
+        # and the raw reply never reached score_rows, so the flake class
+        # couldn't be told from an API failure after the fact.
+        reason = "no-LLM (call returned nothing)" if not raw else "unparseable (reply was not JSON)"
+        return {"score": 0.0, "reason": reason, "cited": 0, "fab": 0, "raw": (raw or "")[:400]}
     cited = obj.get("tracks") or []
     real, fab, details = check_citations(cited, titles, artists)
     kind = entry.get("kind", "normal")
@@ -374,7 +379,8 @@ def eval_brain(label, emb_path, prompts, by_id, tracks, titles, artists, args, e
             res = run_grounding(e, ids, vecs, embed_cache[e["question"]], by_id, titles, artists, args.model)
             R["grounding"].append(res["score"])
             rows.append({"probe_id": e["id"], "group": "grounding", "kind": e.get("kind", "normal"),
-                         "score": res["score"], "reason": res["reason"]})
+                         "score": res["score"], "reason": res["reason"],
+                         **({"raw_excerpt": res["raw"]} if res.get("raw") else {})})
             print(f"  grd {e['id']} [{e.get('kind','normal')}]: {res['score']:.0f}  ({res['reason']})")
 
     # persona (optional judge)

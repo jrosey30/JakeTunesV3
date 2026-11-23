@@ -36,6 +36,25 @@ re-confirms the flake is stochastic formatting, not drift: 28 clean nights,
 then an ordinary artist question fired it. Nightly grounding read 0.900
 instead of the true 0.950 (grd-15 trap only).
 
+**2026-11-23 update — the flake crossed to the v1 ruler.** `grd-005` ("Which
+Nirvana songs are in my library?") scored 0 as `unparseable/no-LLM` on run
+`B1-20261123` — the first flake-class event on v1 (v1 grounding had been
+1.000 ×8). The same night `v3-grd-05` recovered to 1.00, so the class moved
+rulers, which fits stochastic formatting/transport, not drift. The v1 path
+had NO raw capture (the v3 raw_excerpt fix from 10-19 was never mirrored),
+so the failing reply is unrecoverable; a read-only ×3 re-probe on the exact
+rebuilt context parsed 6/6 (3× claude-haiku-4-5 — which fenced its JSON
+every single time and the fence-strip handled it — and 3× sonnet, unfenced).
+With haiku's routine fences parsing clean, tonight's zero is most consistent
+with a dropped call (claude() → None after 3 HTTP retries) or a truncated
+reply, but it cannot be proven post-hoc — exactly the blind spot the 10-19
+v3 fix closed. Fixed tonight (same commit): run_eval's v1 grounding now
+distinguishes `no-LLM (call returned nothing)` from `unparseable (reply was
+not JSON)` and persists `raw_excerpt` (400 chars) to score_rows on failure,
+mirroring v3. Flake tally: 6 nights (10-14, 10-18, 10-22, 10-24, 11-22,
+11-23) across four probes and now both rulers. v1 true grounding 11-23 =
+1.000.
+
 ## What PR #194's raw_excerpt capture revealed (2026-10-22)
 
 The model's behavior was CORRECT — it cited zero tracks and refused the
