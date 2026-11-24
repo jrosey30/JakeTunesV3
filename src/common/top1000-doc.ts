@@ -105,6 +105,20 @@ export function parseProgress(raw: unknown): QuizProgress | null {
   return out
 }
 
+/** One `{ track, hookMs }` song as homemini serves it (the quiz and the blind check share it); null without a track id. */
+export function parseQuizSongRef(raw: unknown): QuizSongRef | null {
+  const t = (raw as { track?: Record<string, unknown> } | null)?.track
+  const id = num(t?.id)
+  if (!t || id === null) return null
+  return {
+    id,
+    title: String(t.title ?? ''),
+    artist: String(t.artist ?? ''),
+    album: String(t.album ?? ''),
+    hookMs: Math.max(0, num((raw as { hookMs?: unknown }).hookMs) ?? 0),
+  }
+}
+
 /** One question in /next's shape; null when it is malformed. */
 function parseQuestion(raw: unknown): QuizQuestion | null {
   const q = raw as Record<string, unknown> | undefined
@@ -112,16 +126,9 @@ function parseQuestion(raw: unknown): QuizQuestion | null {
   const kind = q.kind as QuizKind
   const songs: QuizSongRef[] = []
   for (const s of q.songs) {
-    const t = (s as { track?: Record<string, unknown> })?.track
-    const id = num(t?.id)
-    if (!t || id === null) return null
-    songs.push({
-      id,
-      title: String(t.title ?? ''),
-      artist: String(t.artist ?? ''),
-      album: String(t.album ?? ''),
-      hookMs: Math.max(0, num((s as { hookMs?: unknown }).hookMs) ?? 0),
-    })
+    const ref = parseQuizSongRef(s)
+    if (!ref) return null
+    songs.push(ref)
   }
   // The genre brackets (homemini, 2026-10-27): which bracket a question belongs to, or the two
   // genres of a final (one per song, in order — dropped if they don't line up with the songs).

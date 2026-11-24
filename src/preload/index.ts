@@ -1288,6 +1288,9 @@ const electronAPI = {
   top1000List: (): Promise<unknown> => ipcRenderer.invoke('top1000:list'),
   top1000LiveList: (): Promise<unknown> => ipcRenderer.invoke('top1000:list-live'),
   top1000Ties: (): Promise<unknown> => ipcRenderer.invoke('top1000:ties'),
+  // The blind check (2026-11-24) — homemini's /api/top1000/audit; answers queue on disk in main.
+  top1000AuditNext: (): Promise<unknown> => ipcRenderer.invoke('top1000-audit:next'),
+  top1000AuditAnswer: (input: { qid: string | number; choice: string }): Promise<unknown> => ipcRenderer.invoke('top1000-audit:answer', input),
   // Every non-Original iPod's list (2026-11-07) — homemini writes it; read-only here.
   ipodListsGet: (): Promise<unknown> => ipcRenderer.invoke('ipod-lists:get'),
   // The brain's picks waiting for Jake (2026-11-09): read, and Approve / Skip.

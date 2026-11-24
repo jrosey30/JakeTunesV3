@@ -34,17 +34,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { useLibrary } from '../context/LibraryContext'
-import { usePlayback } from '../context/PlaybackContext'
-import { useAudio } from '../hooks/useAudio'
+import { useQuizSnippet } from '../hooks/useQuizSnippet'
 import { albumKeyOf } from '../utils/albumKey'
 import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
 import {
   QUIZ_REASONS, type QuizListEntry, type QuizProgress, type QuizQuestion, type QuizReason, type QuizSongRef,
 } from '../../common/top1000-doc'
 import type { Track } from '../types'
+import Top1000AuditPanel from './Top1000AuditPanel'
+import { auditDoorLabel, type AuditState } from '../../common/top1000-audit-doc'
 import '../styles/top1000-quiz.css'
-
-const SNIPPET_MS = 20_000
 /** A click or key landing this soon after a question appears was meant for the one before. */
 const CARRY_OVER_GUARD_MS = 250
 /** Undo walks back at most this many of this session's answers (homemini keeps the same limit). */
@@ -157,24 +156,18 @@ function describeAnswer({ q, choice, picked }: SentAnswer): string {
   return `You picked ${quoted(winner)} over ${q.songs.filter((s) => s !== winner).map(quoted).join(' and ')}`
 }
 
-let musicRoot: string | null = null
-async function snippetUrl(colonPath: string): Promise<string | null> {
-  if (!colonPath) return null
-  if (musicRoot === null) musicRoot = await window.electronAPI.getMusicLibraryPath().catch(() => '')
-  return 'ipod-audio://' + encodeURIComponent((musicRoot || '') + colonPath.replace(/:/g, '/'))
-}
-
 export default function Top1000QuizView(): JSX.Element {
   const { state: lib, dispatch } = useLibrary()
-  const { state: pb } = usePlayback()
-  const { togglePlayPause } = useAudio()
   const [tab, setTab] = useState<'quiz' | 'list'>('quiz')
+  /** The blind check, open in the quiz's place (2026-11-24). */
+  const [auditOpen, setAuditOpen] = useState(false)
+  /** What homemini last said about the blind check: the door's label, or hidden. */
+  const [auditState, setAuditState] = useState<AuditState | null>(null)
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' })
   const [progress, setProgress] = useState<QuizProgress | null>(null)
   const [today, setToday] = useState(0)
   const [saving, setSaving] = useState(false)
   const [reasons, setReasons] = useState<QuizReason[]>([])
-  const [hearing, setHearing] = useState<number | null>(null)
   const [list, setList] = useState<QuizListEntry[] | null>(null)
   const [listError, setListError] = useState<string | null>(null)
   /** This session's saved answers, newest last — what Undo walks back through. */
@@ -186,8 +179,6 @@ export default function Top1000QuizView(): JSX.Element {
   /** When the current question appeared, and when the last press started (performance.now()). */
   const shownAt = useRef(0)
   const downAt = useRef(0)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const stopTimer = useRef<number | null>(null)
 
   const byId = useMemo(() => {
     const m = new Map<number, Track>()
@@ -203,35 +194,20 @@ export default function Top1000QuizView(): JSX.Element {
     return lookupArtwork(lib.artworkMap, artIndex, t.albumArtist || t.artist || '', t.album || '')
   }, [lib.artworkMap, artIndex])
 
-  // ── snippets ── every start path below has its stop path in stopSnippet.
-  const stopSnippet = useCallback(() => {
-    if (stopTimer.current !== null) { window.clearTimeout(stopTimer.current); stopTimer.current = null }
-    const a = audioRef.current
-    if (a) { a.pause(); a.removeAttribute('src'); a.load() }
-    audioRef.current = null
-    setHearing(null)
+  // ── snippets ── (hooks/useQuizSnippet.ts, shared with the blind check)
+  const { hearing, hear, stopSnippet } = useQuizSnippet(byId)
+
+  // ── the blind check's door ── asked on the way in and each time the check closes.
+  const refreshAudit = useCallback(() => {
+    void window.electronAPI.top1000AuditNext?.().then((r) => {
+      setAuditState(r && r.ok ? r.value : null)
+    }).catch((err: unknown) => {
+      console.warn('[top1000-audit] door check failed:', err)
+      setAuditState(null)
+    })
   }, [])
-
-  useEffect(() => stopSnippet, [stopSnippet])
-
-  const hear = useCallback(async (song: QuizSongRef) => {
-    if (hearing === song.id) { stopSnippet(); return }
-    stopSnippet()
-    const url = await snippetUrl(byId.get(song.id)?.path || '')
-    if (!url) return
-    if (pb.isPlaying) togglePlayPause()
-    const a = new Audio(url)
-    audioRef.current = a
-    setHearing(song.id)
-    a.addEventListener('loadedmetadata', () => {
-      if (audioRef.current !== a) return
-      if (song.hookMs > 0 && Number.isFinite(a.duration) && song.hookMs / 1000 < a.duration - 5) a.currentTime = song.hookMs / 1000
-      void a.play().catch(() => { if (audioRef.current === a) stopSnippet() })
-    }, { once: true })
-    a.addEventListener('ended', () => { if (audioRef.current === a) stopSnippet() }, { once: true })
-    a.addEventListener('error', () => { if (audioRef.current === a) stopSnippet() }, { once: true })
-    stopTimer.current = window.setTimeout(() => { if (audioRef.current === a) stopSnippet() }, SNIPPET_MS + 4000)
-  }, [hearing, stopSnippet, byId, pb.isPlaying, togglePlayPause])
+  useEffect(() => { if (!auditOpen) refreshAudit() }, [auditOpen, refreshAudit])
+  const auditDoor = auditDoorLabel(auditState)
 
   // ── questions ──
   const fetchNext = useCallback(async () => {
@@ -367,7 +343,7 @@ export default function Top1000QuizView(): JSX.Element {
 
   // Keys: 1–5 pick (a heat: tap) the matching card, Enter locks a heat in, B both / all three, N neither / none, Backspace undo.
   useEffect(() => {
-    if (tab !== 'quiz') return
+    if (tab !== 'quiz' || auditOpen) return
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
@@ -399,7 +375,7 @@ export default function Top1000QuizView(): JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [tab, phase, choose, send, undo, backFromWhy, ready, toggleHeat, lockIn])
+  }, [tab, auditOpen, phase, choose, send, undo, backFromWhy, ready, toggleHeat, lockIn])
 
   // ── the list ──
   useEffect(() => {
@@ -467,8 +443,11 @@ export default function Top1000QuizView(): JSX.Element {
           <h1 className="t1k-h1">Top 1000</h1>
           <div className="t1k-tabs" role="tablist">
             <button type="button" role="tab" aria-selected={tab === 'quiz'} className={tab === 'quiz' ? 'is-on' : ''} onClick={() => setTab('quiz')}>Quiz</button>
-            <button type="button" role="tab" aria-selected={tab === 'list'} className={tab === 'list' ? 'is-on' : ''} onClick={() => setTab('list')}>The list</button>
+            <button type="button" role="tab" aria-selected={tab === 'list'} className={tab === 'list' ? 'is-on' : ''} onClick={() => { setAuditOpen(false); setTab('list') }}>The list</button>
           </div>
+          {tab === 'quiz' && !auditOpen && auditDoor && (
+            <button type="button" className="t1k-btn t1k-audit-door" onClick={() => { stopSnippet(); setAuditOpen(true) }}>{auditDoor}</button>
+          )}
         </div>
         <p className="t1k-lede">Finding your 1000 favorite songs, the ones the Original iPod carries. A tournament in three rounds: in each heat, pick the songs that move on; the tough calls go one on one. A song is only out after two losses. After round three your 1000 is set, and the quiz goes genre by genre: each genre’s close calls and never-asked songs, then its best songs against the best of the other genres in the finals. Stop whenever you like.</p>
         {progress && (
@@ -479,7 +458,11 @@ export default function Top1000QuizView(): JSX.Element {
         )}
       </header>
 
-      {tab === 'quiz' && (
+      {tab === 'quiz' && auditOpen && (
+        <Top1000AuditPanel byId={byId} artFor={artFor} onClose={() => setAuditOpen(false)} />
+      )}
+
+      {tab === 'quiz' && !auditOpen && (
         <section className="t1k-stage" aria-live="polite">
           {phase.kind === 'loading' && <p className="t1k-note">Picking a question…</p>}
           {phase.kind === 'error' && (

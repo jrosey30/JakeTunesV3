@@ -1346,6 +1346,9 @@ declare global {
       ipodPhotoChoose?: (key: string) => Promise<{ ok: true; homemini: 'saved' | 'later' } | { ok: false; error?: string; cancelled?: boolean }>
       ipodPhotoDrawing?: (key: string) => Promise<{ ok: true; homemini: 'saved' | 'later' } | { ok: false; error: string }>
       top1000Ties?: () => Promise<{ ok: true; value: number | null } | { ok: false; error: string }>
+      // The blind check (2026-11-24; common/top1000-audit-doc.ts, main/top1000-audit-outbox.ts).
+      top1000AuditNext?: () => Promise<{ ok: true; value: import('../common/top1000-audit-doc').AuditState & { waiting: number } } | { ok: false; error: string }>
+      top1000AuditAnswer?: (input: { qid: string | number; choice: import('../common/top1000-audit-doc').AuditChoice }) => Promise<{ ok: true; value: { progress: import('../common/top1000-audit-doc').AuditProgress | null; waiting: number } } | { ok: false; error: string }>
       homeShelvesGet?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>
       homeShelvesRefresh?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>
       homeShelvesLocalPlays?: () => Promise<{ ok: boolean; plays?: Array<{ id: number | string; ts: number }> }>
