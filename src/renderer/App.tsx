@@ -8,6 +8,7 @@ import { CynthiaProvider } from './context/CynthiaContext'
 import { NavigationProvider, useNavigation } from './context/NavigationContext'
 import { ViewModeProvider } from './context/ViewModeContext'
 import { useAudio } from './hooks/useAudio'
+import { stepVolume } from './audio/volumeModel'
 import Toolbar from './components/playback/Toolbar'
 import Sidebar from './components/sidebar/Sidebar'
 import MainContent from './components/MainContent'
@@ -740,13 +741,13 @@ function AppInner() {
       if (e.key === 'ArrowUp') {
         e.preventDefault()
         const v = pbStateRef.current.volume
-        setVolume(Math.min(1, v + 0.05))
+        setVolume(stepVolume(v, 1))
         return
       }
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         const v = pbStateRef.current.volume
-        setVolume(Math.max(0, v - 0.05))
+        setVolume(stepVolume(v, -1))
         return
       }
     }
@@ -1622,8 +1623,8 @@ function AppInner() {
         case 'play': if (!isPlayingRef.current) togglePlayPause(); break
         case 'next-track': nextTrack(); break
         case 'prev-track': prevTrack(); break
-        case 'volume-up': setVolume(Math.min(1, pbState.volume + 0.1)); break
-        case 'volume-down': setVolume(Math.max(0, pbState.volume - 0.1)); break
+        case 'volume-up': setVolume(stepVolume(pbStateRef.current.volume, 1)); break
+        case 'volume-down': setVolume(stepVolume(pbStateRef.current.volume, -1)); break
         case 'get-info': window.dispatchEvent(new Event('jaketunes-get-info')); break
         case 'new-playlist': window.dispatchEvent(new Event('jaketunes-new-playlist')); break
         case 'import-files': window.dispatchEvent(new Event('jaketunes-import-files')); break

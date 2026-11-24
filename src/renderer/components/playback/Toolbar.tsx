@@ -5,7 +5,8 @@ import { usePlayback } from '../../context/PlaybackContext'
 import NowPlayingActions from './NowPlayingActions'
 import LyricsToggle from './LyricsToggle'
 import { useLibrary } from '../../context/LibraryContext'
-import { useAudio, setAutoDjMode } from '../../hooks/useAudio'
+import { useAudio, setAutoDjMode, DUCK_LIFTED_EVENT } from '../../hooks/useAudio'
+import { duckAt, DUCK_LEVEL } from '../../audio/volumeModel'
 import { attachClipToBroadcast, attachAnnouncerToBroadcast, detachClipFromBroadcast, startRecording, stopRecording } from '../../audio/eq'
 import { playStinger, randomPreStinger, randomEndStinger, STINGER_DURATIONS } from '../../audio/stingers'
 import { RadioEngine, type SegmentRequest } from '../../radio/RadioEngine'
@@ -120,7 +121,7 @@ const BUBBLE_SPEAKER_VERB: Record<BubbleSpeaker, string> = {
 export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggleMusicMan, showMusicMan, onToggleLyrics, showLyrics }: { onToggleQueue: () => void; onOpenQueue: () => void; showQueue: boolean; onToggleMusicMan: () => void; showMusicMan: boolean; onToggleLyrics: () => void; showLyrics: boolean }) {
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { state: lib } = useLibrary()
-  const { setVolume, playTrack, stopPlayback } = useAudio()
+  const { setDuck, playTrack, stopPlayback } = useAudio()
   const [autoDj, setAutoDj] = useState(false)
   // 4.1.6: Radio Mode — continuous WJLR-style commentary between tracks.
   // Distinct from `autoDj` which is only on during a Music-Man-curated
@@ -197,7 +198,9 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
   // loading verb, and the colour palette all read from this.
   const [djSpeaker, setDjSpeaker] = useState<BubbleSpeaker>('mm')
   const [djExiting, setDjExiting] = useState(false)
-  const savedVolumeRef = useRef(0.8)
+  // The duck level the music is at (1 = none). Separate from Jake's volume:
+  // ducking never moves his slider or the saved value (V7 steady, 2026-11-24).
+  const duckRef = useRef(1)
   const djAudioRef = useRef<HTMLAudioElement | null>(null)
   // 4.5: hover-prefetch debounce. Mouse-over the mic button → after
   // ~200ms (long enough to not fire on accidental sweeps) kick off the
@@ -234,40 +237,55 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     }
   }, [])
 
+  const applyDuck = useCallback((g: number) => {
+    duckRef.current = g
+    setDuck(g)
+  }, [setDuck])
+
+  // Back to no duck at once (a stop, a cancel, a cut): stop any ramp first so
+  // it can't pull the music back down after.
+  const unduck = useCallback(() => {
+    clearFade()
+    applyDuck(1)
+  }, [clearFade, applyDuck])
+
   const fadeVolumeIn = useCallback(() => {
-    clearFade() // cancel any in-flight fade so they can't fight over volume
-    const target = savedVolumeRef.current
-    const start = target * 0.15
+    clearFade() // cancel any in-flight fade so they can't fight over the duck
+    const start = duckRef.current
     let step = 0
     fadeIntervalRef.current = setInterval(() => {
       step++
-      if (step >= 30) {
-        setVolume(target)
-        clearFade()
-      } else {
-        setVolume(start + (target - start) * (step / 30))
-      }
+      applyDuck(duckAt(start, 1, step, 30))
+      if (step >= 30) clearFade()
     }, 50)
-  }, [setVolume, clearFade])
+  }, [applyDuck, clearFade])
 
   const fadeVolumeOut = useCallback((): Promise<void> => {
     return new Promise(resolve => {
       clearFade()
       fadeResolveRef.current = resolve
-      const start = savedVolumeRef.current
-      const target = start * 0.15
+      const start = duckRef.current
       let step = 0
       fadeIntervalRef.current = setInterval(() => {
         step++
-        if (step >= 20) {
-          setVolume(target)
-          clearFade() // clears the interval AND resolves via fadeResolveRef
-        } else {
-          setVolume(start - (start - target) * (step / 20))
-        }
+        applyDuck(duckAt(start, DUCK_LEVEL, step, 20))
+        if (step >= 20) clearFade() // clears the interval AND resolves via fadeResolveRef
       }, 50)
     })
-  }, [setVolume, clearFade])
+  }, [applyDuck, clearFade])
+
+  // The duck was lifted from outside (Jake moved the volume, or the watchdog
+  // found no voice over it): stop any ramp so it can't pull the music back
+  // down, and clear the latch so the next speech ducks again.
+  useEffect(() => {
+    const onLifted = () => {
+      clearFade()
+      duckRef.current = 1
+      isFadedRef.current = false
+    }
+    window.addEventListener(DUCK_LIFTED_EVENT, onLifted)
+    return () => window.removeEventListener(DUCK_LIFTED_EVENT, onLifted)
+  }, [clearFade])
 
   // Global fade for any Music Man speech (MusicManView, SmartPlaylistView, etc.)
   const isFadedRef = useRef(false)
@@ -275,7 +293,6 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     const handleStart = async () => {
       if (isFadedRef.current) return
       isFadedRef.current = true
-      savedVolumeRef.current = pb.volume
       await fadeVolumeOut()
       window.dispatchEvent(new Event('musicman-fade-ready'))
     }
@@ -290,7 +307,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       window.removeEventListener('musicman-speaking-start', handleStart)
       window.removeEventListener('musicman-speaking-end', handleEnd)
     }
-  }, [pb.volume, fadeVolumeOut, fadeVolumeIn])
+  }, [fadeVolumeOut, fadeVolumeIn])
 
   // 4.5.2: relay djText / djLoading into the activity store's broadcast
   // mode so the now-playing pill renders the caption with a typewriter
@@ -345,9 +362,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
         detachClipFromBroadcast(djAudioRef.current)
         djAudioRef.current.pause()
         djAudioRef.current = null
-        clearFade() // stop any in-flight duck fade before restoring volume
         isFadedRef.current = false // clear the latch so the next speech re-ducks
-        setVolume(savedVolumeRef.current)
+        unduck() // stops any in-flight duck fade, then the music is back
       }
       setAutoDj(false)
       setDjActive(false)
@@ -358,7 +374,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     }
     window.addEventListener('musicman-dj-cancel', handler)
     return () => window.removeEventListener('musicman-dj-cancel', handler)
-  }, [setVolume, clearFade])
+  }, [unduck])
 
   // Sync auto-DJ mode to audio module. Either DJ-Set's autoDj OR the
   // user-toggled Radio Mode triggers the between-track event the
@@ -1050,7 +1066,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
         detachClipFromBroadcast(djAudioRef.current)
         djAudioRef.current.pause()
         djAudioRef.current = null
-        setVolume(savedVolumeRef.current)
+        unduck()
       }
       setAutoDj(false)
       setDjActive(false)
@@ -1072,7 +1088,6 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     // Music Man or Larry. The bubble follows whoever main says answered.
     const micHost = await window.electronAPI.getActiveHost()
     setDjSpeaker(micHost === 'larry' ? 'larry' : 'mm')
-    savedVolumeRef.current = pb.volume
 
     // One clip, start to finish: ducks the music on the first, types the
     // caption in step with the voice, resolves when it has been said. One TTS
@@ -1187,7 +1202,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     setDjActive(false)
     setDjLoading(false)
     setDjText('')
-  }, [djActive, autoDj, askSubject, pb.nowPlaying?.id, pb.volume, setVolume, fadeVolumeOut, fadeVolumeIn])
+  }, [djActive, autoDj, askSubject, pb.nowPlaying?.id, unduck, fadeVolumeOut, fadeVolumeIn])
 
   // Auto-DJ / Radio Mode: listen for track transitions. Either flag
   // arms the listener; the body picks which prompt + cache to use.
@@ -1209,13 +1224,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       const cacheKey = `${prevTrack.id}-${nextTrack.id}`
 
       const advanceAfterBanter = async (segments: RadioSegment[]) => {
-        savedVolumeRef.current = pb.volume
         setDjLoading(false)
         await playRadioSegmentSequence(segments)
         djAudioRef.current = null
         setDjActive(false)
         isFadedRef.current = false
-        setVolume(savedVolumeRef.current)
+        unduck()
         playTrack(nextTrack, queue, nextIdx, true)
         setTimeout(() => {
           setDjExiting(true)
@@ -1244,7 +1258,6 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
           const params = radioTransitionParamsRef.current.get(cacheKey)
             ?? computeRadioSlotParams(radioTransitionCounterRef.current, (radioTransitionCounterRef.current % 12) === 5 ? pickCaller() : undefined)
           setDjActive(true); setDjLoading(true); setDjText(''); setDjSpeaker('djhands')
-          savedVolumeRef.current = pb.volume
           let played = false
           try {
             const engine = await ensureRadioEngine()
@@ -1254,7 +1267,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
           setDjLoading(false)
           setDjActive(false)
           isFadedRef.current = false
-          setVolume(savedVolumeRef.current)
+          unduck()
           playTrack(nextTrack, queue, nextIdx, true)
           setTimeout(() => {
             setDjExiting(true)
@@ -1303,13 +1316,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
             console.log('[Radio] musicmanRadio result', { ok: r.ok, textLen: r.text?.length, error: r.error })
             if (r.ok && r.text) {
               setDjLoading(false)
-              savedVolumeRef.current = pb.volume
               const played = await synthesizeAndPlayRadioScript(r.text)
               if (played.length > 0) {
                 djAudioRef.current = null
                 setDjActive(false)
                 isFadedRef.current = false
-                setVolume(savedVolumeRef.current)
+                unduck()
                 playTrack(nextTrack, queue, nextIdx, true)
                 setTimeout(() => {
                   setDjExiting(true)
@@ -1339,7 +1351,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
                 setDjActive(false)
                 setDjText('')
                 isFadedRef.current = false
-                setVolume(savedVolumeRef.current)
+                unduck()
                 playTrack(nextTrack, queue, nextIdx, true)
                 return
               }
@@ -1371,7 +1383,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
 
     window.addEventListener('musicman-dj-transition', handler)
     return () => window.removeEventListener('musicman-dj-transition', handler)
-  }, [autoDj, radioMode, playTrack, pb.volume, fadeVolumeIn, fadeVolumeOut])
+  }, [autoDj, radioMode, playTrack, unduck, fadeVolumeIn, fadeVolumeOut])
 
   // ── AirPlay / Audio Output ──
   interface AudioDevice { id: number; name: string; transport: string; isDefault: boolean }
@@ -1567,7 +1579,6 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     // transition handler, but the set-intro still left djSpeaker as
     // whatever it was, so the intro bubble showed "The Music Man").
     setDjSpeaker('djhands')
-    savedVolumeRef.current = pb.volume
 
     try {
       const compact = lib.tracks.map(t => ({
@@ -1681,7 +1692,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       setDjLoading(false)
       setDjText('')
     }
-  }, [lib.tracks, pb.volume, playTrack, setVolume])
+  }, [lib.tracks, playTrack, unduck])
 
   // Stop DJ mode — kill everything immediately. Shared by the toggle and
   // by Radio's start paths (Radio and DJ Mode are mutually exclusive).
@@ -1703,13 +1714,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     }
     // The intro's duck may still be ramping — stop it before restoring, or
     // it yanks the volume back down (the musicman-dj-cancel path does this).
-    clearFade()
     isFadedRef.current = false
-    setVolume(savedVolumeRef.current)
+    unduck()
     setDjActive(false)
     setDjLoading(false)
     setDjText('')
-  }, [setVolume, clearFade])
+  }, [unduck])
   stopDjModeIfActiveRef.current = () => { if (djModeActive) stopDjMode() }
 
   const handleDjModeClick = useCallback(() => {

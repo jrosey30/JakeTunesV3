@@ -5,7 +5,9 @@ import { Howl } from 'howler'
 import { usePlayback } from '../context/PlaybackContext'
 import { useLibrary } from '../context/LibraryContext'
 import { Track } from '../types'
-import { attachHowlToEq, detachHowlFromEq, resumeEqContext, snapHowlOutputVolume, primeAudioGraph, getEqAudioContext } from '../audio/eq'
+import { outputVolume, duckWatch } from '../audio/volumeModel'
+import { newSeekChase, requestSeek, seekLanded, SEEK_STALE_MS } from '../audio/seekChase'
+import { isTalkOverPlaying, attachHowlToEq, detachHowlFromEq, resumeEqContext, snapHowlOutputVolume, primeAudioGraph, getEqAudioContext } from '../audio/eq'
 import {
   scheduleAbsoluteFadeOut,
   scheduleAbsoluteStart,
@@ -546,6 +548,65 @@ type PlaybackSnapshot = ReturnType<typeof usePlayback>['state']
 let sharedStateRef: { current: PlaybackSnapshot } | null = null
 let sharedTracksRef: { current: Track[] } | null = null
 
+// The duck (V7 steady, 2026-11-24): while the Music Man talks the music is
+// multiplied by this, never by moving Jake's own volume. Every place that sets
+// a howl's level goes through outVolume(), so a duck holds across a track
+// change, a crossfade and a gapless seam, and the slider and the saved volume
+// never see it.
+let duckGain = 1
+function outVolume(): number {
+  return outputVolume(sharedStateRef ? sharedStateRef.current.volume : 1, duckGain)
+}
+/** The event Toolbar hears when the duck was lifted from outside it (Jake
+ *  moved the volume, or the watchdog found a duck with no voice over it). */
+export const DUCK_LIFTED_EVENT = 'jaketunes-duck-lifted'
+function liftDuck(why: 'user' | 'orphan'): void {
+  if (duckGain >= 1) return
+  duckGain = 1
+  snapHowlOutputVolume(sharedHowl, outVolume())
+  logAudioEvent('duck.lifted', { why })
+  window.dispatchEvent(new CustomEvent(DUCK_LIFTED_EVENT, { detail: { why } }))
+}
+// The watchdog: a duck below 1 with no talk-over clip playing for
+// DUCK_ORPHAN_MS is lifted. Runs only while ducked.
+let duckWatchTimer: ReturnType<typeof setInterval> | null = null
+let duckQuietSince: number | null = null
+function armDuckWatch(): void {
+  if (duckWatchTimer) return
+  duckQuietSince = null
+  duckWatchTimer = setInterval(() => {
+    const r = duckWatch(duckQuietSince, duckGain, isTalkOverPlaying(), Date.now())
+    duckQuietSince = r.quietSince
+    if (r.lift) liftDuck('orphan')
+    if (duckGain >= 1 && duckWatchTimer) { clearInterval(duckWatchTimer); duckWatchTimer = null }
+  }, 1000)
+}
+
+// One seek at a time (seekChase.ts). Keyed by the howl, so a position still
+// waiting when the song changes is never handed to the next one.
+const seekChase = newSeekChase<Howl>()
+let seekGiveUpTimer: ReturnType<typeof setTimeout> | null = null
+let seekIssueSerial = 0
+function issueSeek(howl: Howl, pos: number): void {
+  try { howl.seek(pos) } catch { /* element not ready — the landed path frees the chase */ }
+  if (seekGiveUpTimer) clearTimeout(seekGiveUpTimer)
+  const mine = ++seekIssueSerial
+  const done = () => {
+    if (mine !== seekIssueSerial) return // a replaced seek's late answer frees nothing
+    if (seekGiveUpTimer) { clearTimeout(seekGiveUpTimer); seekGiveUpTimer = null }
+    const next = seekLanded(seekChase, howl, Date.now())
+    if (next != null && sharedHowl === howl) issueSeek(howl, next)
+  }
+  const node = (howl as unknown as { _sounds?: Array<{ _node?: HTMLAudioElement }> })._sounds?.[0]?._node
+  if (node instanceof HTMLAudioElement) {
+    node.addEventListener('seeked', done, { once: true })
+    // No answer in time: let the next position go anyway (the iPhone's rule).
+    seekGiveUpTimer = setTimeout(() => { node.removeEventListener('seeked', done); done() }, SEEK_STALE_MS)
+  } else {
+    setTimeout(done, 0)
+  }
+}
+
 export function useAudio(opts?: { primary?: boolean }) {
   const { state, dispatch } = usePlayback()
   const { state: libState, dispatch: libDispatch } = useLibrary()
@@ -634,7 +695,7 @@ export function useAudio(opts?: { primary?: boolean }) {
           logAudioEvent('heartbeat.ctx.resume', { state: ctx.state })
         }
         resumeEqContext()
-        ensureHowlAudible(h, stateRef.current.volume)
+        ensureHowlAudible(h, outVolume())
 
         // 4.5.0-77 — UI-safe position recovery. The rAF loop is what
         // normally pushes SET_POSITION to React state at ~10 Hz. If
@@ -787,7 +848,7 @@ export function useAudio(opts?: { primary?: boolean }) {
       const fadeMs = crossfadeSettings.seconds * 1000
       const elapsedMs = Date.now() - crossfadeStartedAtMs
       const progress = Math.max(0, Math.min(1, elapsedMs / fadeMs))
-      const targetVol = stateRef.current.volume
+      const targetVol = outVolume()
       try { outgoingHowl.volume(targetVol * (1 - progress)) } catch { /* ignore */ }
       if (sharedHowl) {
         try { sharedHowl.volume(targetVol * progress) } catch { /* ignore */ }
@@ -1160,7 +1221,7 @@ export function useAudio(opts?: { primary?: boolean }) {
             setTimeout(() => {
               try {
                 if (!sharedHowl) return
-                const cur = (sharedHowl.volume() as number) || stateRef.current.volume
+                const cur = (sharedHowl.volume() as number) || outVolume()
                 sharedHowl.fade(cur, 0, fadeDur)
               } catch { /* ignore */ }
             }, fireDelay)
@@ -1186,7 +1247,7 @@ export function useAudio(opts?: { primary?: boolean }) {
                 seamIncomingBuffer,
                 ctx,
                 absoluteSeamTime,
-                stateRef.current.volume,
+                outVolume(),
                 20, // fade-in to mask buffer-start amplitude
               )
               sdx('scheduled', { startAt: +absoluteSeamTime.toFixed(4), leadMs: Math.round(msUntilEnd), bufDur: +seamIncomingBuffer.duration.toFixed(3) })
@@ -1301,7 +1362,7 @@ export function useAudio(opts?: { primary?: boolean }) {
         // onplay handler — the two ramps overlap in real time, giving a
         // clean amplitude crossing through zero at the boundary.
         const departing = sharedHowl
-        const curVol = (departing.volume() as number) || stateRef.current.volume
+        const curVol = (departing.volume() as number) || outVolume()
         try { departing.fade(curVol, 0, 25) } catch { /* ignore */ }
         window.setTimeout(() => {
           try { detachHowlFromEq(departing) } catch { /* ignore */ }
@@ -1324,7 +1385,7 @@ export function useAudio(opts?: { primary?: boolean }) {
       prefetchHowl = null
       prefetchTrackId = null
       const endedHolder = { v: false }
-      const targetVol = stateRef.current.volume
+      const targetVol = outVolume()
       promoted.once('play', () => {
         logAudioEvent('howl.onplay', { title: track.title, src: 'prefetch-promote' })
         attachHowlToEq(promoted)
@@ -1427,7 +1488,7 @@ export function useAudio(opts?: { primary?: boolean }) {
         // Pop suppression: ramp from silent up to user volume over
         // ~25ms. Pairs with the outgoing-Howl fade-out above to avoid
         // the speaker-cone click on track change.
-        fadeInHowl(howl, stateRef.current.volume, 25)
+        fadeInHowl(howl, outVolume(), 25)
         dispatchRef.current({ type: 'SET_DURATION', duration: howl.duration() })
         dx('raf.reschedule', { site: 'howl.onplay', title: track.title, isPaused })
         sharedRaf = requestAnimationFrame(updatePosition)
@@ -1974,7 +2035,7 @@ export function useAudio(opts?: { primary?: boolean }) {
           // cone from silent to whatever sample is current, producing
           // the click users heard at every gapless seam.
           sdx('branch', { path: 'gapless-prewarm' })
-          fadeInHowl(next, s.volume, 25)
+          fadeInHowl(next, outVolume(), 25)
           attachHowlToEq(next)
           // Brief 012: atomic dispatch — duration travels INSIDE the
           // PLAY_TRACK action so the reducer can't clobber it back to
@@ -2016,7 +2077,7 @@ export function useAudio(opts?: { primary?: boolean }) {
           sdx('branch', { path: 'standard-promote', bufReady: !!seamIncomingBuffer, scheduled: !!seamScheduled })
           const startIncoming = () => {
             attachHowlToEq(next)
-            fadeInHowl(next, s.volume, GAPLESS_FADE_IN_MS)
+            fadeInHowl(next, outVolume(), GAPLESS_FADE_IN_MS)
             dx('raf.reschedule', { site: 'standard-promote-onplay' })
             sharedRaf = requestAnimationFrame(updatePosition)
           }
@@ -2151,7 +2212,7 @@ export function useAudio(opts?: { primary?: boolean }) {
         }
         return
       }
-      snapHowlOutputVolume(sharedHowl, stateRef.current.volume)
+      snapHowlOutputVolume(sharedHowl, outVolume())
       sharedHowl?.play()
       dispatchRef.current({ type: 'RESUME' })
     }
@@ -2226,7 +2287,8 @@ export function useAudio(opts?: { primary?: boolean }) {
   const seek = useCallback((pct: number) => {
     if (sharedHowl && stateRef.current.duration > 0) {
       const pos = pct * stateRef.current.duration
-      sharedHowl.seek(pos)
+      const now = requestSeek(seekChase, pos, sharedHowl, Date.now())
+      if (now != null) issueSeek(sharedHowl, now)
       dispatchRef.current({ type: 'SET_POSITION', position: pos })
       // Invalidate the throttle gate so the very next rAF tick
       // dispatches the actual current position, not the user's
@@ -2238,13 +2300,26 @@ export function useAudio(opts?: { primary?: boolean }) {
     }
   }, [])
 
+  // Only Jake moves the volume (slider, arrows, menu, mute): any change of
+  // his lifts the duck, so a duck that never lifted can always be fixed by hand.
   const setVolume = useCallback((v: number) => {
-    snapHowlOutputVolume(sharedHowl, v)
+    if (duckGain < 1) {
+      duckGain = 1
+      window.dispatchEvent(new CustomEvent(DUCK_LIFTED_EVENT, { detail: { why: 'user' } }))
+    }
+    snapHowlOutputVolume(sharedHowl, outputVolume(v, duckGain))
     dispatchRef.current({ type: 'SET_VOLUME', volume: v })
   }, [])
 
+  // The duck stage: 1 = no duck. Never dispatches, never saved.
+  const setDuck = useCallback((g: number) => {
+    duckGain = Number.isFinite(g) ? Math.max(0, Math.min(1, g)) : 1
+    snapHowlOutputVolume(sharedHowl, outVolume())
+    if (duckGain < 1) armDuckWatch()
+  }, [])
+
   useEffect(() => {
-    snapHowlOutputVolume(sharedHowl, state.volume)
+    snapHowlOutputVolume(sharedHowl, outputVolume(state.volume, duckGain))
   }, [state.volume])
 
   // Hard stop — unloads the audio source AND clears playback state.
@@ -2264,5 +2339,5 @@ export function useAudio(opts?: { primary?: boolean }) {
     dispatchRef.current({ type: 'STOP' })
   }, [])
 
-  return { playTrack, togglePlayPause, nextTrack, prevTrack, seek, setVolume, stopPlayback }
+  return { playTrack, togglePlayPause, nextTrack, prevTrack, seek, setVolume, setDuck, stopPlayback }
 }

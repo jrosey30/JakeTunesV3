@@ -594,7 +594,25 @@ export function attachHowlToEq(howl: Howl | null | undefined): void {
  *  user's "fine for a while, then rattly, restart fixes it" matches
  *  this exactly. Disconnecting on end keeps the graph at a stable
  *  ~3-5 live nodes regardless of session length. */
+// Every voice clip that talks over the music (V7 steady): the duck watchdog
+// asks whether one is actually playing. Registered before any early return,
+// so a clip that couldn't be bound still counts.
+const talkClips = new Set<HTMLAudioElement>()
+function registerTalkClip(audio: HTMLAudioElement): void {
+  talkClips.add(audio)
+}
+/** Is any talk-over clip playing right now? Drops the finished ones. */
+export function isTalkOverPlaying(): boolean {
+  let playing = false
+  for (const a of talkClips) {
+    if (a.ended || a.error) { talkClips.delete(a); continue }
+    if (!a.paused) playing = true
+  }
+  return playing
+}
+
 export function attachClipToBroadcast(audio: HTMLAudioElement): void {
+  registerTalkClip(audio)
   buildChain()
   if (!audioContext || !preampNode) return
   if (boundSources.has(audio)) return
@@ -630,6 +648,7 @@ export function attachClipToBroadcast(audio: HTMLAudioElement): void {
 export function detachClipFromBroadcast(audio: HTMLAudioElement | null): void {
   if (!audio) return
   const src = boundSources.get(audio)
+  talkClips.delete(audio)
   if (!src) return
   try { src.disconnect() } catch { /* already disconnected / ctx closed */ }
   // Unlike detachHowlFromEq (which keeps the WeakMap entry because
@@ -671,6 +690,7 @@ function ensureBroadcastFx(): void {
  *  even if the bind didn't complete), which manifested as "no station
  *  ID played." */
 export function attachAnnouncerToBroadcast(audio: HTMLAudioElement): void {
+  registerTalkClip(audio)
   ensureBroadcastFx()
   if (!audioContext || !broadcastFxInput) {
     attachClipToBroadcast(audio)
