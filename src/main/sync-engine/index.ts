@@ -381,6 +381,14 @@ export function createSyncEngine(host: SyncEngineHost) {
       // The small iPods carry smaller files (2026-11-24): Gen 1 MP3, Y2KPod and IndieSleaze
       // 256k AAC, whatever the Device page's convert setting says (common/ipod-audio-format.ts).
       const ownFormat = convertOptionsForIpod(ipod.device?.id, convertOptions)
+      // Only the one-button Sync knows how to put MP3s on Gen 1 (names, codec, songs that
+      // can't be converted left off). The whole-library sync doesn't, and a whole library
+      // wouldn't fit on it anyway (review of PR #471).
+      if (ownFormat?.codec === 'mp3' && syncOpts?.origin !== 'activity-click') {
+        const msg = `${ipod.device?.name ?? 'This iPod'} plays MP3 only. Use Sync to fill it.`
+        console.error(`sync-to-ipod: REFUSED — ${msg}`)
+        return { ok: false, copied: 0, error: msg }
+      }
       if (ownFormat !== convertOptions) {
         console.log(`sync-to-ipod: ${ipod.device?.name} gets ${ownFormat?.targetKbps}k ${ownFormat?.codec === 'mp3' ? 'MP3' : 'AAC'} files`)
         convertOptions = ownFormat
