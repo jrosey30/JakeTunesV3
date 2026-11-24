@@ -36,12 +36,12 @@ describe('atBackgroundPriority', () => {
 })
 
 describe('the iPod sync’s converters go through it', () => {
-  it('the sync-convert cache (buildAacMirror): every ffmpeg and afconvert', async () => {
+  it('the sync-convert cache (buildAacMirror, and buildMp3Mirror for Gen 1): every ffmpeg and afconvert', async () => {
     const src = await readFile(new URL('../index.ts', import.meta.url), 'utf-8')
     const body = src.slice(src.indexOf('async function buildAacMirror('), src.indexOf('async function buildIpodSafeAlacMirror('))
     assert.match(body, /const bgExec = \(cmd: string, args: string\[\], o: \{ timeout: number \}\) => \{ const \[f, a\] = atBackgroundPriority\(cmd, args\); return execP\(f, a, o\) \}/)
     assert.doesNotMatch(body, /execP\('(ffmpeg|afconvert)'/, 'no converter at normal priority')
-    assert.equal((body.match(/bgExec\('(ffmpeg|afconvert)'/g) || []).length, 3)
+    assert.equal((body.match(/bgExec\('(ffmpeg|afconvert)'/g) || []).length, 4)
   })
 
   it('the iPod-safe ALAC mirror (convertToIpodSafeAlac): the decode and the encode', async () => {

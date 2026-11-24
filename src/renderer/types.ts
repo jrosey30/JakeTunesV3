@@ -1008,7 +1008,7 @@ declare global {
       allowDroppedImportPaths: (files: File[]) => Promise<{ ok: boolean; paths?: string[]; error?: string }>
       saveLibrary: (tracks: Track[], playlists?: Playlist[], force?: boolean, adoption?: boolean) => Promise<{ ok: boolean; deletedPaths?: number; preservedOrphanCount?: number; error?: string }>
       syncIpod: (existingIds: number[]) => Promise<{ ok: boolean; newTracks: Track[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }>
-      syncToIpod: (tracks: Track[], playlists: Playlist[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }, syncOpts?: { wipeFirst?: boolean; origin?: 'activity-click' | 'full-library-click' }) => Promise<{
+      syncToIpod: (tracks: Track[], playlists: Playlist[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 | 320; codec?: 'aac' | 'mp3' }, syncOpts?: { wipeFirst?: boolean; origin?: 'activity-click' | 'full-library-click' }) => Promise<{
         ok: boolean
         copied?: number
         copyErrors?: number
@@ -1100,9 +1100,9 @@ declare global {
       gaplessTrim?: (absPath: string) => Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number; paddingSec: number; originalSamples?: number } | null>
       saveMixtapeIntro?: (data: ArrayBuffer, voiceId?: string) => Promise<{ ok: boolean; path?: string; error?: string }>
       listMixtapeVoices?: () => Promise<{ ok: boolean; voices: Array<{ id: string; name: string }> }>
-      previewIpodSync?: (tracks: Track[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }) => Promise<{ ok: boolean; plan: Array<{ id: number; action: 'keep' | 'copy' }>; leaving: Array<{ path: string; title: string; artist: string }>; deviceFileCount?: number; error?: string }>
-      commitWorkoutSyncSet?: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; added?: Array<{ id: number; title: string; artist: string }>; removed?: Array<{ id: number; title: string; artist: string }> }) => Promise<{ ok: boolean; error?: string }>
-      getWorkoutSyncState?: () => Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; commentary: string; syncedAt: string; alacCount: number } | null }>
+      previewIpodSync?: (tracks: Track[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 | 320; codec?: 'aac' | 'mp3' }) => Promise<{ ok: boolean; plan: Array<{ id: number; action: 'keep' | 'copy' }>; leaving: Array<{ path: string; title: string; artist: string }>; deviceFileCount?: number; error?: string }>
+      commitWorkoutSyncSet?: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 | 320; codec?: 'aac' | 'mp3' }; added?: Array<{ id: number; title: string; artist: string }>; removed?: Array<{ id: number; title: string; artist: string }> }) => Promise<{ ok: boolean; error?: string }>
+      getWorkoutSyncState?: () => Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 | 320; codec?: 'aac' | 'mp3' }; commentary: string; syncedAt: string; alacCount: number } | null }>
       getActivityProfiles?: () => Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }>
       // iPod Pool (2026-09-02)
       getActivityPool?: () => Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; max?: number; readOnly?: boolean; managed?: boolean; note?: string | null; device?: { id: string | null; name: string; primary: boolean } }>

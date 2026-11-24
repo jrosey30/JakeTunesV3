@@ -12,6 +12,7 @@
 //  state and exposes accessors for it.
 // ════════════════════════════════════════════════════════════════════════
 
+import { convertOptionsForIpod } from '../../common/ipod-audio-format.ts'
 import { app } from 'electron'
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
@@ -83,7 +84,7 @@ export interface SyncEngineHost {
   /** Sets the detected mount AND derives the volume name — the exact
    *  two-write pattern every extracted call site used. */
   setMount: (m: string | null) => void
-  buildAacMirror: (srcPath: string, targetKbps: number) => Promise<string | null>
+  buildAacMirror: (srcPath: string, targetKbps: number, codec?: 'aac' | 'mp3') => Promise<string | null>
   buildIpodSafeAlacMirror: (srcPath: string) => Promise<string | null>
   candidateMusicMounts: () => Promise<string[]>
   cleanOrphansOnMusicRoot: (musicRoot: string, tracks: Array<{ path?: string }>, protectMtimeAfterMs?: number) => Promise<{ deleted: number; bytesFreed: number; protected: number }>
@@ -377,6 +378,13 @@ export function createSyncEngine(host: SyncEngineHost) {
         ipodModel = lists?.find((l) => l.id === ipod.device!.id)?.model
       }
       if (ipod.device && !ipod.device.primary) console.log(`sync-to-ipod: ${ipod.device.name} — its own sync state lives in ${ipod.stateDir}`)
+      // The small iPods carry smaller files (2026-11-24): Gen 1 MP3, Y2KPod and IndieSleaze
+      // 256k AAC, whatever the Device page's convert setting says (common/ipod-audio-format.ts).
+      const ownFormat = convertOptionsForIpod(ipod.device?.id, convertOptions)
+      if (ownFormat !== convertOptions) {
+        console.log(`sync-to-ipod: ${ipod.device?.name} gets ${ownFormat?.targetKbps}k ${ownFormat?.codec === 'mp3' ? 'MP3' : 'AAC'} files`)
+        convertOptions = ownFormat
+      }
       // Plays first (2026-10-28): keep a copy of Play Counts/OTG + the pre-sync
       // catalog and manifest, bring the plays home, and confirm they are
       // recorded — BEFORE either engine below wipes or rewrites the card.
@@ -972,7 +980,7 @@ export function createSyncEngine(host: SyncEngineHost) {
               let srcPath = c.localFile
               if (convertOptions?.enabled) {
                 try {
-                  const mirror = await buildAacMirror(c.localFile, convertOptions.targetKbps)
+                  const mirror = await buildAacMirror(c.localFile, convertOptions.targetKbps, convertOptions.codec)
                   if (mirror) srcPath = mirror
                 } catch { /* keep library master as recopy source */ }
               }
@@ -1133,7 +1141,7 @@ export function createSyncEngine(host: SyncEngineHost) {
             phase: 'copy', current: copied + copyErrors, total: totalToCopy,
             title: `Converting → ${convertOptions.targetKbps}k AAC: ${title}`,
           })
-          const mirror = await buildAacMirror(masterPath, convertOptions.targetKbps)
+          const mirror = await buildAacMirror(masterPath, convertOptions.targetKbps, convertOptions.codec)
           if (mirror) {
             srcToCopy = mirror
             restageThis = undefined
@@ -1392,7 +1400,7 @@ export function createSyncEngine(host: SyncEngineHost) {
           if (await isStreamedTrackFile(libraryFile)) continue
           let srcForVerify = libraryFile
           if (convertOptions?.enabled) {
-            const mirror = await buildAacMirror(libraryFile, convertOptions.targetKbps)
+            const mirror = await buildAacMirror(libraryFile, convertOptions.targetKbps, convertOptions.codec)
             if (mirror) srcForVerify = mirror
           }
           const sz = (await stat(srcForVerify)).size

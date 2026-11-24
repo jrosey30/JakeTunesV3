@@ -138,7 +138,7 @@ interface WorkoutSyncState {
    *  auto-repair replays these when ui-state's convert prefs are missing
    *  (they got clobbered once and every repair silently aborted;
    *  2026-08-07). Replaying the recorded choice is not a silent default. */
-  convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }
+  convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 | 320; codec?: 'aac' | 'mp3' }
   brief?: ActivityBrief
 }
 
@@ -583,7 +583,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
     payload: {
       trackIds: number[]; name: string; commentary: string; alacCount: number
       brief: ActivityBrief; weather?: ActivityWeather | null
-      convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }
+      convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 | 320; codec?: 'aac' | 'mp3' }
       added?: Array<{ id: number; title: string; artist: string }>
       removed?: Array<{ id: number; title: string; artist: string }>
     },
