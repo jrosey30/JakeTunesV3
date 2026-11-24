@@ -2,6 +2,7 @@
 // Keeps platform-branching out of the main IPC handlers so each site
 // has one call like findIpodVolume() instead of an if/else tree.
 
+import { DEFAULT_IMPORT_FORMAT as COMMON_DEFAULT_IMPORT_FORMAT } from '../common/import-format.ts'
 import { join } from 'path'
 import { open, readdir, stat } from 'fs/promises'
 import { execFile, execSync } from 'child_process'
@@ -707,7 +708,7 @@ export function extensionForFormat(fmt: AudioFormat): string {
  * ALAC, not AAC: the library master stays lossless unless the setting
  * itself asks for something else.
  */
-export const DEFAULT_IMPORT_FORMAT: AudioFormat = 'alac'
+export const DEFAULT_IMPORT_FORMAT: AudioFormat = COMMON_DEFAULT_IMPORT_FORMAT
 
 /**
  * Output format for one imported file.

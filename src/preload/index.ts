@@ -872,8 +872,8 @@ const electronAPI = {
     ipcRenderer.invoke('check-cd-drive'),
   getCdInfo: (): Promise<{ ok: boolean; volumeName?: string; volumePath?: string; artist?: string; album?: string; year?: string; genre?: string; tracks?: { number: number; title: string; duration: number; filePath: string }[]; error?: string }> =>
     ipcRenderer.invoke('get-cd-info'),
-  ripCdTracks: (tracks: { number: number; title: string; duration: number; filePath: string }[], metadata: { artist: string; album: string; year: string; genre: string }, nextId: number, format?: string): Promise<{ ok: boolean; tracks?: unknown[]; error?: string }> =>
-    ipcRenderer.invoke('rip-cd-tracks', tracks, metadata, nextId, format),
+  ripCdTracks: (tracks: { number: number; title: string; duration: number; filePath: string }[], metadata: { artist: string; album: string; year: string; genre: string }, nextId: number): Promise<{ ok: boolean; tracks?: unknown[]; error?: string }> =>
+    ipcRenderer.invoke('rip-cd-tracks', tracks, metadata, nextId),
   onCdRipProgress: (callback: (progress: { current: number; total: number; trackNumber: number; trackTitle: string; track?: unknown; error?: string }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: { current: number; total: number; trackNumber: number; trackTitle: string; track?: unknown; error?: string }) => callback(progress)
     ipcRenderer.on('cd-rip-progress', handler)
@@ -963,16 +963,6 @@ const electronAPI = {
     const handler = (_event: Electron.IpcRendererEvent, state: { onCall: boolean }) => callback(state)
     ipcRenderer.on('call-state-changed', handler)
     return () => { ipcRenderer.removeListener('call-state-changed', handler) }
-  },
-  // iPod Classic ALAC compatibility (File → Library → Fix iPod Compatibility…)
-  alacCompatScan: (): Promise<{ ok: boolean; count?: number; samples?: unknown[]; error?: string }> =>
-    ipcRenderer.invoke('alac-compat-scan'),
-  alacCompatFix: (): Promise<{ ok: boolean; error?: string; summary?: string }> =>
-    ipcRenderer.invoke('alac-compat-fix'),
-  onAlacCompatProgress: (callback: (p: { current: number; total: number; file: string }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, p: { current: number; total: number; file: string }) => callback(p)
-    ipcRenderer.on('alac-compat-progress', handler)
-    return () => { ipcRenderer.removeListener('alac-compat-progress', handler) }
   },
   // 4.1 Library Maintenance: ALAC play-cache management. Replaces the
   // launch-time prewarm scanner with explicit user-triggered actions.

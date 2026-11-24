@@ -1,17 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { enqueueFiles } from '../importQueue'
+import { IMPORT_FORMAT_LABELS, importFormatFromSettings, type ImportFormat } from '../../common/import-format'
 import '../styles/import-convert.css'
-
-type ImportFormat = 'aac-256' | 'aac-128' | 'aac-320' | 'alac' | 'aiff' | 'wav'
-
-const FORMAT_LABELS: Record<ImportFormat, string> = {
-  'aac-256': 'AAC (iTunes Plus, 256 kbps)',
-  'aac-128': 'AAC (128 kbps)',
-  'aac-320': 'AAC (320 kbps)',
-  'alac': 'Apple Lossless (ALAC)',
-  'aiff': 'AIFF (Uncompressed)',
-  'wav': 'WAV (Uncompressed)',
-}
 
 interface Props {
   onClose: () => void
@@ -19,27 +9,23 @@ interface Props {
 
 /**
  * File > Import and Convert dialog. Pick audio files or entire
- * folders, choose an output format (e.g. ALAC for WAV/FLAC sources),
- * and the app will convert + import each file with live progress
- * in the pill. Supports drag-and-drop onto the dialog too.
+ * folders and the app converts + imports each file with live progress
+ * in the pill. Supports drag-and-drop onto the dialog too. The format is
+ * Settings › Library's, the one every import uses (common/import-format.ts);
+ * this dialog has no picker of its own.
  */
 export default function ImportConvertModal({ onClose }: Props) {
   const [paths, setPaths] = useState<string[]>([])
-  const [format, setFormat] = useState<ImportFormat>('alac')
+  const [format, setFormat] = useState<ImportFormat | null>(null)
   const [submitted, setSubmitted] = useState(false)
   const [dropHere, setDropHere] = useState(false)
   const [error, setError] = useState('')
 
-  // Seed format from persisted preference (same one CD Import uses).
+  // Shown only: the main process reads the same setting for each file.
   useEffect(() => {
-    window.electronAPI.loadUiState().then(r => {
-      const f = (r.ok && r.state && typeof (r.state as Record<string, unknown>).importFormat === 'string')
-        ? (r.state as Record<string, unknown>).importFormat as ImportFormat
-        : null
-      if (f && ['aac-256', 'aac-128', 'aac-320', 'alac', 'aiff', 'wav'].includes(f)) {
-        setFormat(f)
-      }
-    }).catch(() => {})
+    window.electronAPI.loadAppSettings()
+      .then(r => setFormat(importFormatFromSettings(r.ok ? r.settings : null)))
+      .catch(() => setFormat(importFormatFromSettings(null)))
   }, [])
 
   const handlePick = useCallback(async () => {
@@ -93,18 +79,11 @@ export default function ImportConvertModal({ onClose }: Props) {
   const handleStart = useCallback(async () => {
     if (paths.length === 0) return
     setError('')
-    // Persist format so future drops and CD rips match this choice.
-    try {
-      const ui = await window.electronAPI.loadUiState()
-      const existing = (ui.ok && ui.state) ? ui.state : {}
-      await window.electronAPI.saveUiState({ ...existing, importFormat: format })
-    } catch { /* non-fatal */ }
-
     // Hand the paths off to the global import queue and close the
     // dialog. The floating queue panel takes over from here — the
     // user gets per-file progress, retry on failure, and the modal
     // doesn't need to babysit a 30-minute import.
-    const added = await enqueueFiles(paths, format)
+    const added = await enqueueFiles(paths)
     setSubmitted(true)
     if (added === 0) {
       setError('Those files are already queued or already in your library.')
@@ -112,7 +91,7 @@ export default function ImportConvertModal({ onClose }: Props) {
     }
     // Brief confirmation, then close so the queue panel is unobstructed.
     setTimeout(() => onClose(), 600)
-  }, [paths, format, onClose])
+  }, [paths, onClose])
 
   const baseName = (p: string): string => p.substring(p.lastIndexOf('/') + 1) || p
 
@@ -126,8 +105,8 @@ export default function ImportConvertModal({ onClose }: Props) {
 
         <div className="imp-body">
           <p className="imp-help">
-            Add files or whole folders (WAV, FLAC, AIFF, MP3, M4A, etc.) and pick a target
-            format. Everything you add will be converted and dropped into your library.
+            Add files or whole folders (WAV, FLAC, AIFF, MP3, M4A, etc.). Everything you
+            add will be converted and dropped into your library.
           </p>
 
           <div
@@ -142,18 +121,9 @@ export default function ImportConvertModal({ onClose }: Props) {
             <span className="imp-dropzone-hint">or drag them here</span>
           </div>
 
-          <div className="imp-format-row">
-            <label htmlFor="imp-format">Convert to:</label>
-            <select
-              id="imp-format"
-              value={format}
-              onChange={e => setFormat(e.target.value as ImportFormat)}
-            >
-              {(Object.entries(FORMAT_LABELS) as [ImportFormat, string][]).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
-              ))}
-            </select>
-          </div>
+          <p className="imp-help imp-format-note">
+            Converts to {format ? IMPORT_FORMAT_LABELS[format] : '…'}. Change it in Settings › Library.
+          </p>
 
           {paths.length > 0 && (
             <>

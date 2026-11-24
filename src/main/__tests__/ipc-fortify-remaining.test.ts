@@ -52,7 +52,7 @@ test('index.ts leftover pockets use ipc.handle with public or refuse', () => {
   assert.doesNotMatch(src, /ipcMain\.handle\s*\(/)
   assert.match(src, /ipc\.handle\('get-related-artists'/)
   assert.match(src, /ipc\.handle\('get-app-version', \(\) => app\.getVersion\(\), \{ public: true \}/)
-  assert.match(src, /ipc\.handle\('alac-compat-scan'/)
+  assert.doesNotMatch(src, /ipc\.handle\('alac-compat-(scan|fix)'/)
   assert.match(src, /ipc\.handle\('scan-dead-tracks'/)
   assert.match(src, /ipc\.handle\('prepare-alac-cache'/)
   assert.match(src, /ipc\.handle\('load-tracks'/)
@@ -63,7 +63,7 @@ test('index.ts leftover pockets use ipc.handle with public or refuse', () => {
 })
 
 test('paid / mutate leftovers still default-deny at the registrar', () => {
-  for (const ch of ['get-related-artists', 'alac-compat-scan', 'prepare-alac-cache', 'record-store:get-shelves']) {
+  for (const ch of ['get-related-artists', 'prepare-alac-cache', 'record-store:get-shelves']) {
     assert.throws(
       () => assertIpcRegisterOptions(ch, undefined),
       /must pass \{ refuse \} or \{ public: true \}/,
@@ -74,7 +74,7 @@ test('paid / mutate leftovers still default-deny at the registrar', () => {
     { public: true },
   )
   assert.deepEqual(
-    assertIpcRegisterOptions('alac-compat-scan', { refuse: REFUSED_SENDER }),
+    assertIpcRegisterOptions('prepare-alac-cache', { refuse: REFUSED_SENDER }),
     { public: false },
   )
 })

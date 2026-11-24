@@ -14,10 +14,11 @@ import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { findFreeImportedId, shouldEnqueueStreamConvert, spendImportedId } from '../import-pipeline'
 import {
-  IS_MAC, type AudioFormat, convertAudio, DEFAULT_IMPORT_FORMAT, ejectOpticalMedia, extensionForFormat,
+  IS_MAC, convertAudio, ejectOpticalMedia, extensionForFormat,
   hasOpticalMedia, listMountPoints, volumeNameFromMount,
 } from '../platform'
 import { safeIpcError } from '../safe-ipc-error'
+import type { ImportFormat } from '../../common/import-format'
 
 export interface CdIpcHost {
   getMusicDir: () => string
@@ -30,6 +31,8 @@ export interface CdIpcHost {
   readOffloadAudio?: () => Promise<boolean>
   registerKnownCodec: (path: string, mtime: number, codec: string) => void
   sendToRenderer: (channel: string, ...args: unknown[]) => void
+  /** Settings › Library's import format, the only one (common/import-format.ts). */
+  readImportFormat: () => Promise<ImportFormat>
 }
 
 export function registerCdIpc(ipc: IpcRegistrar, host: CdIpcHost): void {
@@ -239,7 +242,6 @@ export function registerCdIpc(ipc: IpcRegistrar, host: CdIpcHost): void {
     cdTracks: Array<{ number: number; title: string; duration: number; filePath: string }>,
     metadata: { artist: string; album: string; year: string; genre: string },
     nextId: number,
-    format?: string
   ) => {
     const imported: Array<Record<string, unknown>> = []
 
@@ -257,11 +259,10 @@ export function registerCdIpc(ipc: IpcRegistrar, host: CdIpcHost): void {
       console.warn(`rip-cd-tracks: nextId ${nextId} is taken (a file imported_${nextId}.* exists, or the id was spent — track-id-high-water.ts); bumped to ${id}`)
     }
 
-    // Validate and default the format.
-    const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
-    const fmt: AudioFormat = validFormats.includes(format as AudioFormat)
-      ? (format as AudioFormat)
-      : DEFAULT_IMPORT_FORMAT
+    // The one import format: Settings › Library (default Apple Lossless).
+    // The CD page has no picker of its own; a format the renderer sends
+    // is not read.
+    const fmt: ImportFormat = await host.readImportFormat()
     const destExt = extensionForFormat(fmt)
 
     const cdBatchBaseTime = Date.now()
