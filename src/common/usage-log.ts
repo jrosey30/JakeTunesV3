@@ -118,6 +118,20 @@ function cutBytes(s: string, max: number): string {
 }
 
 /**
+ * True when a media element's `error` is Howler parking a discarded <audio> on
+ * its silent data: WAV (howler.js `_clearSound`, on every unload and stop).
+ * The CSP's media-src has no data:, so Chromium refuses it with MediaError 4,
+ * "Media load rejected by URL safety check", while `currentSrc` still names the
+ * song that just finished. Nothing failed: the next song is already starting
+ * (2026-11-14..24: 1,581 such rows, almost all within a second of a
+ * play.start). The renderer never plays a song from a data: URL, so `src` is
+ * enough to tell. Twin of useAudio.ts attachNativeListeners' own check.
+ */
+export function isUnloadPlaceholderError(src: string | null | undefined): boolean {
+  return typeof src === 'string' && /^data:/i.test(src)
+}
+
+/**
  * A path, made safe. The music library's own relative path (the part from
  * `iPod_Control/` on, or `F12/ABCD.m4a`) may stay; anything else on the disk
  * is "[path]". `ipod-audio://` URLs are decoded first.
