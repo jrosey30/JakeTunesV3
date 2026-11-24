@@ -17,6 +17,7 @@ import AlbumArtImage from '../components/AlbumArtImage'
 import { useLibrary } from '../context/LibraryContext'
 import { queueArtworkResolutions } from '../utils/artworkLookup'
 import { useQuizSnippet } from '../hooks/useQuizSnippet'
+import { claimTransportKeys } from '../input-mode'
 import {
   AUDIT_DONE_LINE, AUDIT_PROMPT, auditChoiceForKey, auditProgressLine, auditRestingLine,
   type AuditChoice, type AuditProgress, type AuditQuestion,
@@ -121,6 +122,14 @@ export default function Top1000AuditPanel({ byId, artFor, onClose }: Props): JSX
     void hear(song)
   }, [hearing, stopSnippet, hear])
 
+  // App.tsx toggles the music on Space in the capture phase on window, before any view hears it.
+  // While a question is up, Space is the preview's (as the Listen List does): claim it, and listen in
+  // the capture phase too, so Space never starts or stops the library's music here.
+  const asking = phase.kind === 'ask'
+  useEffect(() => {
+    if (!asking) return
+    return claimTransportKeys('top1000-audit', ['Space'])
+  }, [asking])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null
@@ -128,8 +137,9 @@ export default function Top1000AuditPanel({ byId, artFor, onClose }: Props): JSX
       if (e.metaKey || e.ctrlKey || e.altKey) return
       if (phase.kind !== 'ask') return
       const q = phase.q
-      if (e.key === ' ') {
+      if (e.code === 'Space' || e.key === ' ') {
         e.preventDefault()
+        e.stopPropagation()
         if (!e.repeat) spacePlay(q)
         return
       }
@@ -139,8 +149,8 @@ export default function Top1000AuditPanel({ byId, artFor, onClose }: Props): JSX
       if (e.repeat || !ready()) return
       void send(q, choice)
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [phase, send, ready, spacePlay])
 
   const card = (q: AuditQuestion, s: QuizSongRef, i: number) => {

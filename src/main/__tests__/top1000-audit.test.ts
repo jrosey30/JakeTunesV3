@@ -7,7 +7,8 @@ import {
   auditChoiceForKey, auditDoorLabel, auditProgressLine, auditRestingLine, foldWaiting, parseAuditNext, parseAuditProgress,
   AUDIT_DONE_LINE,
 } from '../../common/top1000-audit-doc.ts'
-import { AUDIT_PENDING_FILE, createTop1000Audit, sendOutcome } from '../top1000-audit-outbox.ts'
+import { AUDIT_PENDING_FILE, createTop1000Audit, restingNotBefore, sendOutcome } from '../top1000-audit-outbox.ts'
+import { claimTransportKeys, shouldYieldToClaim } from '../../renderer/input-mode.ts'
 import type { FetchLike } from '../top1000-client.ts'
 
 const progress = { answered: 12, total: 282, today: 12, perDay: 15 }
@@ -45,6 +46,34 @@ describe('blind check: reading /next', () => {
   })
 })
 
+describe('blind check: a 429 holds until homemini\'s next day', () => {
+  const now = new Date('2026-11-24T20:00:00.000Z')
+  it('waits until restingUntil, at most 26 hours; none or unreadable is an hour', () => {
+    assert.equal(restingNotBefore('2026-11-25T05:00:00.000Z', now), '2026-11-25T05:00:00.000Z')
+    assert.equal(restingNotBefore('2026-12-30T05:00:00.000Z', now), '2026-11-25T22:00:00.000Z')
+    assert.equal(restingNotBefore(null, now), '2026-11-24T21:00:00.000Z')
+    assert.equal(restingNotBefore('tomorrow', now), '2026-11-24T21:00:00.000Z')
+  })
+})
+
+describe('blind check: Space belongs to the preview while a question is up', () => {
+  const src = readFileSync(join(import.meta.dirname, '../../renderer/views/Top1000AuditPanel.tsx'), 'utf-8')
+  it('claims Space (so App.tsx stands aside) and listens in the capture phase', () => {
+    assert.match(src, /claimTransportKeys\('top1000-audit', \['Space'\]\)/)
+    assert.match(src, /if \(!asking\) return\s*\n\s*return claimTransportKeys/)
+    assert.match(src, /window\.addEventListener\('keydown', onKey, true\)/)
+    assert.match(src, /window\.removeEventListener\('keydown', onKey, true\)/)
+  })
+  it('the claim makes the app\'s play/pause yield on Space only', () => {
+    const release = claimTransportKeys('top1000-audit', ['Space'])
+    try {
+      assert.equal(shouldYieldToClaim('Space'), true)
+      assert.equal(shouldYieldToClaim('ArrowLeft'), false)
+    } finally { release() }
+    assert.equal(shouldYieldToClaim('Space'), false)
+  })
+})
+
 describe('blind check: keys and words', () => {
   it('maps the keys to the four choices', () => {
     assert.equal(auditChoiceForKey('1'), 'first')
@@ -64,7 +93,11 @@ describe('blind check: keys and words', () => {
 
   it('shows the door only while there is a check to do', () => {
     assert.equal(auditDoorLabel(parseAuditNext({ progress, question: question('q') })), 'Blind check · 3 left today')
-    assert.equal(auditDoorLabel({ kind: 'resting', until: null, progress: { ...progress, today: 15 } }), 'Blind check · 0 left today')
+    // resting, or nothing left today: no door
+    assert.equal(auditDoorLabel({ kind: 'resting', until: null, progress }), null)
+    assert.equal(auditDoorLabel({ kind: 'resting', until: null, progress: { ...progress, today: 15 } }), null)
+    const ask = parseAuditNext({ progress: { ...progress, today: 15 }, question: question('q') })
+    assert.equal(auditDoorLabel(ask), null)
     assert.equal(auditDoorLabel({ kind: 'off' }), null)
     assert.equal(auditDoorLabel({ kind: 'done', progress }), null)
     assert.equal(auditDoorLabel(null), null)
@@ -81,6 +114,8 @@ describe('blind check: keys and words', () => {
     assert.deepEqual(sendOutcome(409, { error: 'not-due' }), { kind: 'not-due' })
     assert.deepEqual(sendOutcome(404, { off: true }), { kind: 'off' })
     assert.deepEqual(sendOutcome(400, { error: 'bad choice' }), { kind: 'refused', error: 'bad choice' })
+    assert.deepEqual(sendOutcome(429, { restingUntil: '2026-11-25T05:00:00.000Z' }), { kind: 'resting', until: '2026-11-25T05:00:00.000Z' })
+    assert.deepEqual(sendOutcome(429, null), { kind: 'resting', until: null })
     // no body (a proxy's page), a 5xx, a 404 that isn't homemini's "off": not final
     for (const [st, b] of [[502, null], [500, { error: 'x' }], [404, null], [404, { error: 'nope' }], [200, null]] as const) {
       assert.deepEqual(sendOutcome(st, b), { kind: 'retry' })
@@ -101,6 +136,9 @@ function fakeHomemini() {
     /** qids homemini will say aren't due */
     notDue: new Set<string>(),
     fail5xx: 0,
+    /** answers past this many today get a 429 */
+    capToday: Infinity,
+    restingUntil: undefined as string | undefined,
     nextQuestion: question('q13', 3, 4) as unknown,
   }
   const fetchImpl: FetchLike = async (url, init) => {
@@ -119,6 +157,7 @@ function fakeHomemini() {
     if (url.endsWith('/api/top1000/audit/answer')) {
       if (state.fail5xx > 0) { state.fail5xx--; return reply(503, { error: 'busy' }) }
       if (state.notDue.has(String(body?.qid))) return reply(409, { error: 'not-due' })
+      if (state.answered >= state.capToday) return reply(429, state.restingUntil ? { restingUntil: state.restingUntil } : { error: 'resting' })
       state.answered++
       return reply(200, { ok: true, progress: { answered: state.answered, total: 282, today: state.answered, perDay: 15 } })
     }
@@ -133,7 +172,8 @@ describe('blind check: answers go on disk first and leave in order', () => {
     if (dir) rmSync(dir, { recursive: true, force: true })
     dir = mkdtempSync(join(tmpdir(), 't1k-audit-'))
   })
-  const make = (fetchImpl: FetchLike) => createTop1000Audit({ baseUrl: 'http://homemini:3000/', stateDir: dir, fetchImpl, warn: () => undefined })
+  let clock = new Date('2026-11-24T20:00:00.000Z')
+  const make = (fetchImpl: FetchLike) => createTop1000Audit({ baseUrl: 'http://homemini:3000/', stateDir: dir, fetchImpl, now: () => clock, warn: () => undefined })
   const waitingFile = () => existsSync(join(dir, AUDIT_PENDING_FILE)) ? JSON.parse(readFileSync(join(dir, AUDIT_PENDING_FILE), 'utf-8')) as { answers: Array<{ qid: string; choice: string }> } : null
 
   it('sends at once with signal and leaves nothing waiting', async () => {
@@ -213,7 +253,7 @@ describe('blind check: answers go on disk first and leave in order', () => {
     assert.deepEqual(hm.seen.map((s) => s.body?.qid), ['q7'])
   })
 
-  it('off drops what is waiting and reads as off; an older homemini (404) reads as off too', async () => {
+  it('off keeps what is waiting, in order, and sends it when the check is back; any no longer due leave on their 409', async () => {
     const hm = fakeHomemini()
     const audit = make(hm.fetchImpl)
     hm.state.online = false
@@ -222,10 +262,57 @@ describe('blind check: answers go on disk first and leave in order', () => {
     hm.state.online = true
     hm.state.off = true
     const n = await audit.next()
-    assert.deepEqual(n, { ok: true, value: { kind: 'off', waiting: 0 } })
+    assert.deepEqual(n, { ok: true, value: { kind: 'off', waiting: 2 } })
+    assert.deepEqual(waitingFile()?.answers.map((x) => x.qid), ['q1', 'q2'])
+    hm.state.off = false
+    hm.state.notDue.add('q1')
+    hm.seen.length = 0
+    assert.equal(await audit.flush(), 0)
+    assert.deepEqual(hm.seen.map((x) => x.body?.qid), ['q1', 'q2'])
+    assert.equal(hm.state.answered, 13)
     assert.deepEqual(waitingFile()?.answers, [])
     const old: FetchLike = async () => ({ ok: false, status: 404, json: async () => { throw new Error('html') } })
     assert.deepEqual(await make(old).next(), { ok: true, value: { kind: 'off', waiting: 0 } })
+  })
+
+  it('a 429 holds the answer and the rest, sends nothing until restingUntil, then sends them in order', async () => {
+    clock = new Date('2026-11-24T20:00:00.000Z')
+    const hm = fakeHomemini()
+    const audit = make(hm.fetchImpl)
+    hm.state.capToday = 12
+    hm.state.restingUntil = '2026-11-25T05:00:00.000Z'
+    const r = await audit.answer({ qid: 'q13', choice: 'second' })
+    assert.equal(r.ok && r.value.waiting, 1)
+    hm.state.online = false
+    await audit.answer({ qid: 'q14', choice: 'equal' })
+    hm.state.online = true
+    const file = waitingFile() as { answers: Array<{ qid: string }>; notBefore?: string } | null
+    assert.deepEqual(file?.answers.map((x) => x.qid), ['q13', 'q14'])
+    assert.equal(file?.notBefore, '2026-11-25T05:00:00.000Z')
+    // the 5-minute retry, and an hour later: nothing goes
+    hm.seen.length = 0
+    assert.equal(await audit.flush(), 2)
+    clock = new Date('2026-11-24T21:00:00.000Z')
+    assert.equal(await audit.flush(), 2)
+    assert.equal(hm.seen.length, 0)
+    // homemini's next day: both go, in order, and the hold is gone
+    clock = new Date('2026-11-25T05:00:01.000Z')
+    hm.state.capToday = Infinity
+    assert.equal(await audit.flush(), 0)
+    assert.deepEqual(hm.seen.map((x) => x.body?.qid), ['q13', 'q14'])
+    assert.equal((waitingFile() as { notBefore?: string } | null)?.notBefore, undefined)
+  })
+
+  it('a 429 with no time holds for an hour', async () => {
+    clock = new Date('2026-11-24T20:00:00.000Z')
+    const hm = fakeHomemini()
+    const audit = make(hm.fetchImpl)
+    hm.state.capToday = 12
+    await audit.answer({ qid: 'q13', choice: 'first' })
+    assert.equal((waitingFile() as { notBefore?: string } | null)?.notBefore, '2026-11-24T21:00:00.000Z')
+    clock = new Date('2026-11-24T21:00:00.000Z')
+    hm.state.capToday = Infinity
+    assert.equal(await audit.flush(), 0)
   })
 
   it('refuses an incomplete answer and keeps nothing; one answer per question', async () => {

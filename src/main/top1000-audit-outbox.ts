@@ -10,8 +10,11 @@
  *   - 200: homemini has it; it leaves the file.
  *   - 409: not due (answered already, or not this question's turn). Final: it
  *     leaves the file and is never sent again.
- *   - 404 { off: true }: the check is off. Nothing waiting can land; all of it
- *     leaves the file.
+ *   - 404 { off: true }: the check is off for now. The answers stay, in order;
+ *     when it is back on, any no longer due get their 409 and leave.
+ *   - 429: today's answers are all in, and this one was NOT recorded. It and
+ *     the rest wait until homemini's `restingUntil` (at most 26 h; none given,
+ *     an hour), kept in the file as `notBefore`, then go in order.
  *   - 400: homemini refused it. Final, logged.
  *   - anything else (no answer, 5xx, a proxy's page): it stays, and the rest
  *     wait behind it for the next /next, the next answer, or the 5-minute retry.
@@ -38,7 +41,8 @@ export const AUDIT_PENDING_FILE = 'top1000-audit-pending.json'
 export const AUDIT_RETRY_MS = 5 * 60_000
 
 export interface PendingAuditAnswer { qid: string | number; choice: AuditChoice; at: string }
-interface PendingDoc { version: 1; answers: PendingAuditAnswer[] }
+/** `notBefore`: homemini said today's answers are all in (429); nothing is sent before then. */
+interface PendingDoc { version: 1; answers: PendingAuditAnswer[]; notBefore?: string }
 
 export type AuditResult<T> = { ok: true; value: T } | { ok: false; error: string }
 export type AuditNextValue = AuditState & { waiting: number }
@@ -49,14 +53,29 @@ export type SendOutcome =
   | { kind: 'sent'; progress: AuditProgress | null }
   | { kind: 'not-due' }
   | { kind: 'off' }
+  | { kind: 'resting'; until: string | null }
   | { kind: 'refused'; error: string }
   | { kind: 'retry' }
+
+/** The longest a 429 can hold the waiting answers, and the hold when it names no time. */
+export const RESTING_CAP_MS = 26 * 3600_000
+export const RESTING_DEFAULT_MS = 3600_000
+
+/** When to send again after a 429: its restingUntil, never more than 26 h away; none or unreadable, in an hour. */
+export function restingNotBefore(until: string | null, now: Date): string {
+  const t = until ? Date.parse(until) : NaN
+  const cap = now.getTime() + RESTING_CAP_MS
+  const at = Number.isFinite(t) ? Math.min(t, cap) : now.getTime() + RESTING_DEFAULT_MS
+  return new Date(at).toISOString()
+}
 
 export function sendOutcome(status: number, body: unknown): SendOutcome {
   const b = body && typeof body === 'object' ? body as Record<string, unknown> : null
   if (status === 200 && b?.ok === true) return { kind: 'sent', progress: parseAuditProgress(b.progress) }
   if (status === 409 && b) return { kind: 'not-due' }
   if (status === 404 && b?.off === true) return { kind: 'off' }
+  // Today's answers are all in: this one was NOT recorded. It waits, in its place, until homemini's next day.
+  if (status === 429) return { kind: 'resting', until: typeof b?.restingUntil === 'string' ? b.restingUntil : null }
   if (status === 400 && b) return { kind: 'refused', error: typeof b.error === 'string' ? b.error : 'bad request' }
   return { kind: 'retry' }
 }
@@ -69,6 +88,8 @@ export function parsePendingDoc(raw: unknown): PendingDoc {
     if (!a || !isAuditQid(a.qid) || !isAuditChoice(a.choice)) continue
     out.answers.push({ qid: a.qid, choice: a.choice, at: String(a.at ?? '') })
   }
+  const nb = (doc as { notBefore?: unknown }).notBefore
+  if (typeof nb === 'string' && Number.isFinite(Date.parse(nb))) out.notBefore = nb
   return out
 }
 
@@ -116,6 +137,13 @@ export function createTop1000Audit(opts: Top1000AuditOptions) {
   }
 
   const pending = (): Promise<PendingAuditAnswer[]> => withLocalLock(fileLock, async () => (await readDoc()).answers)
+  /** Whether a 429's hold is still on; a hold that has passed is cleared. */
+  const held = (): Promise<boolean> => editDoc((doc) => {
+    if (!doc.notBefore) return false
+    if (now().getTime() < Date.parse(doc.notBefore)) return true
+    delete doc.notBefore
+    return false
+  })
 
   async function post(a: PendingAuditAnswer): Promise<SendOutcome> {
     try {
@@ -140,13 +168,20 @@ export function createTop1000Audit(opts: Top1000AuditOptions) {
       for (;;) {
         const head = (await pending())[0]
         if (!head) return 0
+        if (await held()) return (await pending()).length
         const out = await post(head)
-        if (out.kind === 'retry') return (await pending()).length
+        // Not now: no answer, or the check is off (its answers are kept: a later 409 clears any no longer due).
+        if (out.kind === 'retry' || out.kind === 'off') return (await pending()).length
+        if (out.kind === 'resting') {
+          const notBefore = restingNotBefore(out.until, now())
+          await editDoc((doc) => { doc.notBefore = notBefore })
+          warn(`[top1000-audit] today's answers are in; the rest wait until ${notBefore}`)
+          return (await pending()).length
+        }
         if (out.kind === 'refused') warn(`[top1000-audit] homemini refused an answer: ${out.error}`)
         if (out.kind === 'sent' && out.progress) lastProgress = out.progress
         try {
           await editDoc((doc) => {
-            if (out.kind === 'off') { doc.answers = []; return }
             const i = doc.answers.findIndex((x) => x.qid === head.qid && x.at === head.at)
             if (i >= 0) doc.answers.splice(i, 1)
           })

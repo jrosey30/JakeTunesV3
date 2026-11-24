@@ -115,10 +115,11 @@ export function auditRestingLine(p: AuditProgress): string {
   return `That’s today’s ${n(p.perDay)}. More tomorrow.`
 }
 
-/** The button on the quiz page; null hides it (off, done, or not known yet). */
+/** The button on the quiz page; null hides it (off, done, resting, nothing left today, or not known yet). */
 export function auditDoorLabel(state: AuditState | null): string | null {
-  if (!state || state.kind === 'off' || state.kind === 'done') return null
-  return `Blind check · ${n(auditLeftToday(state.progress))} left today`
+  if (!state || state.kind !== 'ask') return null
+  const left = auditLeftToday(state.progress)
+  return left > 0 ? `Blind check · ${n(left)} left today` : null
 }
 
 /** Answers on this Mac that homemini hasn't heard yet count as given. */
