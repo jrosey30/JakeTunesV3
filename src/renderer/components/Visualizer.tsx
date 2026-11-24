@@ -15,6 +15,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { getVisualizerBins, ensureVisualizerChain } from '../audio/eq'
 import { usePlayback } from '../context/PlaybackContext'
+import { decayFor, easeFor, frameSeconds, newBloom, stepBloom } from '../utils/visualizerClock'
+import { isTypingTarget } from '../utils/trackListKeys'
 import '../styles/visualizer.css'
 
 function Stage({ onClose }: { onClose: () => void }) {
@@ -43,7 +45,10 @@ function Stage({ onClose }: { onClose: () => void }) {
     ensureVisualizerChain()
 
     const M = 96, HALF = 48
-    let t = 0, bassEnv = 0, bassVis = 0, lastRingT = -10, raf = 0
+    // Real time, not frames: a 120 Hz screen used to run it at double speed and
+    // double the ring rate past the flash limit (utils/visualizerClock.ts).
+    const bloom = newBloom()
+    let raf = 0, last: number | null = null
     // Photosensitivity safety: nothing the eye sees may jump frame-to-frame.
     // bassVis EASES toward the bass (size + brightness drift, never strobe),
     // each spoke eases via spokeSmooth, and rings are throttled to under 3/sec
@@ -53,29 +58,30 @@ function Stage({ onClose }: { onClose: () => void }) {
     const rings: Array<{ r: number; a: number; hue: number }> = []
 
     const frame = (): void => {
-      t += 0.016
+      const now = performance.now()
+      const dt = frameSeconds(now, last)
+      last = now
       const W = window.innerWidth, H = window.innerHeight, cx = W / 2, cy = H / 2
       const bins = getVisualizerBins(HALF) || new Uint8Array(HALF)
       let bass = 0
       for (let i = 0; i < 6; i++) bass += bins[i] || 0
       bass = bass / 6 / 255
-      bassEnv = bassEnv * 0.92 + bass * 0.08
-      bassVis += (bass - bassVis) * 0.09          // eased bass — the visuals follow THIS, not raw
-      const kick = Math.max(0, bass - bassEnv)
-      // Throttle: at most one ring per 0.4s (<3/sec) and dim, so ripples can't strobe.
-      if (kick > 0.07 && t - lastRingT > 0.4) {
-        lastRingT = t
-        rings.push({ r: 40, a: 0.2, hue: 26 + (t * 4) % 36 })
-      }
+      // Eased bass (the visuals follow bassVis, not raw) and the ring throttle:
+      // at most one ring per 0.4 s of real time (<3/sec) and dim, so ripples can't strobe.
+      const ring = stepBloom(bloom, bass, dt)
+      const t = bloom.t, bassVis = bloom.bassVis
+      if (ring) rings.push({ r: 40, a: 0.2, hue: 26 + (t * 4) % 36 })
+      const f = dt * 60   // how many 60 fps frames this one stands for
+      const ringFade = decayFor(0.952, dt), spokeEase = easeFor(0.16, dt)
       const idle = 0.05 + 0.03 * Math.sin(t * 1.2)
 
-      ctx.fillStyle = 'rgba(11,7,16,0.2)'
+      ctx.fillStyle = `rgba(11,7,16,${easeFor(0.2, dt)})`
       ctx.fillRect(0, 0, W, H)
       ctx.globalCompositeOperation = 'lighter'
 
       for (let i = rings.length - 1; i >= 0; i--) {
         const rg = rings[i]!
-        rg.r += 2.3; rg.a *= 0.952
+        rg.r += 2.3 * f; rg.a *= ringFade
         if (rg.a < 0.02) { rings.splice(i, 1); continue }
         ctx.strokeStyle = `hsla(${rg.hue},78%,60%,${rg.a})`
         ctx.lineWidth = 2
@@ -94,7 +100,7 @@ function Stage({ onClose }: { onClose: () => void }) {
       for (let i = 0; i < M; i++) {
         const bi = i < HALF ? i : (M - 1 - i)
         const target = Math.max(idle, (bins[bi] || 0) / 255)
-        spokeSmooth[i] = spokeSmooth[i]! + (target - spokeSmooth[i]!) * 0.16   // eased — no flicker
+        spokeSmooth[i] = spokeSmooth[i]! + (target - spokeSmooth[i]!) * spokeEase   // eased — no flicker
         const v = spokeSmooth[i]!
         const ang = (i / M) * Math.PI * 2 + t * 0.10
         const len = inner + v * maxLen, hue = 22 + (i / M) * 278
@@ -134,6 +140,8 @@ export default function Visualizer() {
   useEffect(() => {
     const onToggle = (): void => setActive((a) => !a)
     const onKey = (e: KeyboardEvent): void => {
+      // ⌘T in a text field is the field's, never a full-screen takeover mid-word.
+      if (isTypingTarget(e.target as HTMLElement | null)) return
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 't') {
         e.preventDefault()
         setActive((a) => !a)

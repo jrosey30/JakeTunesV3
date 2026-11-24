@@ -24,7 +24,6 @@ import DownloadsPanel, { DOWNLOADS_PANEL_EVENT, setDownloadsPanelOpen, type Down
 import './views/DownloadStore/OfferButtons'
 import { OPEN_PREFERENCES_EVENT } from './views/DownloadStore/credential-notice-store'
 import { ingestSyncEvent } from './syncTimeline'
-import QueueHonestyProbe from './components/QueueHonestyProbe'
 import ImportConvertModal from './components/ImportConvertModal'
 import LibraryMaintenanceModal from './components/LibraryMaintenanceModal'
 import ShowDuplicatesModal from './components/ShowDuplicatesModal'
@@ -2122,7 +2121,6 @@ function AppInner() {
       <div className="content-area" style={{ position: 'relative' }}>
         <MainContent />
         <TapeMonitor />
-        <QueueHonestyProbe />
         <DeckBar />
         {showQueue && <QueuePanel ref={queueRef} onClose={() => setShowQueue(false)} />}
         {showMusicMan && <MusicManDrawer ref={musicManRef} onClose={() => setShowMusicMan(false)} />}
