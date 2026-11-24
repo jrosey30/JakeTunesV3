@@ -704,7 +704,7 @@ const electronAPI = {
   // sources are transcoded + cached; their iPod destination filename
   // is rewritten to .m4a and the iTunesDB entry updated. Optional —
   // omitted means original-quality copy (legacy behavior).
-  syncToIpod: (tracks: unknown[], playlists: unknown[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }, syncOpts?: { wipeFirst?: boolean; origin?: 'activity-click' | 'full-library-click' }): Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; target?: number; landed?: number; shortfall?: number; verifyAttempts?: number; error?: string; cancelled?: boolean; pathRewrites?: Array<{ id: number; newPath: string }> }> =>
+  syncToIpod: (tracks: unknown[], playlists: unknown[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 | 320; codec?: 'aac' | 'mp3' }, syncOpts?: { wipeFirst?: boolean; origin?: 'activity-click' | 'full-library-click' }): Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; target?: number; landed?: number; shortfall?: number; verifyAttempts?: number; error?: string; cancelled?: boolean; pathRewrites?: Array<{ id: number; newPath: string }> }> =>
     ipcRenderer.invoke('sync-to-ipod', tracks, playlists, convertOptions, syncOpts),
   // 4.5.0-109: cancel an in-flight sync. Main flips a flag; the copy
   // loop checks it between files and bails with cancelled:true.
@@ -794,11 +794,11 @@ const electronAPI = {
     ipcRenderer.invoke('save-mixtape-intro', data, voiceId),
   listMixtapeVoices: (): Promise<{ ok: boolean; voices: Array<{ id: string; name: string }> }> =>
     ipcRenderer.invoke('mixtape-voices'),
-  previewIpodSync: (tracks: unknown[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }): Promise<{ ok: boolean; plan: Array<{ id: number; action: 'keep' | 'copy' }>; leaving: Array<{ path: string; title: string; artist: string }>; deviceFileCount?: number; error?: string }> =>
+  previewIpodSync: (tracks: unknown[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 | 320; codec?: 'aac' | 'mp3' }): Promise<{ ok: boolean; plan: Array<{ id: number; action: 'keep' | 'copy' }>; leaving: Array<{ path: string; title: string; artist: string }>; deviceFileCount?: number; error?: string }> =>
     ipcRenderer.invoke('preview-ipod-sync', tracks, convertOptions),
-  commitWorkoutSyncSet: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; added?: Array<{ id: number; title: string; artist: string }>; removed?: Array<{ id: number; title: string; artist: string }> }): Promise<{ ok: boolean; error?: string }> =>
+  commitWorkoutSyncSet: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 | 320; codec?: 'aac' | 'mp3' }; added?: Array<{ id: number; title: string; artist: string }>; removed?: Array<{ id: number; title: string; artist: string }> }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('commit-workout-sync-set', payload),
-  getWorkoutSyncState: (): Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; commentary: string; syncedAt: string; alacCount: number } | null }> =>
+  getWorkoutSyncState: (): Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 | 320; codec?: 'aac' | 'mp3' }; commentary: string; syncedAt: string; alacCount: number } | null }> =>
     ipcRenderer.invoke('get-workout-sync-state'),
   getActivityProfiles: (): Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }> =>
     ipcRenderer.invoke('get-activity-profiles'),

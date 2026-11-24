@@ -3391,7 +3391,10 @@ async function afconvertAvailable(): Promise<boolean> {
   return _afconvertOk
 }
 
-async function buildAacMirror(srcPath: string, targetKbps: number): Promise<string | null> {
+async function buildAacMirror(srcPath: string, targetKbps: number, format: 'aac' | 'mp3' = 'aac'): Promise<string | null> {
+  // Gen 1 (a 2001 iPod) plays MP3 only: every song that isn't one goes on as a 320k MP3
+  // (common/ipod-audio-format.ts). Its own cache files, never the library's.
+  if (format === 'mp3') return buildMp3Mirror(srcPath, targetKbps)
   const { execFile } = await import('child_process')
   const { promisify } = await import('util')
   const execP = promisify(execFile)
@@ -3492,6 +3495,63 @@ async function buildAacMirror(srcPath: string, targetKbps: number): Promise<stri
   } catch (err) {
     try { await unlink(tmp) } catch { /* already gone */ }
     console.warn(`[sync-convert] transcode failed for ${srcPath}:`, err)
+    return null
+  }
+}
+
+/**
+ * Any source that isn't already an MP3 → a CBR MP3 at 44.1 kHz stereo, for an iPod
+ * whose firmware plays nothing else (Gen 1). Cached beside the AAC mirrors under
+ * its own key; the library master is never touched. null = keep the file as it is
+ * (already MP3, or the convert failed and the caller copies the original).
+ */
+async function buildMp3Mirror(srcPath: string, targetKbps: number): Promise<string | null> {
+  const { execFile } = await import('child_process')
+  const { promisify } = await import('util')
+  const execP = promisify(execFile)
+  const bgExec = (cmd: string, args: string[], o: { timeout: number }) => { const [f, a] = atBackgroundPriority(cmd, args); return execP(f, a, o) }
+  const { createHash } = await import('crypto')
+  const srcStat = await stat(srcPath).catch(() => null)
+  if (!srcStat) return null
+  let codecName = codecByAbsPath.get(srcPath) || ''
+  if (!codecName) {
+    try {
+      const { stdout } = await execP('ffprobe', [
+        '-v', 'error', '-select_streams', 'a:0',
+        '-show_entries', 'stream=codec_name', '-of', 'default=nw=1:nk=1', srcPath,
+      ], { timeout: 5000 })
+      codecName = (stdout || '').trim().toLowerCase()
+    } catch {
+      return null
+    }
+    if (codecName) codecByAbsPath.set(srcPath, codecName)
+  }
+  if (!codecName || codecName === 'mp3') return null
+  const kbps = Math.min(320, Math.max(128, Math.round(Number(targetKbps) || 320)))
+  const cacheDir = join(app.getPath('userData'), SYNC_CONVERT_CACHE_SUBDIR)
+  await mkdir(cacheDir, { recursive: true }).catch((err) => console.warn('[sync-convert] cache folder:', err instanceof Error ? err.message : err))
+  const hash = createHash('sha1').update(`${srcPath}|${kbps}|mp3-lame-cbr-44100-2-v1`).digest('hex').slice(0, 16)
+  const cached = join(cacheDir, `${hash}.mp3`)
+  try {
+    const cStat = await stat(cached)
+    if (cStat.mtimeMs >= srcStat.mtimeMs && cStat.size > 0) return cached
+  } catch { /* not cached yet */ }
+  const tmp = cached + '.partial.mp3'
+  const { rename: renameFS } = await import('fs/promises')
+  try {
+    await bgExec('ffmpeg', [
+      '-nostdin', '-y', '-i', srcPath,
+      '-map', '0:a:0', '-vn',
+      '-c:a', 'libmp3lame', '-b:a', `${kbps}k`,
+      '-ar', '44100', '-ac', '2',
+      '-map_metadata', '0', '-id3v2_version', '3', '-write_id3v1', '1',
+      '-f', 'mp3', tmp,
+    ], { timeout: 600000 })
+    await renameFS(tmp, cached)
+    return cached
+  } catch (err) {
+    try { await unlink(tmp) } catch { /* already gone */ }
+    console.warn(`[sync-convert] MP3 convert failed for ${srcPath}:`, err)
     return null
   }
 }

@@ -131,7 +131,7 @@ export interface ActivitySyncHost {
   sendProgress: (p: { phase: string; current: number; total: number; title: string; mode?: 'swap' | 'full'; summary?: string }) => void
   isCancelled: () => boolean
   isStreamedTrackFile: (abs: string) => Promise<boolean>
-  buildAacMirror: (src: string, kbps: number) => Promise<string | null>
+  buildAacMirror: (src: string, kbps: number, codec?: 'aac' | 'mp3') => Promise<string | null>
   buildIpodSafeAlacMirror: (src: string) => Promise<string | null>
   readIpodDatabase: () => Promise<{ tracks: Array<Record<string, unknown>>; playlists?: unknown[] }>
   writeJournal: (phase: string | null) => Promise<void>
@@ -741,15 +741,19 @@ async function runActivitySyncHolding(
         try {
           host.sendProgress({
             phase: 'preflight', current: Math.min(i, target), total: target,
-            title: `Converting → ${convertOptions.targetKbps}k AAC: ${title}`,
+            title: `Converting → ${convertOptions.targetKbps}k ${convertOptions.codec === 'mp3' ? 'MP3' : 'AAC'}: ${title}`,
           })
-          const mirror = await host.buildAacMirror(bytesForMirror, convertOptions.targetKbps)
+          const mirror = await host.buildAacMirror(bytesForMirror, convertOptions.targetKbps, convertOptions.codec)
           if (mirror) {
             srcToCopy = mirror
+            // The card file wears the mirror's own extension: .m4a for AAC, .mp3 for Gen 1.
+            const outExt = mirror.slice(mirror.lastIndexOf('.')).toLowerCase()
             const srcExt = localFile.slice(localFile.lastIndexOf('.')).toLowerCase()
-            if (srcExt !== '.m4a' && srcExt !== '.mp4') {
+            const sameKind = outExt === '.mp3' ? srcExt === '.mp3' : (srcExt === '.m4a' || srcExt === '.mp4')
+            if (outExt === '.mp3') track.codec = 'mp3'
+            if (!sameKind) {
               const dotIdx = dstToCopy.lastIndexOf('.')
-              dstToCopy = dotIdx > 0 ? dstToCopy.slice(0, dotIdx) + '.m4a' : dstToCopy + '.m4a'
+              dstToCopy = dotIdx > 0 ? dstToCopy.slice(0, dotIdx) + outExt : dstToCopy + outExt
               const newRel = dstToCopy.slice(IPOD_MOUNT.length + 1)
               const newColon = ':' + newRel.split(pathSep).join(':')
               track.path = newColon
@@ -758,6 +762,12 @@ async function runActivitySyncHolding(
           }
         } catch (err) {
           console.warn(`activity-sync: AAC mirror failed for ${title}, copying original:`, err)
+        }
+        // Gen 1 plays MP3 only: a song that isn't one and couldn't be made one stays off,
+        // never copied as a file that iPod can't play.
+        if (convertOptions.codec === 'mp3' && srcToCopy === bytesForMirror
+          && !bytesForMirror.toLowerCase().endsWith('.mp3')) {
+          return { ok: false, kind: 'unconvertible', why: 'no MP3 for this iPod' }
         }
       }
 

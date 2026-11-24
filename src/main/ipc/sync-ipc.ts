@@ -30,7 +30,9 @@ export interface StateConflict {
 
 export interface SyncConvertOptions {
   enabled: boolean
-  targetKbps: 128 | 192 | 256
+  targetKbps: 128 | 192 | 256 | 320
+  /** 'mp3' for an iPod that can't play AAC (Gen 1): every non-MP3 song is converted. Absent = AAC. */
+  codec?: 'aac' | 'mp3'
 }
 
 /** Lossless extension / codec sets shared with the sync convert cache. */

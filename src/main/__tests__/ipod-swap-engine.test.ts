@@ -1185,3 +1185,56 @@ describe('the Device page’s ready check: what is on the card by the record', (
     }
   })
 })
+
+// Gen 1 plays MP3 only (2026-11-24, Jake: "sync my ipod playlists as they are to AAC/high
+// end mp3 only for those 3 ipods"). The engine puts the MP3 mirror on the card under .mp3,
+// and a song with no MP3 stays off rather than going on as a file Gen 1 can't play.
+describe('an iPod that plays MP3 only', () => {
+  let r: Rig
+  const asked: Array<{ kbps: number; codec: string | undefined }> = []
+  before(async () => {
+    r = await makeRig()
+    r.host.buildAacMirror = async (src, kbps, codec) => {
+      asked.push({ kbps, codec })
+      const id = Number(/S(\d+)\.m4a$/.exec(src)?.[1])
+      if (id === 3) return null                          // a damaged file: no MP3 can be made
+      const out = join(r.root, `mirror-${id}.mp3`)
+      await writeFile(out, Buffer.alloc(SONG_BYTES + 1000, id & 0xff))
+      return out
+    }
+  })
+  after(async () => { await rm(r.root, { recursive: true, force: true }) })
+
+  it('copies MP3 mirrors as .mp3 and leaves off the song it could not convert', async () => {
+    const ids = range(0, 6)
+    const tracks = ids.map((id) => ({ ...r.library.get(id)! }))
+    const res = await runActivitySync(r.host, {
+      tracks, playlists: [{ name: 'Gen 1', trackIds: ids }], requestedTarget: ids.length,
+      listOnly: true, ipodName: 'Gen 1',
+      convertOptions: { enabled: true, targetKbps: 320, codec: 'mp3' },
+    })
+    assert.equal(res.ok, true, res.error)
+    assert.ok(asked.every((a) => a.kbps === 320 && a.codec === 'mp3'), JSON.stringify(asked))
+    assert.deepEqual((res.unconvertible ?? []).map((u) => u.id), [3])
+    const { paths } = await cardCatalog(r.card)
+    assert.equal(paths.length, 5)
+    assert.ok(paths.every((p) => p.endsWith('.mp3')), paths.join(', '))
+    const files = await cardFiles(r.card)
+    assert.ok([...files.keys()].every((p) => !p.endsWith('.m4a')), 'no AAC or ALAC on a Gen 1')
+    for (const [, f] of files) assert.equal(f.size, SONG_BYTES + 1000, "the mirror went on, not the master")
+  })
+
+  it('the next sync of the same list moves nothing', async () => {
+    const ids = range(0, 6)
+    const tracks = ids.map((id) => ({ ...r.library.get(id)! }))
+    const res = await runActivitySync(r.host, {
+      tracks, playlists: [{ name: 'Gen 1', trackIds: ids }], requestedTarget: ids.length,
+      listOnly: true, ipodName: 'Gen 1',
+      convertOptions: { enabled: true, targetKbps: 320, codec: 'mp3' },
+    })
+    assert.equal(res.ok, true, res.error)
+    assert.equal(res.copied, 0)
+    const { paths } = await cardCatalog(r.card)
+    assert.ok(paths.length === 5 && paths.every((p) => p.endsWith('.mp3')), paths.join(', '))
+  })
+})
