@@ -6,30 +6,29 @@
  * switching views. A mounted DiscoveryView hears the event and switches; an
  * unmounted one reads the remembered tab when it mounts.
  *
- * 'bandcamp' (Brief 253): the Bandcamp Store left the sidebar and is a tab
- * here; the old 'store' and 'download' views are gone, and a session saved on
- * either reopens on its tab (nav-history.ts legacyShopTab).
+ * 'bandcamp' (Brief 253): Bandcamp is a tab here, with no sidebar row of its
+ * own (the approved picture, 2026-11-24); the old 'store' and 'download' views
+ * are gone, and a session saved on either reopens on its tab (nav-history.ts
+ * legacyShopTab).
  */
+import { SHOP_TAB_LABELS } from '../../common/shop-names.ts'
+
 export type DiscoveryTab = 'new-for-you' | 'browse' | 'your-list' | 'bandcamp'
+
+/** The tabs, in order, with what each is called (common/shop-names.ts; ids unchanged). */
+export const SHOP_TABS: ReadonlyArray<{ id: DiscoveryTab; label: string }> = [
+  { id: 'new-for-you', label: SHOP_TAB_LABELS[0] },
+  { id: 'browse', label: SHOP_TAB_LABELS[1] },
+  { id: 'your-list', label: SHOP_TAB_LABELS[2] },
+  { id: 'bandcamp', label: SHOP_TAB_LABELS[3] },
+]
 
 export const DISCOVERY_TAB_EVENT = 'jaketunes-discovery-tab'
 
 let lastTab: DiscoveryTab = 'new-for-you'
-const watchers = new Set<() => void>()
-function setLast(t: DiscoveryTab): void {
-  if (lastTab === t) return
-  lastTab = t
-  // After the current render: DiscoveryView remembers its first tab while it
-  // renders, and telling the sidebar then is a setState during another render.
-  queueMicrotask(() => { for (const w of watchers) w() })
-}
+const setLast = (t: DiscoveryTab): void => { lastTab = t }
 export function rememberedDiscoveryTab(): DiscoveryTab { return lastTab }
 export function rememberDiscoveryTab(t: DiscoveryTab): void { setLast(t) }
-/** For the sidebar: its Bandcamp row is lit while the shop shows that tab (2026-11-20). */
-export function subscribeDiscoveryTab(w: () => void): () => void {
-  watchers.add(w)
-  return () => { watchers.delete(w) }
-}
 
 export function requestDiscoveryTab(t: DiscoveryTab): void {
   setLast(t)

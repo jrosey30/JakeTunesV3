@@ -13,6 +13,7 @@
 import { nameKey, withinEditDistance, typoBudget } from './fold-text.ts'
 import { explicitWins } from './explicit.ts'
 import { JUNK_ARTIST_NAME } from './junk-artist.ts'
+import { LIST_MARK } from './shop-names.ts'
 
 // ── Shapes ─────────────────────────────────────────────────────────────
 
@@ -406,7 +407,7 @@ export function markLine(o: { owned?: OwnedAlbum | boolean; listed?: boolean }):
   const own = o.owned
   if (own === true) return 'In your library'
   if (own && typeof own === 'object') return own.state === 'all' ? 'In your library' : `${own.have} song${own.have === 1 ? '' : 's'} in your library`
-  if (o.listed) return 'On your list'
+  if (o.listed) return LIST_MARK
   return null
 }
 

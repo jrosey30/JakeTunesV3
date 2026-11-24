@@ -128,7 +128,7 @@ export function offerLine(o: ShopOffer, ctx: { asked?: string; askedCount?: numb
     case 'songs': {
       const got = o.have.length + o.owned
       if (!o.missing.length) return `Qobuz has all ${o.of} songs, on ${o.from && o.from !== o.of ? `a ${o.from}-song edition` : 'another edition'}. Save ${o.have.length === 1 ? 'it' : `those ${o.have.length}`}?`
-      return `Qobuz has ${got} of ${o.of} songs. Save ${o.have.length === 1 ? 'that one' : `those ${o.have.length}`} and keep the other ${o.missing.length} on your Listen List?`
+      return `Qobuz has ${got} of ${o.of} songs. Save ${o.have.length === 1 ? 'that one' : `those ${o.have.length}`} and keep the other ${o.missing.length} on your Listening List?`
     }
     case 'bandcamp': return 'Only Bandcamp has it, as a lossy MP3. Save that?'
     case 'songs-each': return 'Try its songs one at a time?'
@@ -152,7 +152,7 @@ export function offerButton(o: ShopOffer, ctx: { asked?: string } = {}): string 
 export function offerTitle(o: ShopOffer): string {
   switch (o.kind) {
     case 'edition': return differenceWords(o.diff)
-    case 'songs': return o.missing.length ? `On your Listen List: ${o.missing.map((s) => q(s.title)).join(', ')}` : 'Each song is checked before it’s saved'
+    case 'songs': return o.missing.length ? `On your Listening List: ${o.missing.map((s) => q(s.title)).join(', ')}` : 'Each song is checked before it’s saved'
     case 'bandcamp': return 'A 128 kbps MP3 from Bandcamp, not CD quality'
     case 'songs-each': return 'Each song is checked before it’s saved'
   }

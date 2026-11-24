@@ -1,6 +1,6 @@
-/* "Discovery" — unifies the New for You radar + your saved List behind one
-   sidebar entry via a two-tab toggle. Teal accent (#1f7a8c) so the whole
-   discovery surface reads cool, distinct from the Music Man's warm orange. */
+/* The Record Shop: a title and one search box, then the tabs (Jake's approved
+   picture, 2026-11-24). Teal accent (#1f7a8c) so the shop reads cool, distinct
+   from the Music Man's warm orange. */
 
 .discovery {
   display: flex;
@@ -9,11 +9,23 @@
   background: var(--white, #fdfdfd);
 }
 
+/* Title left (24px, as the picture), the box filling the rest of the row:
+   36px tall, the Search tab's own field styles (download-store.css .dl-field). */
+.discovery-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+  padding: 18px 22px 4px;
+}
+.discovery-title { margin: 0; font-size: 24px; font-weight: 700; color: #1d1a1b; white-space: nowrap; }
+.discovery-search { flex: 1; min-width: 0; }
+
 .discovery-tabs {
   display: flex;
   gap: 4px;
   flex-shrink: 0;
-  padding: 10px 22px 0;
+  padding: 6px 22px 0;
   border-bottom: 1px solid #e0ddd6;
 }
 
@@ -31,10 +43,7 @@
 }
 .discovery-tab:hover { color: #5a554d; }
 .discovery-tab--on { color: #1f7a8c; border-bottom-color: #1f7a8c; }
-/* Literal labels (6.0 Record Shop step 5): the room's name rides under
-   "For You"; the Listen List tab carries its saved-item count. */
-.discovery-tab__sub { display: block; font-size: 10px; font-weight: 500; letter-spacing: 0.4px; text-transform: uppercase; color: #8a8378; margin-top: 1px; }
-.discovery-tab--on .discovery-tab__sub { color: #4f8f9c; }
+/* The Listening List tab carries its saved-item count. */
 .discovery-tab__count { display: inline-block; margin-left: 6px; padding: 0 6px; min-width: 18px; border-radius: 9px; font-size: 10.5px; font-weight: 600; line-height: 16px; text-align: center; color: #fff; background: #8a8378; vertical-align: 1px; }
 .discovery-tab--on .discovery-tab__count { background: #1f7a8c; }
 

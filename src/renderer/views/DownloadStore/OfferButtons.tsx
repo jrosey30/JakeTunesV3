@@ -27,7 +27,7 @@ export default function OfferButtons({ jobKey, compact, className }: { jobKey: s
     if (busy) return
     setBusy(true)
     void takeOffer(q.key, o)
-      .then((r) => { if (o.kind === 'songs' && r.listed) setSaid(`${r.queued} on the way, ${r.listed} on your Listen List`) })
+      .then((r) => { if (o.kind === 'songs' && r.listed) setSaid(`${r.queued} on the way, ${r.listed} on your Listening List`) })
       .finally(() => setBusy(false))
   }
   return (

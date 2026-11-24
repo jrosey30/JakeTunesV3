@@ -70,9 +70,9 @@ describe('the question and the button', () => {
   })
   it('part of an album: "Save the 6 that exist", the rest on the Listen List', () => {
     const o: ShopOffer = { kind: 'songs', have: tracks(NINE.slice(0, 6)), missing: tracks(NINE.slice(6)), owned: 0, of: 9, from: 6 }
-    assert.equal(offerLine(o), 'Qobuz has 6 of 9 songs. Save those 6 and keep the other 3 on your Listen List?')
+    assert.equal(offerLine(o), 'Qobuz has 6 of 9 songs. Save those 6 and keep the other 3 on your Listening List?')
     assert.equal(offerButton(o), 'Save the 6 that exist')
-    assert.match(offerTitle(o), /Listen List: “Bark at the Moon”/)
+    assert.match(offerTitle(o), /Listening List: “Bark at the Moon”/)
   })
   it('a Bandcamp copy is called lossy before it is taken, and after', () => {
     const o: ShopOffer = { kind: 'bandcamp', url: 'https://x.bandcamp.com/album/y', name: 'Y', band: 'X' }

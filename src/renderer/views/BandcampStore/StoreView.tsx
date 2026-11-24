@@ -233,7 +233,7 @@ export default function StoreView() {
           </span>
         ) : null}
       </div>
-      <div ref={ref} className="store-view-embed" aria-label="Bandcamp Store" />
+      <div ref={ref} className="store-view-embed" aria-label="Bandcamp" />
     </div>
   )
 }

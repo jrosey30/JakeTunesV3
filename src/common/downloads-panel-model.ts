@@ -118,7 +118,7 @@ function provenanceOf(q: QueueItemLike): string | null {
   if (q.result.kind !== 'query') return 'pasted link'
   if (!o) return null
   if (o.sourceLabel) return `from ${o.sourceLabel}`
-  if (o.recommendationIds.length) return 'from your Listen List'
+  if (o.recommendationIds.length) return 'from your Listening List'
   return null
 }
 
@@ -272,11 +272,14 @@ export function panelSummary(rows: readonly PanelRow[]): PanelSummary {
 /** The count inside the sidebar door: what's moving; else what needs a
  *  decision (failed + refused); else a neutral total when canceled jobs sit
  *  among the finished ones; "N done" only when every settled job really is. */
+/**
+ * The count on the sidebar's Downloads row (the approved picture, 2026-11-24:
+ * "Downloads 2"): a number and no words, so it never covers the row's name.
+ * What is on its way, else what needs Jake; a finished save is not news.
+ */
 export function downloadsBadge(s: PanelSummary): string | undefined {
   const inFlight = s.active + s.queued
   if (inFlight > 0) return inFlight.toLocaleString()
-  if (s.failed > 0) return `${s.failed.toLocaleString()} need attention`
-  const settled = s.done + s.canceled
-  if (settled === 0) return undefined
-  return s.canceled > 0 ? `${settled.toLocaleString()} finished` : `${s.done.toLocaleString()} done`
+  if (s.failed > 0) return s.failed.toLocaleString()
+  return undefined
 }
