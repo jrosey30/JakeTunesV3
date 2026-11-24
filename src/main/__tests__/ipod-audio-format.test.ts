@@ -44,4 +44,19 @@ describe('each small iPod carries its own format', () => {
     assert.ok(at > body.indexOf('resolveIpodState(gateMount'), 'after the iPod is identified')
     assert.ok(at < body.indexOf("syncOpts?.origin === 'activity-click'"), 'before either engine runs')
   })
+
+  it('a whole-library sync of an MP3-only iPod is refused before anything is touched', () => {
+    const src = readFileSync(join(import.meta.dirname, '..', 'sync-engine', 'index.ts'), 'utf-8')
+    const body = src.slice(src.indexOf('async function runSyncToIpod('))
+    const refuse = body.indexOf("ownFormat?.codec === 'mp3' && syncOpts?.origin !== 'activity-click'")
+    assert.ok(refuse > 0)
+    assert.ok(refuse < body.indexOf('securePlaysBeforeSync('), 'before the card is read or written')
+  })
+
+  it('the MP3 converter asks the file, never the library label', () => {
+    const src = readFileSync(join(import.meta.dirname, '..', 'index.ts'), 'utf-8')
+    const body = src.slice(src.indexOf('async function buildMp3Mirror('), src.indexOf('async function buildIpodSafeAlacMirror('))
+    assert.doesNotMatch(body, /codecByAbsPath/)
+    assert.match(body, /endsWith\('\.mp3'\)\) return null/)
+  })
 })
