@@ -146,3 +146,10 @@
   background: var(--brand-orange, #FC5501); color: #fff; font-size: 11px; font-weight: 600;
 }
 .t1k-count { font-size: 12px; color: var(--text-secondary, #555049); font-variant-numeric: tabular-nums; }
+
+/* The blind check (2026-11-24): opened from the quiz's header, shown in its place.
+   Plain on purpose: its name, how far along, a way back. */
+.t1k-audit-door { margin-left: auto; align-self: center; }
+.t1k-audit-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; font-size: 12px; }
+.t1k-audit-label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #C14201; }
+.t1k-audit-progress { color: var(--text-secondary, #555049); font-variant-numeric: tabular-nums; }

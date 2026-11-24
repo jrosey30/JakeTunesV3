@@ -26,6 +26,7 @@ import { MOBILE_BACKEND_URL } from './recommendations-ipc.ts'
 import { createHomeShelvesClient } from '../home-shelves-client.ts'
 import { createListenMoreWeeklyClient } from '../listen-more-weekly-client.ts'
 import { createTop1000Client } from '../top1000-client.ts'
+import { AUDIT_RETRY_MS, createTop1000Audit } from '../top1000-audit-outbox.ts'
 import { parsePlayEvents } from '../../common/home-spotlight-doc.ts'
 
 const EVERY_MS = 10 * 60_000
@@ -83,6 +84,22 @@ export function registerHomeShelvesIpc(ipc: IpcRegistrar, host: HomeShelvesIpcHo
   // The quiz's own ranking, for the quiz's "The list" tab (not the published weekly list).
   ipc.handle('top1000:list-live', async () => top1000.list({ live: true }), { refuse: REFUSED_SENDER })
   ipc.handle('top1000:ties', async () => top1000.ties(), { refuse: REFUSED_SENDER })
+
+  // The blind check (2026-11-24): answers on this Mac's disk first, sent in order (top1000-audit-outbox.ts).
+  const audit = createTop1000Audit({
+    baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''),
+    stateDir: app.getPath('userData'),
+    warn: (m: string) => quietWarn('top1000-audit', m),
+  })
+  ipc.handle('top1000-audit:next', async () => audit.next(), { refuse: REFUSED_SENDER })
+  ipc.handle('top1000-audit:answer', async (_e: unknown, input: unknown) => {
+    const i = (input ?? {}) as { qid?: unknown; choice?: unknown }
+    return audit.answer({ qid: i.qid, choice: i.choice })
+  }, { refuse: REFUSED_SENDER })
+  setInterval(() => {
+    void audit.flush().catch((err: unknown) =>
+      quietWarn('top1000-audit:retry', '[top1000-audit] retry failed:', err instanceof Error ? err.message : err))
+  }, AUDIT_RETRY_MS).unref?.()
 
   ipc.handle('home-shelves:get', async () => ({ ok: true, state: await client.read() }), { refuse: REFUSED_SENDER })
   ipc.handle('home-shelves:refresh', async () => ({ ok: true, state: await refresh(false) }), { refuse: REFUSED_SENDER })
