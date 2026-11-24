@@ -21,7 +21,7 @@
  * 'usage-log:events'), where they are scrubbed like everything else
  * (common/usage-log.ts scrubEvent). A file path keeps only its library-relative part.
  */
-import { scrubPath, type UsageDetail, type UsageKind } from '../common/usage-log'
+import { isUnloadPlaceholderError, scrubPath, type UsageDetail, type UsageKind } from '../common/usage-log'
 
 interface Pending { t: string; kind: UsageKind; name: string; ms?: number; ok?: boolean; detail?: UsageDetail }
 
@@ -154,6 +154,8 @@ function watchMedia(el: HTMLMediaElement): void {
   })
   el.addEventListener('emptied', () => { st.started = false; st.stallAt = 0 })
   el.addEventListener('error', () => {
+    // Howler's unload placeholder, not a failed song (common/usage-log.ts).
+    if (isUnloadPlaceholderError(el.getAttribute('src'))) { st.askedAt = 0; st.stallAt = 0; return }
     const e = el.error
     usage('error', 'play.error', { ok: false, detail: { code: e?.code ?? null, message: (e?.message ?? '').slice(0, 200), file: fileOf(el) } })
     st.askedAt = 0

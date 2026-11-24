@@ -19,7 +19,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  batchBody, deviceFromHostname, ipcEvent, MAX_BYTES_PER_POST, MAX_EVENTS_PER_POST, planBatches, routeOf,
+  batchBody, deviceFromHostname, ipcEvent, isUnloadPlaceholderError, MAX_BYTES_PER_POST, MAX_EVENTS_PER_POST, planBatches, routeOf,
   scrubDetail, scrubEvent, scrubPath, scrubString, utf8Bytes,
 } from '../../common/usage-log.ts'
 import { createUsageStore, CURRENT_FILE, type PostAnswer } from '../usage-log-store.ts'
@@ -409,5 +409,22 @@ describe('usage log wiring — the tested code is the live code', () => {
       'renderer/components/playback/NowPlaying.tsx', 'renderer/views/GenresView.tsx', 'renderer/views/CDImportView.tsx', 'renderer/views/DeviceView.tsx']) {
       assert.doesNotMatch(read(p), /usageLog|usage-log|noteScreen|noteLaunch/, p)
     }
+  })
+})
+
+describe('play.error: Howler\'s unload placeholder is not a failed song', () => {
+  test('a data: src is the placeholder; a song is not', () => {
+    assert.equal(isUnloadPlaceholderError('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA'), true)
+    assert.equal(isUnloadPlaceholderError('DATA:audio/wav;base64,AA'), true)
+    for (const src of ['ipod-audio://%2FUsers%2Fx%2FiPod_Control%2FMusic%2FF01%2FABCD.m4a', 'http://homemini:3000/audio/12', 'https://audio-ssl.itunes.apple.com/x.m4a', 'blob:file:///abc', '', null, undefined]) {
+      assert.equal(isUnloadPlaceholderError(src), false, String(src))
+    }
+  })
+  test('the renderer\'s error listener asks before it records', () => {
+    const src = readFileSync(join(SRC, 'renderer/usageLog.ts'), 'utf8')
+    const at = src.indexOf("el.addEventListener('error'")
+    assert.notEqual(at, -1)
+    const body = src.slice(at, src.indexOf("usage('error', 'play.error'", at))
+    assert.match(body, /isUnloadPlaceholderError\(el\.getAttribute\('src'\)\)[^\n]*return/)
   })
 })
