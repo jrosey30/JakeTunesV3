@@ -1,12 +1,22 @@
 import { useCallback, useRef } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useAudio } from '../../hooks/useAudio'
+import { toggleMute } from '../../audio/volumeModel'
 import { SpeakerMuteIcon, SpeakerLowIcon, SpeakerHighIcon } from '../../assets/icons/SpeakerIcon'
 
 export default function VolumeSlider() {
   const { state } = usePlayback()
   const { setVolume } = useAudio()
   const trackRef = useRef<HTMLDivElement>(null)
+  // The level to come back to after a mute: the last one above zero.
+  const lastAudibleRef = useRef(state.volume > 0 ? state.volume : 0.5)
+  if (state.volume > 0) lastAudibleRef.current = state.volume
+
+  const onSpeaker = useCallback(() => {
+    const next = toggleMute(state.volume, lastAudibleRef.current)
+    lastAudibleRef.current = next.lastAudible
+    setVolume(next.volume)
+  }, [state.volume, setVolume])
 
   const getPercent = useCallback((clientX: number) => {
     if (!trackRef.current) return 0
@@ -35,7 +45,7 @@ export default function VolumeSlider() {
 
   return (
     <div className="volume-control">
-      <button className="volume-icon" onClick={() => setVolume(0)} title="Mute">
+      <button className="volume-icon" onClick={onSpeaker} title={state.volume === 0 ? 'Unmute' : 'Mute'}>
         <SpeakerLeft />
       </button>
       <div className="volume-slider-wrap" ref={trackRef} onMouseDown={handleMouseDown}>

@@ -133,7 +133,7 @@ describe('silent-until-volume-nudge cannot return', () => {
       'fadeInHowl missing — html5 fade can stay queued and leave the Howl at volume 0')
     assert.match(useAudio, /function ensureHowlAudible\(/,
       'ensureHowlAudible missing — heartbeat/fade-in have nothing to snap a stuck-at-0 Howl')
-    assert.match(useAudio, /ensureHowlAudible\(h, stateRef\.current\.volume\)/,
+    assert.match(useAudio, /ensureHowlAudible\(h, outVolume\(\)\)/,
       'heartbeat no longer snaps a Howl stuck at volume 0 — the volume-bar wake-up is back')
     assert.match(useAudio, /snapHowlOutputVolume\(howl, target\)/,
       'ensureHowlAudible must write the HTMLAudioElement, not only Howler.volume() — playLock queues volume() forever')
@@ -164,7 +164,7 @@ describe('silent-until-volume-nudge cannot return', () => {
     const slice = useAudio.slice(marker, marker + 1200)
     assert.match(slice, /const startIncoming = \(\) => \{/,
       'standard promote lost startIncoming — fade is probably back under playLock')
-    assert.match(slice, /fadeInHowl\(next, s\.volume, GAPLESS_FADE_IN_MS\)/,
+    assert.match(slice, /fadeInHowl\(next, outVolume\(\), GAPLESS_FADE_IN_MS\)/,
       'standard promote no longer fade-in on the incoming Howl')
     assert.doesNotMatch(slice, /next\.play\(\)\s*\n\s*fadeInHowl\(next/,
       'fadeInHowl is back immediately after next.play() — mix seams silent until volume slider')

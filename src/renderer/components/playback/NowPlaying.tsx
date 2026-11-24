@@ -11,6 +11,7 @@ import { subscribeMixtapes, getTapeSession } from '../../mixtapes'
 import { useLibrary } from '../../context/LibraryContext'
 import { getVisualizerWaveform } from '../../audio/eq'
 import { formatScrubberClock } from '../../../common/scrubber-clock'
+import { scrub, scrubIdle, knobPct, type ScrubState, type ScrubEvent } from '../../audio/scrubDrag'
 
 const HISTORY_LENGTH = 60   // pixels of scrolling loudness history
 const SAMPLE_FRAMES  = 256  // samples averaged per frame for RMS
@@ -211,20 +212,31 @@ export default function NowPlaying() {
     return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
   }, [])
 
+  // Dragging moves only the knob; the song is sought once, on release
+  // (scrubDrag.ts). A seek per mouse move was a new fetch per move for a song
+  // streamed from homemini (V7 steady, 2026-11-24).
+  const [scrubState, setScrubState] = useState<ScrubState>(scrubIdle)
+  const scrubRef = useRef<ScrubState>(scrubIdle)
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (state.duration <= 0) return
-    seek(getPercent(e.clientX))
-
-    const onMove = (ev: MouseEvent) => seek(getPercent(ev.clientX))
-    const onUp = () => {
+    const step = (ev: ScrubEvent) => {
+      const r = scrub(scrubRef.current, ev)
+      scrubRef.current = r.state
+      setScrubState(r.state)
+      if (r.seekTo != null) seek(r.seekTo)
+    }
+    step({ type: 'down', pct: getPercent(e.clientX) })
+    const onMove = (ev: MouseEvent) => step({ type: 'move', pct: getPercent(ev.clientX) })
+    const onUp = (ev: MouseEvent) => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
+      step({ type: 'up', pct: getPercent(ev.clientX) })
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
   }, [seek, state.duration, getPercent])
 
-  const progress = state.duration > 0 ? (state.position / state.duration) * 100 : 0
+  const progress = knobPct(scrubState, state.position, state.duration) * 100
   const track = state.nowPlaying
 
   // Backlight behavior (2026-08-07, Jake: the iPod-mini experience) — the
@@ -359,7 +371,7 @@ export default function NowPlaying() {
   const previewClock = formatScrubberClock(preview.position, preview.duration)
   const playClock = tapeOnAir
     ? formatScrubberClock(tapeOnAir.elapsedMs / 1000, tapeOnAir.totalMs / 1000)
-    : formatScrubberClock(state.position, state.duration)
+    : formatScrubberClock(scrubState.dragging ? scrubState.pct * state.duration : state.position, state.duration)
   const isPillEmpty = effectiveMode === null
   const radioStrip = radioActive && radio && !isPillEmpty ? (
     <div className="np-radio-strip">
