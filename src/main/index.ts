@@ -3513,18 +3513,18 @@ async function buildMp3Mirror(srcPath: string, targetKbps: number): Promise<stri
   const { createHash } = await import('crypto')
   const srcStat = await stat(srcPath).catch(() => null)
   if (!srcStat) return null
-  let codecName = codecByAbsPath.get(srcPath) || ''
-  if (!codecName) {
-    try {
-      const { stdout } = await execP('ffprobe', [
-        '-v', 'error', '-select_streams', 'a:0',
-        '-show_entries', 'stream=codec_name', '-of', 'default=nw=1:nk=1', srcPath,
-      ], { timeout: 5000 })
-      codecName = (stdout || '').trim().toLowerCase()
-    } catch {
-      return null
-    }
-    if (codecName) codecByAbsPath.set(srcPath, codecName)
+  // Ask the file itself, never the library's codec label: 27 real MP3s are labelled 'alac'
+  // (review of PR #471), and trusting the label re-encodes them MP3 to MP3 every sync.
+  if (srcPath.toLowerCase().endsWith('.mp3')) return null
+  let codecName = ''
+  try {
+    const { stdout } = await execP('ffprobe', [
+      '-v', 'error', '-select_streams', 'a:0',
+      '-show_entries', 'stream=codec_name', '-of', 'default=nw=1:nk=1', srcPath,
+    ], { timeout: 5000 })
+    codecName = (stdout || '').trim().toLowerCase()
+  } catch {
+    return null
   }
   if (!codecName || codecName === 'mp3') return null
   const kbps = Math.min(320, Math.max(128, Math.round(Number(targetKbps) || 320)))
