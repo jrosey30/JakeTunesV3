@@ -5,6 +5,7 @@ import type { Track } from '../types'
 import { DJEngine, type DeckId } from '../dj/engine'
 import { beatsInRange, camelotCompatible, tempoDistance, phaseDelta, secondsToNextPhrase, beatPeriod } from '../dj/beatgrid'
 import { advise, type DeckReading } from '../dj/coach'
+import { coachFrameKey, nextPlaying, waveFrameKey } from '../dj/frameGate'
 import {
   gradeOnBoundary, gradePhase, summarise, type MoveGrade,
 } from '../dj/scoring'
@@ -42,7 +43,10 @@ export default function DJView() {
   })
   const [filterAmt, setFilterAmt] = useState<Record<DeckId, number>>({ A: 0, B: 0 })
   const [xfader, setXfader] = useState(0)
-  const [pos, setPos] = useState<Record<DeckId, number>>({ A: 0, B: 0 })
+  // The playheads are NOT React state. They move every frame; the view renders
+  // only when something it prints changes (dj/frameGate.ts). `coachFrame` is
+  // that: the coach's words, countdown and drift at the precision shown.
+  const [coachFrame, setCoachFrame] = useState('')
 
   // ── challenge state ──────────────────────────────────────────────────────
   // A run scores the MIX, not a reflex game: each real move is graded as it
@@ -120,8 +124,13 @@ export default function DJView() {
     const tick = () => {
       const e = engineRef.current
       if (e) {
-        setPos({ A: e.a.position, B: e.b.position })
-        setPlaying({ A: e.a.playing, B: e.b.playing })
+        setPlaying((s) => nextPlaying(s, e.a.playing, e.b.playing))
+        const read = readingForRef.current
+        if (read) {
+          const live = liveDeckRef.current
+          const key = coachFrameKey(advise(read(live), read(live === 'A' ? 'B' : 'A')))
+          setCoachFrame((k) => (k === key ? k : key))
+        }
       }
       raf = requestAnimationFrame(tick)
     }
@@ -214,7 +223,7 @@ export default function DJView() {
     const d = e.deck(id)
     if (d.playing) { d.pause(); d.seek(d.cuePoint) }
     else { d.cuePoint = d.position; d.seek(d.cuePoint) }
-    setPos((s) => ({ ...s, [id]: d.position }))
+    // No state to set: the waveform and the coach read the deck each frame.
   }, [])
 
   const doSync = useCallback((id: DeckId) => {
@@ -383,14 +392,18 @@ export default function DJView() {
     return {
       loaded: !!loaded[id],
       playing: !!playing[id],
-      position: pos[id],
+      // Read live from the deck, never from state: the frame loop calls this
+      // to decide whether anything visible changed.
+      position: d?.position ?? 0,
       bpm: d?.bpm ?? 0,
       beatOffset: d?.beatOffset ?? 0,
       rate: rate[id],
       camelotKey: loaded[id]?.camelotKey,
       bassKilled: kills[id].low,
     }
-  }, [loaded, playing, pos, rate, kills])
+  }, [loaded, playing, rate, kills])
+  const readingForRef = useRef<((id: DeckId) => DeckReading) | null>(null)
+  readingForRef.current = readingFor
 
   const liveDeck: DeckId = useMemo(() => {
     if (playing.A && !playing.B) return 'A'
@@ -400,9 +413,12 @@ export default function DJView() {
   const incomingDeck: DeckId = liveDeck === 'A' ? 'B' : 'A'
   liveDeckRef.current = liveDeck
 
+  // coachFrame is the dependency that says the positions moved something the
+  // coach prints; advise() itself reads the decks live through readingFor.
   const coach = useMemo(
     () => advise(readingFor(liveDeck), readingFor(incomingDeck)),
-    [readingFor, liveDeck, incomingDeck],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [readingFor, liveDeck, incomingDeck, coachFrame],
   )
 
   // ── "mixes well out of this" suggestions ─────────────────────────────────
@@ -526,7 +542,6 @@ export default function DJView() {
             track={loaded[id]}
             loading={loading[id]}
             playing={playing[id]}
-            position={pos[id]}
             rate={rate[id]}
             kills={kills[id]}
             filterAmt={filterAmt[id]}
@@ -875,7 +890,6 @@ function DeckPanel(props: {
   track: Track | null
   loading: boolean
   playing: boolean
-  position: number
   rate: number
   kills: Record<'low' | 'mid' | 'high', boolean>
   filterAmt: number
@@ -894,50 +908,69 @@ function DeckPanel(props: {
   const bpm = track?.bpm ? Number(track.bpm) : 0
   const effBpm = bpm * props.rate
 
+  // The waveform draws itself, on its own frame loop, and only when what it
+  // shows has moved (the played edge by a whole pixel, a cue, a resize, a new
+  // track). The page around it no longer renders for the playhead.
   useEffect(() => {
-    const cv = canvasRef.current
     const d = deck
-    if (!cv || !d) return
-    const ctx = cv.getContext('2d')
-    if (!ctx) return
-    const dpr = window.devicePixelRatio || 1
-    const w = cv.clientWidth, h = cv.clientHeight
-    if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.clearRect(0, 0, w, h)
-    const peaks = d.peaks
-    if (peaks.length === 0) return
+    if (!d) return
+    let raf = 0
+    let lastKey = ''
+    let lastPeaks: Float32Array | null = null
+    const draw = () => {
+      raf = requestAnimationFrame(draw)
+      const cv = canvasRef.current
+      if (!cv) return
+      const dpr = window.devicePixelRatio || 1
+      const w = cv.clientWidth, h = cv.clientHeight
+      const peaks = d.peaks
+      const key = waveFrameKey({
+        position: d.position, duration: d.duration, cssWidth: w, cssHeight: h, dpr,
+        cuePoint: d.cuePoint, peaks: peaks.length, bpm, beatOffset: d.beatOffset,
+      })
+      if (key === lastKey && peaks === lastPeaks) return
+      lastKey = key
+      lastPeaks = peaks
+      const ctx = cv.getContext('2d')
+      if (!ctx) return
+      if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, w, h)
+      if (peaks.length === 0) return
 
-    // Waveform
-    ctx.fillStyle = '#3a3a3c'
-    for (let x = 0; x < w; x++) {
-      const v = peaks[Math.floor((x / w) * peaks.length)] || 0
-      const bar = Math.max(1, v * h * 0.9)
-      ctx.fillRect(x, (h - bar) / 2, 1, bar)
-    }
-    // Played portion
-    const played = d.duration ? (props.position / d.duration) * w : 0
-    ctx.fillStyle = '#F9864C'
-    for (let x = 0; x < played; x++) {
-      const v = peaks[Math.floor((x / w) * peaks.length)] || 0
-      const bar = Math.max(1, v * h * 0.9)
-      ctx.fillRect(x, (h - bar) / 2, 1, bar)
-    }
-    // Beat grid — every 4th beat (bar lines), so it reads as structure
-    if (bpm && d.duration) {
-      ctx.fillStyle = 'rgba(255,255,255,0.16)'
-      const beats = beatsInRange(0, d.duration, bpm, d.beatOffset)
-      for (let i = 0; i < beats.length; i += 4) {
-        const x = (beats[i] / d.duration) * w
-        ctx.fillRect(x, 0, 1, h)
+      // Waveform
+      ctx.fillStyle = '#3a3a3c'
+      for (let x = 0; x < w; x++) {
+        const v = peaks[Math.floor((x / w) * peaks.length)] || 0
+        const bar = Math.max(1, v * h * 0.9)
+        ctx.fillRect(x, (h - bar) / 2, 1, bar)
+      }
+      // Played portion
+      const played = d.duration ? (d.position / d.duration) * w : 0
+      ctx.fillStyle = '#F9864C'
+      for (let x = 0; x < played; x++) {
+        const v = peaks[Math.floor((x / w) * peaks.length)] || 0
+        const bar = Math.max(1, v * h * 0.9)
+        ctx.fillRect(x, (h - bar) / 2, 1, bar)
+      }
+      // Beat grid — every 4th beat (bar lines), so it reads as structure
+      if (bpm && d.duration) {
+        ctx.fillStyle = 'rgba(255,255,255,0.16)'
+        const beats = beatsInRange(0, d.duration, bpm, d.beatOffset)
+        for (let i = 0; i < beats.length; i += 4) {
+          const x = (beats[i] / d.duration) * w
+          ctx.fillRect(x, 0, 1, h)
+        }
+      }
+      // Cue marker
+      if (d.duration) {
+        ctx.fillStyle = '#4da3ff'
+        ctx.fillRect((d.cuePoint / d.duration) * w, 0, 2, h)
       }
     }
-    // Cue marker
-    if (d.duration) {
-      ctx.fillStyle = '#4da3ff'
-      ctx.fillRect((d.cuePoint / d.duration) * w, 0, 2, h)
-    }
-  }, [deck, props.position, bpm])
+    raf = requestAnimationFrame(draw)
+    return () => cancelAnimationFrame(raf)
+  }, [deck, bpm])
 
   return (
     <section
