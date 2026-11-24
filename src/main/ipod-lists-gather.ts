@@ -49,6 +49,8 @@ export interface IpodListWire {
   /** The line at the top of the list's page (2026-11-14, common/ipod-ad.ts): one Jake wrote that
    *  homemini hasn't heard yet, else homemini's. null = none (the page shows the name). */
   headline: string | null
+  /** The story under the ad (2026-11-24): homemini's, as kept. null = none (nothing is shown). */
+  story: string | null
   /** How many songs the list may hold; null when homemini's list isn't known here. */
   cap: number | null
   /** When its iPod was last synced, from this Mac's own record (hub, a set-up iPod). null = not known. */
@@ -129,7 +131,7 @@ function wire(l: IpodList, fresh: boolean, registered: boolean, waiting: Record<
   return {
     id: l.id, name: pendingName ?? l.name, color: look.color, model: look.model, purpose: l.purpose, ids: [...l.ids],
     source: fresh ? 'homemini' : 'cache', note: null, updatedAt: l.updatedAt, registered,
-    headline: headlineOf(l.id, l.headline, waiting), cap: l.cap, lastSyncedAt: lastSyncedAt ?? null,
+    headline: headlineOf(l.id, l.headline, waiting), story: l.story ?? null, cap: l.cap, lastSyncedAt: lastSyncedAt ?? null,
     songCount: l.songCount ?? null, artistCount: l.artistCount ?? null,
   }
 }
@@ -168,7 +170,7 @@ export async function gatherIpodLists(deps: GatherIpodListsDeps): Promise<IpodLi
     // homemini hasn't heard yet, else homemini's, else the iPod's own.
     const name = names[d.id] ?? h?.name ?? d.name
     lists.push({ id: d.id, name, color: look.color, model: look.model, purpose: d.purpose, ids: r.listIds, source: r.source, note: r.note, updatedAt: r.updatedAt, registered: true,
-      headline: headlineOf(d.id, h?.headline, headlines), cap: h?.cap ?? null, lastSyncedAt: synced[d.id] ?? null,
+      headline: headlineOf(d.id, h?.headline, headlines), story: h?.story ?? null, cap: h?.cap ?? null, lastSyncedAt: synced[d.id] ?? null,
       songCount: h?.songCount ?? null, artistCount: h?.artistCount ?? null })
   }
   for (const l of remote.lists) if (!known.has(l.id)) lists.push(wire(l, remote.fresh, false, headlines, chosen[l.id], names[l.id], synced[l.id]))

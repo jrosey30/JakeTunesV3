@@ -16,7 +16,7 @@ import { useTop1000Name, renameTop1000 } from '../top1000Name'
 import ListRenameField from '../components/ListRenameField'
 import { useIpodPlaylistCover, useIpodPlaylistLook } from '../utils/ipodCovers'
 import { IpodAd } from '../components/IpodAd'
-import { useTop1000Headline, useTop1000Counts, setTop1000Headline } from '../top1000Headline'
+import { useTop1000Headline, useTop1000Counts, useTop1000Story, setTop1000Headline } from '../top1000Headline'
 import { adCopy, adCounts, adHeadline, adLegal, checkHeadline, countArtists, HEADLINE_MAX } from '../../common/ipod-ad'
 import { usePeriodPlaylistCover } from '../utils/periodCovers'
 import { IpodColorPicker } from '../components/IpodColorPicker'
@@ -185,6 +185,7 @@ export default function SmartPlaylistView() {
   const [editingHeadline, setEditingHeadline] = useState(false)
   const top1000Headline = useTop1000Headline()
   const top1000Counts = useTop1000Counts()
+  const top1000Story = useTop1000Story()
   useEffect(() => { setRenaming(false); setEditingHeadline(false) }, [playlistId])
   // Photo covers (2026-11-09): the Top 1000 and every iPod list.
   const photoKey = photoKeyForPlaylist(playlistId)
@@ -1112,6 +1113,7 @@ export default function SmartPlaylistView() {
       }) : ''}
       look={adKnown ? adLook : null}
       photo={ipodPhoto}
+      story={adKnown ? (playlistId === 'top-1000' ? top1000Story : ipodList?.story) : null}
     />
   ) : null
 
