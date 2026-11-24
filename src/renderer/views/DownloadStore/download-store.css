@@ -1049,3 +1049,17 @@
 .dl-cred-notice-btn:hover { background: linear-gradient(180deg, #e06c47, #c2502f); }
 .dl-cred-notice-close { flex: none; background: transparent; border: 0; color: #7a5a2a; font-size: 12px; padding: 0 4px; }
 .download-retry--failed { max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* The Search tab's tool row (2026-11-24): the box moved to the top of the
+   shop, so only "Add by link" is left here, right-aligned, not pinned. */
+.download-view--browse .dl-bar--tools {
+  position: static;
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-3) var(--space-8) 0;
+  background: none;
+  border-bottom: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}

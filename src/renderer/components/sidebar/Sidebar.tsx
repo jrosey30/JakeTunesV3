@@ -44,7 +44,7 @@ import NewMixtapeSheet from '../NewMixtapeSheet'
 import IpodPlaylistsTree, { IpodDisclosure, ipodOpenNow, useIpodOpenVersion } from './IpodPlaylistsTree'
 import IpodPlaylistQuestion from '../IpodPlaylistQuestion'
 import { getOpenIpodPlaylistKey, subscribeOpenIpodPlaylist } from '../../ipodPlaylists'
-import { rememberedDiscoveryTab, requestDiscoveryTab, subscribeDiscoveryTab } from '../../views/discoveryTab'
+import { STORE_ROWS } from '../../../common/shop-names'
 
 const NO_IPOD_IDS: number[] = []
 
@@ -358,7 +358,6 @@ export default function Sidebar() {
   // The playlists on each iPod (2026-11-14): the key homemini keeps them under, the
   // name the iPod's own list is written under, and its songs (IpodPlaylistsTree.tsx).
   const openIpodKey = useSyncExternalStore(subscribeOpenIpodPlaylist, getOpenIpodPlaylistKey)
-  const shopTab = useSyncExternalStore(subscribeDiscoveryTab, rememberedDiscoveryTab)
   useIpodOpenVersion()
   const ipodDeviceOf = (r: (typeof ipodRows)[number]): string => (r.playlistId === TOP_1000_PLAYLIST_ID ? 'top1000' : parseIpodListPlaylistId(r.playlistId) ?? r.key)
   // Its own list or one of its playlists is the page showing.
@@ -716,43 +715,23 @@ export default function Sidebar() {
     ['store', (
       <SidebarSection key={'store'} {...sectionProps('store')} title="STORE">
         {/* Placement audit P4 (Jake 2026-09-06): Record Shop lives under STORE —
-            LIBRARY is what you own, STORE is where you get more. Same view id
-            ('discovery'), same highlight; only the row moved. */}
+            LIBRARY is what you own, STORE is where you get more. STORE is the
+            Record Shop and Downloads, nothing else (the approved picture,
+            2026-11-24; common/shop-names.ts STORE_ROWS): Bandcamp is the
+            shop's tab, not a row of its own, and the row is lit on every tab. */}
         <SidebarItem
-          label="Record Shop"
+          label={STORE_ROWS[0]}
           icon={LIBRARY_ICONS['discovery']}
-          selected={(state.currentView === 'discovery' && shopTab !== 'bandcamp') || state.currentView === 'listen-to-the-list' || state.currentView === 'new-for-you' || state.currentView === 'rock-dna'}
+          selected={state.currentView === 'discovery' || state.currentView === 'listen-to-the-list' || state.currentView === 'new-for-you' || state.currentView === 'rock-dna'}
           highlight="#b87333"
-          onClick={() => {
-            if (shopTab === 'bandcamp') requestDiscoveryTab('new-for-you')
-            dispatch({ type: 'SET_VIEW', view: 'discovery' })
-          }}
-        />
-        {/* Jake 2026-11-20: "i kind of liked having bandcamp on the side menu
-            there. restore it". The row opens the Record Shop on its Bandcamp
-            tab (one Bandcamp view, Brief 253) and is lit while that tab shows. */}
-        <SidebarItem
-          label="Bandcamp Store"
-          icon={(
-            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M3 3h10l-1.2 7.5a1.5 1.5 0 0 1-1.48 1.25H5.68A1.5 1.5 0 0 1 4.2 10.5L3 3z" fill="#2c5aa0" />
-              <circle cx="6" cy="13.5" r="1" fill="#2c5aa0" />
-              <circle cx="11" cy="13.5" r="1" fill="#2c5aa0" />
-            </svg>
-          )}
-          selected={state.currentView === 'discovery' && shopTab === 'bandcamp'}
-          onClick={() => {
-            requestDiscoveryTab('bandcamp')
-            dispatch({ type: 'SET_VIEW', view: 'discovery' })
-          }}
+          onClick={() => dispatch({ type: 'SET_VIEW', view: 'discovery' })}
         />
         {/* Placement audit P1 (approved): the Downloads row IS the panel's door —
             the whole row toggles it; the glyph stays visible when the queue is
-            empty and the count rides inside it. Brief 253: Bandcamp is a Record Shop
-            tab (its sidebar row opens that tab), and the old Download page is
-            gone (the panel is the one place for progress and failures). */}
+            empty and the count rides inside it. Brief 253: the old Download page
+            is gone (the panel is the one place for progress and failures). */}
         <SidebarItem
-          label="Downloads"
+          label={STORE_ROWS[1]}
           icon={(
             <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#7a5ca8" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
               <path d="M8 2.5v6" />

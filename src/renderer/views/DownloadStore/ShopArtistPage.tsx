@@ -12,6 +12,7 @@ import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react
 import { markLine, ownsArtist, listedArtist, type ArtistReleases, type ShopAlbum, type ShopArtist } from '../../../common/shop-search'
 import { askLossless, losslessVersion, subscribeLossless } from './shopLossless'
 import type { LibraryMarks, ListMarks } from '../../../common/shop-search'
+import { LIST_MARK } from '../../../common/shop-names'
 
 /** The artist page's dots ask Qobuz for this many items (a big catalogue needs more than a search's 50). */
 export const ARTIST_LOSSLESS_LIMIT = 100
@@ -67,7 +68,7 @@ export default function ShopArtistPage({ artist, artworkUrl, marks, renderAlbum,
           <span className="shop-page-title">{artist.name}</span>
           <span className="shop-page-sub">
             {artist.genre ? <span>{artist.genre}</span> : null}
-            {mark ? <span className={`shop-mark${mark === 'On your list' ? ' shop-mark--list' : ''}`}>{mark}</span> : null}
+            {mark ? <span className={`shop-mark${mark === LIST_MARK ? ' shop-mark--list' : ''}`}>{mark}</span> : null}
           </span>
         </div>
       </div>

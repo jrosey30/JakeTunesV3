@@ -9,6 +9,7 @@ import { toggleDownloadsPanel, showDownload } from '../../components/DownloadsPa
 import { useLibrary } from '../../context/LibraryContext'
 import { scoreField, scoreResult, releaseKind, displayAlbumTitle, artistArtwork, isArtistQuery, ownedAlbum, ownsArtist, listedAlbum, listedArtist, listedSong, markLine, pickLibraryHits, type ShopAlbum, type ShopArtist } from '../../../common/shop-search'
 import { losslessOf, losslessTitle } from '../../../common/shop-lossless'
+import { LIST_MARK } from '../../../common/shop-names'
 import { askLossless, losslessFor, losslessVersion, notePlanRow, subscribeLossless } from './shopLossless'
 import { planIsSure, planRowOfJob, planTitle } from '../../../common/shop-qobuz-id'
 import { useShopMarks } from './useShopMarks'
@@ -24,6 +25,7 @@ import { explicitWins } from '../../../common/explicit'
 import { norm, normQ } from './downloadKeys'
 import { createShopFunnel, type ShopFunnelEvent, type ShopSearchHow } from '../../../common/shop-funnel'
 import { usage } from '../../usageLog'
+import { getShopQuery, setShopQuery, setShopSearching, shopQueryHow, subscribeShopQuery } from './shopQuery'
 
 /**
  * Download v3 (2026-07-16) — "browse fast, resolve slow".
@@ -116,7 +118,12 @@ let pageCache: DownloadCache = { query: '', results: [], groups: NO_GROUPS, page
 export interface DownloadPrefill { query?: string; kind?: string; artist?: string; title?: string; origin?: QueueOrigin; target?: 'browse'; how?: ShopSearchHow }
 let pendingPrefill: DownloadPrefill | null = null
 if (typeof window !== 'undefined') {
-  window.addEventListener('jaketunes-download-prefill', (e: Event) => { pendingPrefill = (e as CustomEvent<DownloadPrefill>).detail ?? null })
+  window.addEventListener('jaketunes-download-prefill', (e: Event) => {
+    pendingPrefill = (e as CustomEvent<DownloadPrefill>).detail ?? null
+    // The shop's box shows the words at once, before the Search tab mounts.
+    const q = pendingPrefill?.query?.trim()
+    if (q && (!pendingPrefill?.target || pendingPrefill.target === 'browse')) setShopQuery(q, pendingPrefill?.how === 'typed' ? 'typed' : 'list')
+  })
 }
 
 // Search → save in the usage log (Brief 253, common/shop-funnel.ts): one
@@ -168,8 +175,11 @@ const albumQ = (r: AlbumRow): QResult => ({
 export default function DownloadView() {
   const downloadPageRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('download-page', downloadPageRef)
-  const [query, setQuery] = useState(pageCache.query)
+  // The words are the shop's one box (DiscoveryView), kept in shopQuery.ts.
+  const query = useSyncExternalStore(subscribeShopQuery, getShopQuery)
   const [searching, setSearching] = useState(false)
+  useEffect(() => { setShopSearching(searching) }, [searching])
+  useEffect(() => () => setShopSearching(false), [])
   const [results, setResults] = useState<ItunesSuggestion[]>(pageCache.results)
   const [searchErr, setSearchErr] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ ok: boolean; msg: string } | null>(null)
@@ -404,7 +414,7 @@ export default function DownloadView() {
       pendingPrefill = null
       const q = d?.query?.trim()
       if (!q) return
-      setQuery(q)
+      setShopQuery(q, d?.how === 'typed' ? 'typed' : 'list')
       setResults([])
       setGroups(NO_GROUPS)
       setPages([])
@@ -536,6 +546,8 @@ export default function DownloadView() {
   useEffect(() => {
     const q = query.trim()
     if (q.length < 2) { setResults([]); setGroups(NO_GROUPS); setPages([]); setSearchErr(null); setSearching(false); logFunnel(funnel.left()); return }
+    // Words typed in the box or sent from a list (shopQuery.ts says which).
+    searchHowRef.current = shopQueryHow()
     const h = window.setTimeout(() => { void runSearch(q) }, 300)
     return () => window.clearTimeout(h)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -665,7 +677,7 @@ export default function DownloadView() {
           {s.previewUrl && previewBtn(pid, s.previewUrl, s.title, s.artist, 'dl-song-play')}
         </span>
         {artOr(s.artworkUrl, 'dl-song-art')}
-        <span className="dl-song-title" title={s.title}>{dotFor('song', s.artist, s.title, searchScope, qres)}{s.title}{listed ? <span className="shop-mark shop-mark--list shop-mark--inline">On your list</span> : null}</span>
+        <span className="dl-song-title" title={s.title}>{dotFor('song', s.artist, s.title, searchScope, qres)}{s.title}{listed ? <span className="shop-mark shop-mark--list shop-mark--inline">{LIST_MARK}</span> : null}</span>
         <span className="dl-song-artist" title={s.artist}>{s.artist}</span>
         <span className="dl-song-album" title={s.album || ''}>{s.album ? displayAlbumTitle(s.album) : ''}</span>
         {/* Year on songs too: iTunes returns original, remaster, live and comp
@@ -747,7 +759,7 @@ export default function DownloadView() {
           {count ? <span className="dl-rel-count">{count} track{count === 1 ? '' : 's'}</span> : null}
         </span>
         <span className="dl-rel-sub" title={a.artist}>{a.artist}{genre ? ` · ${genre}` : ''}</span>
-        {mark ? <span className={`shop-mark${mark === 'On your list' ? ' shop-mark--list' : ''}`}>{mark}</span> : null}
+        {mark ? <span className={`shop-mark${mark === LIST_MARK ? ' shop-mark--list' : ''}`}>{mark}</span> : null}
       </div>
     )
   }
@@ -762,7 +774,7 @@ export default function DownloadView() {
         {art ? <img className="shop-artist-art" src={art} alt="" loading="lazy" /> : <span className="shop-artist-art shop-artist-art--ph" aria-hidden="true">{a.name.slice(0, 1).toUpperCase()}</span>}
         <span className="shop-artist-name" title={a.name}>{a.name}</span>
         <span className="shop-artist-sub">{a.genre ?? 'Artist'}</span>
-        {mark ? <span className={`shop-mark${mark === 'On your list' ? ' shop-mark--list' : ''}`}>{mark}</span> : null}
+        {mark ? <span className={`shop-mark${mark === LIST_MARK ? ' shop-mark--list' : ''}`}>{mark}</span> : null}
       </button>
     )
   }
@@ -784,23 +796,9 @@ export default function DownloadView() {
 
   return (
     <div className="download-view download-view--browse" ref={downloadPageRef}>
-      {/* ── command bar. Pinned, because the search field IS the page and it
-             used to scroll away the moment results arrived. ── */}
-      <div className="dl-bar">
-        <div className="dl-field-row">
-        <div className="dl-field">
-          <svg className="dl-field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
-          <input
-            className="dl-input"
-            value={query}
-            onChange={(e) => { searchHowRef.current = 'typed'; setQuery(e.target.value) }}
-            placeholder="Search a song, album, or artist…"
-            spellCheck={false}
-            autoFocus
-          />
-          {searching && <span className="dl-spinner dl-field-spin" aria-hidden="true" />}
-          {!searching && query && <button type="button" className="dl-field-clear" onClick={() => setQuery('')} title="Clear">✕</button>}
-        </div>
+      {/* The search box is the shop's own, above the tabs (DiscoveryView).
+          What stays here is the one thing done once in a while: a link. */}
+      <div className="dl-bar dl-bar--tools">
         <button
           type="button"
           className={`dl-setup-btn${setupOpen ? ' is-open' : ''}`}
@@ -810,7 +808,6 @@ export default function DownloadView() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></svg>
           Add by link
         </button>
-        </div>
       </div>
       <CredentialNotice />
 

@@ -37,7 +37,7 @@ describe('the Downloads panel rows', () => {
     assert.equal(s.status, 'refused'); assert.deepEqual(s.actions, ['chooseVersion'])
     assert.equal(s.primary, 'Not found'); assert.match(s.detail ?? '', /Nothing resembling/)
     assert.deepEqual(s.choose, { query: 'D-Stone Cups', kind: 'song', artist: 'D-Stone', title: 'Cups' })
-    assert.equal(s.from, 'from your Listen List')
+    assert.equal(s.from, 'from your Listening List')
     const a = panelRowFor(album({ status: 'failed', outcome: 'exact-not-found', primary: 'Exact edition not found', alternatives: [{ provider: 'qobuz', desc: 'Little Creatures (9 tracks)', reason: 'has 9 tracks' }] }), NOW)
     assert.equal(a.status, 'refused'); assert.deepEqual(a.actions, ['offer', 'chooseEdition']); assert.equal(a.alternatives.length, 1)
     // Brief 257: a record the walk refused also offers its songs one at a time (a tap, never on its own).
@@ -62,17 +62,19 @@ describe('the Downloads panel rows', () => {
     assert.equal(downloadsBadge(s), '2')
     assert.equal(downloadsBadge({ active: 0, queued: 0, done: 0, failed: 0, canceled: 0 }), undefined)
   })
-  it('the door count never calls a failed, refused or canceled job "done"', () => {
-    assert.equal(downloadsBadge({ active: 0, queued: 0, done: 2, failed: 0, canceled: 0 }), '2 done')
-    assert.equal(downloadsBadge({ active: 0, queued: 0, done: 2, failed: 1, canceled: 0 }), '1 need attention')
-    assert.equal(downloadsBadge({ active: 0, queued: 0, done: 0, failed: 2, canceled: 1 }), '2 need attention')
-    assert.equal(downloadsBadge({ active: 0, queued: 0, done: 1, failed: 0, canceled: 1 }), '2 finished')
-    assert.equal(downloadsBadge({ active: 0, queued: 0, done: 0, failed: 0, canceled: 1 }), '1 finished')
+  it('the door count is a number, never words that cover the row’s name (the approved picture)', () => {
+    // Finished saves are not news: no count.
+    assert.equal(downloadsBadge({ active: 0, queued: 0, done: 2, failed: 0, canceled: 0 }), undefined)
+    assert.equal(downloadsBadge({ active: 0, queued: 0, done: 1, failed: 0, canceled: 1 }), undefined)
+    // What needs Jake is counted, never called "done".
+    assert.equal(downloadsBadge({ active: 0, queued: 0, done: 2, failed: 1, canceled: 0 }), '1')
+    assert.equal(downloadsBadge({ active: 0, queued: 0, done: 0, failed: 2, canceled: 1 }), '2')
     // Anything moving outranks the settled verdicts.
     assert.equal(downloadsBadge({ active: 1, queued: 0, done: 0, failed: 3, canceled: 0 }), '1')
     // A refused verdict is a failed job in the summary — same door count.
     const refused = panelSummary(downloadsPanelRows([song()], NOW))
     assert.equal(refused.failed, 1)
-    assert.equal(downloadsBadge(refused), '1 need attention')
+    assert.equal(downloadsBadge(refused), '1')
+    for (const s of [{ active: 3, queued: 9, done: 1, failed: 2, canceled: 1 }, { active: 0, queued: 0, done: 5, failed: 40, canceled: 0 }]) assert.match(downloadsBadge(s) ?? '', /^[\d,]+$/)
   })
 })

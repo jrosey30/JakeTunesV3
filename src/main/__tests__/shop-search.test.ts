@@ -4,7 +4,7 @@
  *  - Grouped answer: the artist named exactly first, then albums (their own
  *    records first, albums before EPs before singles), clean twins collapsed.
  *  - The artist page: own records only, Albums / EPs / Singles, newest first.
- *  - "In your library" / "On your list" marks, and the library strip above.
+ *  - "In your library" / "On your Listening List" marks, and the library strip above.
  *  - The lossless dot: parsed from one Qobuz answer, exact titles only,
  *    never a "no".
  *  - The answer cache's rules (fresh, shared in flight, failures quiet, LRU)
@@ -169,7 +169,7 @@ describe('marks: in your library, on your list', () => {
   })
   it('says the library first, then the list', () => {
     assert.equal(markLine({ owned: true, listed: true }), 'In your library')
-    assert.equal(markLine({ owned: null, listed: true }), 'On your list')
+    assert.equal(markLine({ owned: null, listed: true }), 'On your Listening List')
     assert.equal(markLine({ owned: false, listed: false }), null)
     assert.equal(markLine({ owned: { state: 'some', have: 1 } }), '1 song in your library')
   })

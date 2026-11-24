@@ -166,7 +166,7 @@ export function useListenToTheList() {
         setRecsCache(next)
         return next
       })
-      setNotice(`"${canon.song || canon.matchedTitle || draftLabel}" is already on your list.`, { kind: 'success' })
+      setNotice(`"${canon.song || canon.matchedTitle || draftLabel}" is already on your Listening List.`, { kind: 'success' })
       return true
     }
     if (res.recommendation) {

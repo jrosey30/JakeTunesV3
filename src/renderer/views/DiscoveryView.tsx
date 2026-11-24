@@ -1,18 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import NewForYouView from './NewForYouView'
 import ListenToTheListView from './ListenToTheListView'
 import DownloadView from './DownloadStore/DownloadView'
 import StoreView from './BandcampStore'
 import { useShopList } from '../record-shop/useShopSession'
-import { DISCOVERY_TAB_EVENT, rememberDiscoveryTab, rememberedDiscoveryTab, type DiscoveryTab } from './discoveryTab'
+import { DISCOVERY_TAB_EVENT, SHOP_TABS, rememberDiscoveryTab, rememberedDiscoveryTab, type DiscoveryTab } from './discoveryTab'
+import { getShopQuery, setShopQuery, shopSearching, subscribeShopQuery, typingOpensSearch } from './DownloadStore/shopQuery'
+import { SHOP_WORDS } from '../../common/shop-names'
 import '../styles/discovery.css'
 
-// Backlog 2026-06-06 — "Discovery" merges the two discovery surfaces behind
-// ONE sidebar entry: the AI radar ("New for You") and your saved jots
-// ("Your List" = Listen to the List). Each tab renders its existing view
-// unchanged — both already own their module caches + scroll containers, so
-// the wrapper just toggles which one is mounted. Recolored teal (see the
-// sidebar entry + discovery.css) so it reads cool vs. the Music Man's orange.
+// The Record Shop (view id 'discovery'): a title and one search box, then the
+// tabs. Each tab renders its own view, which owns its module cache and scroll
+// container, so this only toggles which one is mounted.
 
 export type { DiscoveryTab }
 
@@ -30,49 +29,57 @@ export default function DiscoveryView({ initialTab }: { initialTab?: DiscoveryTa
     window.addEventListener(DISCOVERY_TAB_EVENT, onRequest)
     return () => window.removeEventListener(DISCOVERY_TAB_EVENT, onRequest)
   }, [])
-  // The saved-item count on the Listen List tab (terminology map, 6.0 Record
-  // Shop step 5): the same lean reader the Counter uses — no suggestion fetch.
+  // The saved-item count on the Listening List tab: the same lean reader the
+  // Counter uses (no suggestion fetch).
   const { recs } = useShopList()
 
-  // Literal labels (Record Shop structure proposal, step 5): what a tab IS.
-  // "For You" = the AI picks (The Racks stays as the room's name, a subtitle);
-  // "Listen List" = the saved items, with how many. Routes and tab ids are
-  // unchanged.
+  // The one search box (Jake's approved picture, 2026-11-24): at the top of
+  // the shop on every tab. Typing brings the Search tab forward; the words
+  // live in shopQuery.ts, where the Search tab reads them.
+  const query = useSyncExternalStore(subscribeShopQuery, getShopQuery)
+  const searching = useSyncExternalStore(subscribeShopQuery, shopSearching)
+  const boxRef = useRef<HTMLInputElement>(null)
+  const type = (words: string): void => {
+    setShopQuery(words, 'typed')
+    if (typingOpensSearch(words) && tab !== 'browse') select('browse')
+  }
+  // Opening Search puts the cursor in the box, as the tab's own box did.
+  useEffect(() => { if (tab === 'browse') boxRef.current?.focus() }, [tab])
+
   return (
     <div className="discovery">
-      <div className="discovery-tabs" role="tablist" aria-label="Record Shop">
-        <button
-          role="tab"
-          aria-selected={tab === 'new-for-you'}
-          className={`discovery-tab ${tab === 'new-for-you' ? 'discovery-tab--on' : ''}`}
-          onClick={() => select('new-for-you')}
-        >For You<span className="discovery-tab__sub">The Racks</span></button>
-        {/* Search (step 5 slice 4; "Browse" until Brief 253): the catalogue
-            search, inside the shop. The old Download page and its route are
-            gone; the Downloads panel is where progress and failures live. */}
-        <button
-          role="tab"
-          aria-selected={tab === 'browse'}
-          className={`discovery-tab ${tab === 'browse' ? 'discovery-tab--on' : ''}`}
-          onClick={() => select('browse')}
-        >Search</button>
-        <button
-          role="tab"
-          aria-selected={tab === 'your-list'}
-          className={`discovery-tab ${tab === 'your-list' ? 'discovery-tab--on' : ''}`}
-          onClick={() => select('your-list')}
-        >Listen List{recs.length > 0 && <span className="discovery-tab__count" aria-label={`${recs.length} saved`}>{recs.length.toLocaleString()}</span>}</button>
-        {/* Bandcamp (Brief 253, Jake: a tab, not a fourth door): the real
-            Bandcamp site, the same StoreView the sidebar row opened. */}
-        <button
-          role="tab"
-          aria-selected={tab === 'bandcamp'}
-          className={`discovery-tab ${tab === 'bandcamp' ? 'discovery-tab--on' : ''}`}
-          onClick={() => select('bandcamp')}
-        >Bandcamp</button>
-        {/* Rock DNA left the tabs (2026-11-09): it is a quiz, not a place to
-            shop. Its own page ('rock-dna' view) is linked from the For You
-            page's "What I've learned" strip ("Tune my taste"). */}
+      <div className="discovery-head">
+        <h1 className="discovery-title">{SHOP_WORDS.shop}</h1>
+        <div className="dl-field discovery-search">
+          <svg className="dl-field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+          <input
+            ref={boxRef}
+            className="dl-input"
+            value={query}
+            onChange={(e) => type(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && query.trim() && tab !== 'browse') select('browse') }}
+            placeholder="Search a song, album or artist"
+            aria-label="Search the Record Shop"
+            spellCheck={false}
+          />
+          {searching && <span className="dl-spinner dl-field-spin" aria-hidden="true" />}
+          {!searching && query && <button type="button" className="dl-field-clear" onClick={() => { setShopQuery('', 'typed'); boxRef.current?.focus() }} title="Clear">✕</button>}
+        </div>
+      </div>
+      <div className="discovery-tabs" role="tablist" aria-label={SHOP_WORDS.shop}>
+        {/* For You (the AI picks), Search (the catalogue; tab id 'browse'),
+            the Listening List (saved items, with how many) and Bandcamp (the
+            real site, a tab and not a door of its own). Rock DNA left the tabs
+            on 2026-11-09: its page is linked from the For You strip. */}
+        {SHOP_TABS.map(({ id, label }) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            className={`discovery-tab ${tab === id ? 'discovery-tab--on' : ''}`}
+            onClick={() => select(id)}
+          >{label}{id === 'your-list' && recs.length > 0 && <span className="discovery-tab__count" aria-label={`${recs.length} saved`}>{recs.length.toLocaleString()}</span>}</button>
+        ))}
       </div>
       <div className="discovery-body">
         {tab === 'new-for-you' ? <NewForYouView />

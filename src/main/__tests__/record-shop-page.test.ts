@@ -332,7 +332,7 @@ describe('the page, top to bottom', () => {
     assert.match(view, /buildShopPage\(\{ lanes, wanted: wantedShelves, year \}\)/)
     assert.doesNotMatch(view, /applyBinQuotas|binForGenre/)
   })
-  it('the tabs are For You, Browse and Listen List; Rock DNA has its own page, linked from the strip', () => {
+  it('the tabs are For You, Search, Listening List and Bandcamp (shop-names.test.ts); Rock DNA has its own page, linked from the strip', () => {
     const dv = src('renderer/views/DiscoveryView.tsx')
     assert.doesNotMatch(dv, /RockDnaView|>Rock DNA</)
     assert.match(src('renderer/components/MainContent.tsx'), /case 'rock-dna': viewElement = <RockDnaView \/>/)

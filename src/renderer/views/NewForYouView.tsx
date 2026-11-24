@@ -45,6 +45,7 @@ import OfferButtons from './DownloadStore/OfferButtons'
 import EditionMenu, { askEditions } from './DownloadStore/EditionMenu'
 import AlbumTracklistSheet from './DownloadStore/AlbumTracklistSheet'
 import { showDownload } from '../components/DownloadsPanel'
+import { LIST_MARK } from '../../common/shop-names'
 import '../styles/discover-feed.css'
 
 interface FeedCard {
@@ -389,7 +390,7 @@ export default function NewForYouView() {
           const rec = addedRecs.get(id)
           const dl = rec ? dlMap.get(rec.id)?.state ?? 'idle' : null
           if (!rec || dl === 'queued' || dl === 'downloading' || dl === 'done') {
-            const label = !rec ? 'On your list ✓' : dl === 'queued' ? 'Queued…' : dl === 'downloading' ? 'Saving…' : 'In your library ✓'
+            const label = !rec ? `${LIST_MARK} ✓` : dl === 'queued' ? 'Queued…' : dl === 'downloading' ? 'Saving…' : 'In your library ✓'
             return <button type="button" className="store-add store-add--done" disabled>{label}</button>
           }
           const failed = dl === 'error'
@@ -572,8 +573,8 @@ export default function NewForYouView() {
   return (
     <div className="df-view" ref={pageRef}>
       <div className="store-head">
+        {/* The shop's name is its header's (DiscoveryView), above the tabs. */}
         <div>
-          <h1 className="store-title">The Record Shop</h1>
           <span className="store-sub">WJLR Records · Greenpoint{generatedAt ? ` · restocked ${new Date(generatedAt).toLocaleDateString()}` : ''}</span>
         </div>
         <div className="store-head-right">

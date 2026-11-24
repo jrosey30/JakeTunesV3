@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactN
 import { editionOptionLabel, type AlbumEdition } from '../../../common/album-preflight'
 import { baseAlbumTitle, displayAlbumTitle, listedAlbum, listedSong, markLine, ownedAlbum, ownsSong, releaseKind, type LibraryMarks, type ListMarks } from '../../../common/shop-search'
 import { losslessOf, losslessTitle } from '../../../common/shop-lossless'
+import { LIST_MARK } from '../../../common/shop-names'
 import { albumJobFor, editionsState, editionsWithCard, loadEditions, saveSongsLabel, songJobsFor, subscribeEditions, type EditionTrack } from './albumEditions'
 import { getQueue, itemFor, subscribeQueue, type QItem, type QResult } from './downloadQueue'
 import { askLossless, losslessFor, losslessVersion, notePlanRow, subscribeLossless } from './shopLossless'
@@ -134,7 +135,7 @@ export default function ShopAlbumPage({ album, marks, onSave, renderAction, onBa
             {tracks.genre ?? album.genre ? <span>{tracks.genre ?? album.genre}</span> : null}
             {albumDot ? <span className="shop-dot-label"><span className={`shop-dot shop-dot--${albumDot}`} aria-hidden="true" />{albumDot === 'hires' ? 'Hi-res' : 'Lossless'}</span> : null}
             {!albumDot && planIsSure(albumPlan) ? <span className="shop-dot-label" title={planTitle(albumPlan)}><span className={`shop-dot shop-dot--${albumPlan.hires ? 'hires' : 'lossless'}`} aria-hidden="true" />On Qobuz</span> : null}
-            {mark ? <span className={`shop-mark${mark === 'On your list' ? ' shop-mark--list' : ''}`}>{mark}</span> : null}
+            {mark ? <span className={`shop-mark${mark === LIST_MARK ? ' shop-mark--list' : ''}`}>{mark}</span> : null}
           </span>
           <span className="shop-page-actions">
             <button type="button" className="download-result-btn" onClick={() => onSave(albumJob())} title={albumItem ? 'Show it in Downloads' : 'Save the album'}>Save album</button>
@@ -170,7 +171,7 @@ export default function ShopAlbumPage({ album, marks, onSave, renderAction, onBa
             const tickable = !have && (!item || item.status === 'failed' || item.status === 'canceled')
             const dot = losslessOf(idx, 'song', t.artist, t.song)
             const songPlan = job ? notePlanRow(planRowOfJob(job), words) : null
-            const songMark = have ? null : listedSong(marks.list, t.artist, t.song) ? 'On your list' : null
+            const songMark = have ? null : listedSong(marks.list, t.artist, t.song) ? LIST_MARK : null
             return (
               <li key={`${i}-${t.song}`} className={`shop-track${have ? ' is-owned' : ''}${item ? ` is-${item.status}` : ''}`}>
                 <input type="checkbox" className="dl-track-tick" aria-label={`Pick ${t.song}`} disabled={!tickable} checked={tickable && ticked.has(i)} onChange={() => toggle(i)} />

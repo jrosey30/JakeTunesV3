@@ -113,7 +113,7 @@ export function planSourceEditionGet(cmp: CompareEditionsResult, ctx: { parentKe
     identityLine: `Bandcamp edition — ${sourceEditionLabel(se)}`,
     differences,
     recordedLine: `Recorded as the Bandcamp edition, ${tracks.length} of ${tracks.length}${d ? `; ${d}` : ''}. Verified against this exact tracklist; if the page has changed by then, nothing is imported.`,
-    neverLine: `${cmp.picked.label} is not marked as owned by this; the Listen List entry for it is untouched.`,
+    neverLine: `${cmp.picked.label} is not marked as owned by this; its Listening List entry is untouched.`,
   }
 }
 
