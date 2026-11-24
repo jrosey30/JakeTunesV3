@@ -25,7 +25,6 @@ import './views/DownloadStore/OfferButtons'
 import { OPEN_PREFERENCES_EVENT } from './views/DownloadStore/credential-notice-store'
 import { ingestSyncEvent } from './syncTimeline'
 import ImportConvertModal from './components/ImportConvertModal'
-import LibraryMaintenanceModal from './components/LibraryMaintenanceModal'
 import ShowDuplicatesModal from './components/ShowDuplicatesModal'
 import PlayCacheModal from './components/PlayCacheModal'
 import OrphanCleanupModal from './components/OrphanCleanupModal'
@@ -156,7 +155,6 @@ function AppInner() {
   const toggleLyricsRef = useRef(toggleLyrics)
   toggleLyricsRef.current = toggleLyrics
   const [importConvertOpen, setImportConvertOpen] = useState(false)
-  const [alacCompatOpen, setAlacCompatOpen] = useState(false)
   const [playCacheMode, setPlayCacheMode] = useState<'prepare' | 'prune' | null>(null)
   const [orphanCleanupOpen, setOrphanCleanupOpen] = useState(false)
   const [showDuplicatesOpen, setShowDuplicatesOpen] = useState(false)
@@ -761,7 +759,7 @@ function AppInner() {
   // songs have drifted, tell Jake — do not copy, convert, or wipe.
   useEffect(() => {
     // "Open JakeTunes when this iPod is connected" (Device page options,
-    // persisted by DeviceView's Apply as ui-state `optOpenOnConnect`) was
+    // saved by the Device page as ui-state `optOpenOnConnect`) was
     // saved but never read (2026-10-17). On: the plug-in opens the Device
     // page — unless a sync, a rip or a modal is in flight (autoNavGuard).
     // Navigation only; nothing here touches the device.
@@ -1649,7 +1647,6 @@ function AppInner() {
         }
         case 'toggle-lyrics': toggleLyricsRef.current(); break
         case 'open-import-convert': setImportConvertOpen(true); break
-        case 'fix-ipod-compat':     setAlacCompatOpen(true); break
         case 'prepare-alac-cache':  setPlayCacheMode('prepare'); break
         case 'prune-alac-cache':    setPlayCacheMode('prune'); break
         case 'clean-orphan-files':  setOrphanCleanupOpen(true); break
@@ -2019,12 +2016,8 @@ function AppInner() {
     const droppedPaths = granted?.ok && granted.paths ? granted.paths : []
     if (droppedPaths.length === 0) return
 
-    // Honor the user's persisted import format (ALAC / AAC 256 / etc).
-    const ui = await window.electronAPI.loadUiState().catch(() => ({ ok: false, state: null }))
-    const importFormat = (ui.ok && ui.state && typeof (ui.state as Record<string, unknown>).importFormat === 'string')
-      ? (ui.state as Record<string, unknown>).importFormat as string
-      : undefined
-    void enqueueFiles(droppedPaths, importFormat)
+    // No format: main uses Settings › Library's, the one import format.
+    void enqueueFiles(droppedPaths)
   }, [])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -2043,17 +2036,13 @@ function AppInner() {
   }, [])
 
   // File → Import… (⌘O): native file picker feeding the EXACT same
-  // enqueueFiles() pipeline as drag-and-drop (format pref honored, dedupe,
+  // enqueueFiles() pipeline as drag-and-drop (Settings' format, dedupe,
   // queue panel progress).
   useEffect(() => {
     const handler = async () => {
       const r = await window.electronAPI.importPickFiles()
       if (!r?.ok || !r.paths || r.paths.length === 0) return
-      const ui = await window.electronAPI.loadUiState().catch(() => ({ ok: false as const, state: null }))
-      const importFormat = (ui.ok && ui.state && typeof (ui.state as Record<string, unknown>).importFormat === 'string')
-        ? (ui.state as Record<string, unknown>).importFormat as string
-        : undefined
-      void enqueueFiles(r.paths, importFormat)
+      void enqueueFiles(r.paths)
     }
     const listener = () => { void handler() }
     window.addEventListener('jaketunes-import-files', listener)
@@ -2127,7 +2116,6 @@ function AppInner() {
         {showDownloads && <DownloadsPanel ref={downloadsRef} onClose={() => setShowDownloads(false)} />}
         {showLyrics && <LyricsPanel ref={lyricsRef} onClose={() => setShowLyrics(false)} />}
         {importConvertOpen && <ImportConvertModal onClose={() => setImportConvertOpen(false)} />}
-        {alacCompatOpen && <LibraryMaintenanceModal mode="alac" onClose={() => setAlacCompatOpen(false)} />}
         {playCacheMode && <PlayCacheModal mode={playCacheMode} onClose={() => setPlayCacheMode(null)} />}
         {orphanCleanupOpen && (
           <OrphanCleanupModal

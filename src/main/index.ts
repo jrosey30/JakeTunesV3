@@ -130,6 +130,7 @@ import { readLastSyncPlaylists } from './ipod-playlist-rule.ts'
 import { saveOtgLists } from './ipod-otg-playlists.ts'
 import { deviceKeyOf, stillAnIpodPlaylist } from '../common/ipod-device-playlists.ts'
 import type { IpodDeviceMarker } from '../common/ipod-identity.ts'
+import { importFormatFromSettings } from '../common/import-format.ts'
 import { ingestIpodRoundTrip, type RoundTripHost } from './sync-engine/roundtrip.ts'
 import { identifyIpod, resolveIpodState } from './ipod-identity.ts'
 import { manifestForCatalog, securePlaysBeforeSync } from './ipod-plays-archive.ts'
@@ -2822,9 +2823,11 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
       {
         label: 'Library',
         submenu: [
-          // Re-encode high-bit-depth ALAC files that iPod Classic can't
-          // decode (causes random track skips on hardware).
-          { label: 'Fix iPod Compatibility…',  click: () => sendMenuAction('fix-ipod-compat') },
+          // (V7 steady: "Fix iPod Compatibility…" is gone. It re-encoded the
+          // library's own hi-res ALAC masters down to 16-bit, in place.
+          // Sync already makes iPod-safe copies in its cache
+          // (buildIpodSafeAlacMirror), so the tool could only damage
+          // masters. master-never-reencoded.test.ts keeps it gone.)
           // 4.1: ALAC play-cache management. Replaces the launch-time
           // prewarm scanner with explicit user actions.
           { label: 'Prepare ALAC Tracks for Instant Play…', click: () => sendMenuAction('prepare-alac-cache') },
@@ -4870,7 +4873,7 @@ ipc.handle('load-tracks', async () => {
 //   - import-time await of prewarmAlacCache (cache hot the moment a
 //     track lands; no on-demand transcode at first-play),
 //   - explicit "Prepare ALAC tracks" maintenance action in
-//     LibraryMaintenanceModal for the existing library backlog.)
+//     the File › Library menu for the existing library backlog.)
 
 // Save the master library to disk.
 //
@@ -5407,73 +5410,12 @@ const syncEngine = createSyncEngine({
 })
 const { handleSyncToIpod, handleSyncIpodFromDevice } = syncEngine
 
-// ── iPod Classic ALAC compatibility fix ──
-//
-// (Removed: 'verify-library' / 'apply-library-repair' IPC handlers and
-// the menu entry that fired them. The Python script in
-// core/repair_mismatches.py classified files as "unrepairable" using a
-// strict tag normalizer that didn't equate "Pt. 1" with "Part 1", and
-// the apply handler was hard-coded to pass --delete-unrepairable, so a
-// matcher false-negative meant real tracks got silently deleted from
-// library.json. The audio files themselves were never touched — the
-// timestamped library.json.bak-repair-* backup the script writes is
-// always recoverable. iTunes/iPod never had a verify step; we shouldn't
-// either. The CLI script stays on disk for future opt-in debugging.)
-ipc.handle('alac-compat-scan', async () => {
-  const script = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/alac_compat_fix.py')
-  return await new Promise<{ ok: boolean; count?: number; samples?: unknown[]; error?: string }>((resolve) => {
-    const py = spawn(PYTHON_CMD ?? 'python3', [script])
-    let stdout = ''
-    let stderr = ''
-    py.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-    py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-    py.on('error', (err) => resolve({ ok: false, error: safeIpcError(err, 'tool-failed') }))
-    py.on('close', async (code) => {
-      if (code !== 0) { resolve({ ok: false, error: safeIpcError(stderr, 'tool-failed') }); return }
-      try {
-        const rJson = await readFile('/tmp/jaketunes-alac-compat-report.json', 'utf-8')
-        const r = JSON.parse(rJson) as { incompatible: number; samples: unknown[] }
-        resolve({ ok: true, count: r.incompatible, samples: r.samples })
-      } catch {
-        resolve({ ok: true, count: 0, samples: [] })
-      }
-    })
-  })
-}, { refuse: REFUSED_SENDER })
-
-ipc.handle('alac-compat-fix', async () => {
-  const script = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/alac_compat_fix.py')
-  return await new Promise<{ ok: boolean; error?: string; summary?: string }>((resolve) => {
-    const py = spawn(PYTHON_CMD ?? 'python3', [script, '--apply'])
-    let stdout = ''
-    let stderr = ''
-    py.stdout.on('data', (d: Buffer) => {
-      stdout += d.toString()
-      // Stream progress to renderer so user can watch the bar fill. Each
-      // Python line "[N/M] file … OK" counts as a step.
-      const m = d.toString().match(/\[(\d+)\/(\d+)\]\s+(\S+)/)
-      if (m) {
-        sendToRenderer('alac-compat-progress', {
-          current: Number(m[1]), total: Number(m[2]), file: m[3],
-        })
-      }
-    })
-    py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-    py.on('error', (err) => resolve({ ok: false, error: safeIpcError(err, 'tool-failed') }))
-    py.on('close', async (code) => {
-      if (code === 0) {
-        // (4.1: removed schedulePrewarmFromLibrary call here. The user
-        // can hit "Prepare ALAC tracks for instant play" in the
-        // Library Maintenance modal to refresh the cache for the
-        // re-encoded files. Doing it inline here would silently spawn
-        // ffmpeg jobs the user didn't ask for.)
-        resolve({ ok: true, summary: stdout.slice(-3000) })
-      } else {
-        resolve({ ok: false, error: safeIpcError(stderr || `python exit ${code}`, 'tool-failed') })
-      }
-    })
-  })
-}, { refuse: REFUSED_SENDER })
+// (Removed: the 'alac-compat-scan' / 'alac-compat-fix' IPC handlers and
+// core/alac_compat_fix.py. They rewrote the library's master ALAC files
+// to 16-bit in place. The iPod gets a 16-bit copy from the sync convert
+// cache instead; the masters are never re-encoded. Earlier still, the
+// 'verify-library' / 'apply-library-repair' handlers were removed because
+// their matcher could delete real library entries.)
 
 // ── Import tracks from dropped files ──
 // Music library storage — Brief 011b three-tier resolution:
@@ -9820,6 +9762,7 @@ registerCdIpc(ipc, {
   readOffloadAudio,
   registerKnownCodec: (path, mtime, codec) => registerKnownCodec(path, mtime, codec),
   sendToRenderer,
+  readImportFormat: async () => importFormatFromSettings(await readAppSettingsAsync()),
 })
 
 // ── Audio output + call watch ── (extracted to ipc/audio-output-ipc.ts, 6.0 Phase 1)

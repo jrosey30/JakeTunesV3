@@ -5,7 +5,7 @@
 # invokes via spawn(PYTHON_CMD, ...).
 
 # Audio file tag I/O (used by tag_reader.py, tag_writer.py, reembed_tags.py,
-# alac_compat_fix.py, dedupe_compilation_years.py — basically every script
+# dedupe_compilation_years.py — basically every script
 # that touches embedded metadata).
 mutagen
 

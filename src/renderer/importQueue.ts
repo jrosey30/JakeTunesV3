@@ -23,7 +23,7 @@
  */
 
 import type { Track } from './types'
-import { setNotice } from './activity'
+import { setNotice } from './activity.ts'
 
 export type QueueItemStatus =
   | 'pending'    // sitting in the queue, will be processed
@@ -82,19 +82,22 @@ export interface QueueItem {
    *  the app's landing toast must not announce as songs: concerts don't
    *  ride a sync as songs (see common/arrivals.ts). */
   quiet?: boolean
+  /** The format this one item asked for. Undefined for every ordinary
+   *  import, so main uses Settings › Library's (the one import format);
+   *  only the app's own merged live set asks for 'alac'. Per item, never
+   *  queue-wide: a queue-wide format stuck at the live set's 'alac' and
+   *  overrode Settings for every later import until restart (V7 steady). */
+  format?: string
 }
 
 interface QueueState {
   items: QueueItem[]
-  /** Format used for next-popped item. Updated on enqueue. */
-  format?: string
   /** Set while the worker is mid-flight on an item. */
   workerRunning: boolean
 }
 
 let state: QueueState = {
   items: [],
-  format: undefined,
   workerRunning: false,
 }
 
@@ -213,6 +216,7 @@ export async function enqueueFiles(
       addedAt: now,
       deleteSourceOnSuccess: opts?.deleteSourceOnSuccess,
       quiet: opts?.quiet,
+      format,
     })
   }
   if (!newItems.length && surviving.length === state.items.length) return 0
@@ -220,7 +224,6 @@ export async function enqueueFiles(
   state = {
     ...state,
     items: [...surviving, ...newItems],
-    format: format ?? state.format,
   }
   notify()
   // Kick the worker. If one is already running this is a no-op.
@@ -359,7 +362,7 @@ async function runWorker(): Promise<void> {
       const id = nextLibraryId++
       let res: Awaited<ReturnType<typeof window.electronAPI.importTrack>>
       try {
-        res = await window.electronAPI.importTrack(next.srcPath, id, state.format)
+        res = await window.electronAPI.importTrack(next.srcPath, id, next.format)
       } catch (err) {
         res = { ok: false, error: String(err) }
       }

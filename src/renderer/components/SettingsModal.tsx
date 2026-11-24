@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { AppSettings, DEFAULT_APP_SETTINGS, ImportFormatChoice } from '../types'
+import { IMPORT_FORMATS, IMPORT_FORMAT_LABELS } from '../../common/import-format'
 import { EQ_BAND_FREQUENCIES, EQ_PRESETS } from '../audio/eq'
 import { getCorrelation, setEnhanceConfig } from '../audio/audioEnhance'
 import { getCaptionsOn, setCaptionsOn } from '../activity'
@@ -86,14 +87,10 @@ function transportHint(transport: string): string {
   }
 }
 
-const FORMAT_OPTIONS: { value: ImportFormatChoice; label: string }[] = [
-  { value: 'aac-128', label: 'AAC 128 kbps (small)' },
-  { value: 'aac-256', label: 'AAC 256 kbps' },
-  { value: 'aac-320', label: 'AAC 320 kbps (high)' },
-  { value: 'alac',    label: 'Apple Lossless (ALAC, default)' },
-  { value: 'aiff',    label: 'AIFF (uncompressed)' },
-  { value: 'wav',     label: 'WAV (uncompressed)' },
-]
+// The one import format (common/import-format.ts): drag and drop, File ›
+// Import, Import and Convert and CD import all use this setting.
+const FORMAT_OPTIONS: { value: ImportFormatChoice; label: string }[] =
+  IMPORT_FORMATS.map((value) => ({ value, label: IMPORT_FORMAT_LABELS[value] }))
 
 function formatRelative(ms: number): string {
   const diff = Date.now() - ms
@@ -693,7 +690,7 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                   (Jake: "stats move to settings"). */}
               <LibraryStatsSection />
               <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#3a3a3a' }}>
-                Default import format
+                Import format
               </label>
               <select
                 value={draft.library.defaultImportFormat}
@@ -708,7 +705,7 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                 ))}
               </select>
               <p className="imp-help" style={{ marginTop: 10 }}>
-                Applied to new imports. Lossless sources (FLAC, WAV, AIFF) convert to this format. MP3 and AAC are copied unchanged. Tracks already in the library are left alone.
+                Used for every import: drag and drop, Import and Convert, and CDs. Lossless sources (FLAC, WAV, AIFF) convert to this format. MP3 and AAC are copied unchanged. Tracks already in the library are left alone.
               </p>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16 }}>
                 <input

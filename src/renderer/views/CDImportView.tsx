@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { Track } from '../types'
+import { IMPORT_FORMAT_LABELS, importFormatFromSettings, type ImportFormat } from '../../common/import-format'
 import '../styles/cdimport.css'
 
 interface CdTrack {
@@ -21,17 +22,6 @@ interface CdInfo {
 }
 
 type ImportStatus = 'idle' | 'loading' | 'ready' | 'importing' | 'done' | 'error'
-type ImportFormat = 'aac-256' | 'aac-128' | 'aac-320' | 'alac' | 'aiff' | 'wav'
-
-const FORMAT_LABELS: Record<ImportFormat, string> = {
-  'aac-256': 'AAC (iTunes Plus, 256 kbps)',
-  'aac-128': 'AAC (128 kbps)',
-  'aac-320': 'AAC (320 kbps)',
-  'alac': 'Apple Lossless',
-  'aiff': 'AIFF (Uncompressed)',
-  'wav': 'WAV (Uncompressed)',
-}
-
 function formatDuration(ms: number): string {
   if (!ms || ms <= 0) return ''
   const totalSecs = Math.floor(ms / 1000)
@@ -54,10 +44,6 @@ interface CdEditState {
 }
 let cachedCdInfo: CdInfo | null = null
 let cachedEdits: CdEditState | null = null
-// Preferred import format — seeded from ui-state.json on first render of
-// CDImportView, then mirrored back out whenever the user changes it.
-// Survives both view remounts AND app relaunches.
-let cachedImportFormat: ImportFormat | null = null
 
 // Rip-progress cache. Lives at the module level so navigating away from
 // the CD Import view and coming back mid-rip doesn't hide the progress
@@ -156,12 +142,10 @@ export default function CDImportView() {
   const [currentTrack, setCurrentTrack] = useState<number | null>(cachedRipProgress.currentTrack)
   const [importCount, setImportCount] = useState(cachedRipProgress.importCount)
 
-  // Import settings — seed from module cache so it survives view
-  // remounts. A follow-up effect below also pulls from ui-state.json
-  // on first mount to survive app relaunches, and mirrors changes
-  // back out to both the module cache and ui-state.
-  const [importFormat, setImportFormat] = useState<ImportFormat>(cachedImportFormat ?? 'aac-256')
-  const importFormatLoaded = useRef(false)
+  // The format is Settings › Library's, the one every import uses
+  // (common/import-format.ts). Shown here, never picked here: the main
+  // process reads the same setting when it rips.
+  const [importFormat, setImportFormat] = useState<ImportFormat | null>(null)
 
   // Editable metadata — also seeded from cache
   const [editArtist, setEditArtist] = useState(cachedEdits?.editArtist ?? '')
@@ -258,32 +242,11 @@ export default function CDImportView() {
     }
   }, [cdInfo, checked, editArtist, editAlbum, editYear, editGenre, editTitles])
 
-  // Load the persisted import format from ui-state.json exactly once
-  // on first mount, then mirror any user change back out. After the
-  // initial load, the module-level cachedImportFormat is the source
-  // of truth for subsequent remounts in the same session.
   useEffect(() => {
-    if (importFormatLoaded.current) return
-    importFormatLoaded.current = true
-    if (cachedImportFormat) return  // already seeded from a previous visit
-    window.electronAPI.loadUiState().then(r => {
-      if (!r.ok || !r.state) return
-      const f = (r.state as Record<string, unknown>).importFormat
-      if (typeof f === 'string' && ['aac-256', 'aac-128', 'aac-320', 'alac', 'aiff', 'wav'].includes(f)) {
-        cachedImportFormat = f as ImportFormat
-        setImportFormat(f as ImportFormat)
-      }
-    }).catch(() => {})
+    window.electronAPI.loadAppSettings()
+      .then(r => setImportFormat(importFormatFromSettings(r.ok ? r.settings : null)))
+      .catch(() => setImportFormat(importFormatFromSettings(null)))
   }, [])
-
-  // Persist the user's format choice whenever it changes.
-  useEffect(() => {
-    cachedImportFormat = importFormat
-    window.electronAPI.loadUiState().then(r => {
-      const existing = (r.ok && r.state) ? r.state : {}
-      window.electronAPI.saveUiState({ ...existing, importFormat })
-    }).catch(() => {})
-  }, [importFormat])
 
   // Listen for rip progress. Also mirror progress into the module-level
   // cache so that remounting this view during an active rip (user
@@ -359,7 +322,6 @@ export default function CDImportView() {
         tracksToRip,
         { artist: editArtist, album: editAlbum, year: editYear, genre: editGenre },
         nextId,
-        importFormat
       )
 
       if (result.ok && result.tracks && result.tracks.length > 0) {
@@ -377,7 +339,7 @@ export default function CDImportView() {
       setStatus('error')
       cachedRipProgress.status = 'error'
     }
-  }, [cdInfo, checked, editArtist, editAlbum, editYear, editGenre, editTitles, importFormat, libState.tracks, dispatch])
+  }, [cdInfo, checked, editArtist, editAlbum, editYear, editGenre, editTitles, libState.tracks, dispatch])
 
   const handleEject = useCallback(async () => {
     await window.electronAPI.ejectCd()
@@ -479,19 +441,9 @@ export default function CDImportView() {
             </>
           )}
           <div className="cd-import-settings">
-            <label className="cd-meta-label">
-              Import Using
-              <select
-                className="cd-format-select"
-                value={importFormat}
-                onChange={(e) => setImportFormat(e.target.value as ImportFormat)}
-                disabled={isImporting}
-              >
-                {Object.entries(FORMAT_LABELS).map(([key, label]) => (
-                  <option key={key} value={key}>{label}</option>
-                ))}
-              </select>
-            </label>
+            <span className="cd-meta-label">
+              Import Using {importFormat ? IMPORT_FORMAT_LABELS[importFormat] : '…'}
+            </span>
           </div>
           <div className="cd-header-summary">
             {checked.size} of {cdInfo.tracks.length} songs selected, {timeStr}

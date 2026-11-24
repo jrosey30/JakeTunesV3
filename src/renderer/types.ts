@@ -512,7 +512,7 @@ export interface RestoreApplyResult {
 // via electronAPI.loadAppSettings / saveAppSettings. New fields added
 // here should also be reflected in DEFAULT_APP_SETTINGS so renderer
 // fallback is total.
-export type ImportFormatChoice = 'aac-128' | 'aac-256' | 'aac-320' | 'alac' | 'aiff' | 'wav'
+export type ImportFormatChoice = import('../common/import-format').ImportFormat
 
 // EQ (4.0 §6.5). Type lives in audio/eq.ts but is re-exported here so
 // it's reachable through the same single types module the rest of the
@@ -1128,7 +1128,7 @@ declare global {
       // CD drive
       checkCdDrive: () => Promise<{ hasCd: boolean; volumeName?: string; volumePath?: string; trackCount?: number }>
       getCdInfo: () => Promise<{ ok: boolean; volumeName?: string; volumePath?: string; artist?: string; album?: string; year?: string; genre?: string; tracks?: { number: number; title: string; duration: number; filePath: string }[]; error?: string }>
-      ripCdTracks: (tracks: { number: number; title: string; duration: number; filePath: string }[], metadata: { artist: string; album: string; year: string; genre: string }, nextId: number, format?: string) => Promise<{ ok: boolean; tracks?: Track[]; error?: string }>
+      ripCdTracks: (tracks: { number: number; title: string; duration: number; filePath: string }[], metadata: { artist: string; album: string; year: string; genre: string }, nextId: number) => Promise<{ ok: boolean; tracks?: Track[]; error?: string }>
       onCdRipProgress: (callback: (progress: { current: number; total: number; trackNumber: number; trackTitle: string; track?: Track; error?: string }) => void) => () => void
       onImportProgress: (callback: (progress: { current: number; total: number; title: string; error?: string }) => void) => () => void
       ejectCd: () => Promise<{ ok: boolean; error?: string }>
@@ -1170,9 +1170,6 @@ declare global {
       setAudioDevice: (deviceId: number) => Promise<{ ok: boolean; error?: string }>
       setCallWatch: (armed: boolean) => Promise<{ ok: boolean }>
       onCallStateChanged: (callback: (state: { onCall: boolean }) => void) => () => void
-      alacCompatScan: () => Promise<{ ok: boolean; count?: number; samples?: unknown[]; error?: string }>
-      alacCompatFix: () => Promise<{ ok: boolean; error?: string; summary?: string }>
-      onAlacCompatProgress: (callback: (p: { current: number; total: number; file: string }) => void) => () => void
       // 4.1 Library Maintenance: ALAC play-cache management (replaces launch-time prewarm)
       prepareAlacCache: () => Promise<{ ok: boolean; processed?: number; transcoded?: number; total?: number; cancelled?: boolean; error?: string }>
       cancelAlacCache: () => void

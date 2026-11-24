@@ -55,7 +55,8 @@ describe('wired', () => {
     const app = src('renderer/App.tsx')
     assert.match(app, /r\.state\?\.optOpenOnConnect !== true/)
     assert.match(app, /currentView === 'device' \|\| autoNavBlocked\(\)/)
-    // DeviceView still owns the setting under that key.
-    assert.match(src('renderer/views/DeviceView.tsx'), /optOpenOnConnect: typeof s\.optOpenOnConnect === 'boolean'/)
+    // The Device page still owns the setting under that key.
+    assert.match(src('renderer/deviceOptions.ts'), /optOpenOnConnect: typeof s\.optOpenOnConnect === 'boolean'/)
+    assert.match(src('renderer/views/DeviceView.tsx'), /changeDeviceOption\(\{ optOpenOnConnect: e\.target\.checked \}\)/)
   })
 })

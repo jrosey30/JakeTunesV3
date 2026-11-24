@@ -19,6 +19,7 @@ import { subscribeSyncTimeline, getSyncTimeline, startSyncTimeline, finishSyncTi
 import { SYNC_STEPS, finishedSyncResult, timelinePercent, resultLine, elapsedLabel, stepLabel, ipodCountLabel, songTitleOnly } from '../../common/sync-progress-model'
 import { syncOutcome, outcomeLine, syncFailureCopy } from '../../common/sync-failure-copy'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
+import { convertKbps, DEFAULT_DEVICE_OPTIONS, readDeviceOptions, saveDeviceOption, type ConvertTarget, type DeviceOptions } from '../deviceOptions'
 import '../styles/device.css'
 
 // Fallback capacity shown before the main process reports the real size.
@@ -234,31 +235,16 @@ export default function DeviceView() {
     return () => { cancelled = true }
   }, [])
 
-  // iTunes-style device options. Stored in ui-state.json so they persist
-  // across launches. Behavior for each option is implemented as the
-  // corresponding feature lands; for now they at least remember the
-  // user's preference.
-  const [optOpenOnConnect, setOptOpenOnConnect] = useState(false)
-  const [optSyncOnlyChecked, setOptSyncOnlyChecked] = useState(false)
-  const [optConvertBitrate, setOptConvertBitrate] = useState(false)
-  const [optConvertBitrateTarget, setOptConvertBitrateTarget] = useState<'128' | '192' | '256'>('128')
-  const [optManualManage, setOptManualManage] = useState(true)
-  const [optDiskUse, setOptDiskUse] = useState(true)
-  const optsLoaded = useRef(false)
-  // 4.5: iTunes-style Apply pattern. The "applied" snapshot is what's
-  // currently persisted to disk + considered live; the working state
-  // (above) is what the user is editing. Sync is gated on
-  // applied === working — if the user has unsaved settings changes,
-  // Apply must run first. Initial value matches the defaults so the
-  // first session post-load is clean.
-  const [appliedSettings, setAppliedSettings] = useState({
-    optOpenOnConnect: false,
-    optSyncOnlyChecked: false,
-    optConvertBitrate: false,
-    optConvertBitrateTarget: '128' as '128' | '192' | '256',
-    optManualManage: true,
-    optDiskUse: true,
-  })
+  // Device options (deviceOptions.ts). Each saves the moment it changes;
+  // there is no Apply step and nothing here blocks a sync.
+  const [deviceOpts, setDeviceOpts] = useState<DeviceOptions>(DEFAULT_DEVICE_OPTIONS)
+  const { optOpenOnConnect, optConvertBitrate, optConvertBitrateTarget } = deviceOpts
+  const changeDeviceOption = (patch: Partial<DeviceOptions>) => {
+    setDeviceOpts((o) => ({ ...o, ...patch }))
+    saveDeviceOption(window.electronAPI, patch).catch((err) => {
+      console.warn('[device-settings] save failed:', err)
+    })
+  }
 
   // The EXACT on-device song count, straight from the iPod's own catalog
   // (the sync's readback guard keeps that catalog honest). Refreshes on
@@ -289,63 +275,11 @@ export default function DeviceView() {
       if (r.ok && typeof r.freeBytes === 'number') setIpodFreeBytes(r.freeBytes)
       if (r.ok && r.fsName) setIpodFsName(r.fsName)
     }).catch(() => {})
-    // Load persisted device options out of ui-state.
+    // Load the persisted device option out of ui-state.
     window.electronAPI.loadUiState().then(r => {
-      if (!r.ok || !r.state) { optsLoaded.current = true; return }
-      const s = r.state as Record<string, unknown>
-      const loaded = {
-        optOpenOnConnect: typeof s.optOpenOnConnect === 'boolean' ? s.optOpenOnConnect : false,
-        optSyncOnlyChecked: typeof s.optSyncOnlyChecked === 'boolean' ? s.optSyncOnlyChecked : false,
-        optConvertBitrate: typeof s.optConvertBitrate === 'boolean' ? s.optConvertBitrate : false,
-        optConvertBitrateTarget: (s.optConvertBitrateTarget === '128' || s.optConvertBitrateTarget === '192' || s.optConvertBitrateTarget === '256')
-          ? s.optConvertBitrateTarget as '128' | '192' | '256'
-          : '128' as const,
-        optManualManage: typeof s.optManualManage === 'boolean' ? s.optManualManage : true,
-        optDiskUse: typeof s.optDiskUse === 'boolean' ? s.optDiskUse : true,
-      }
-      setOptOpenOnConnect(loaded.optOpenOnConnect)
-      setOptSyncOnlyChecked(loaded.optSyncOnlyChecked)
-      setOptConvertBitrate(loaded.optConvertBitrate)
-      setOptConvertBitrateTarget(loaded.optConvertBitrateTarget)
-      setOptManualManage(loaded.optManualManage)
-      setOptDiskUse(loaded.optDiskUse)
-      // 4.5: applied snapshot matches what was loaded — fresh session
-      // starts in a non-dirty state regardless of what the persisted
-      // values are.
-      setAppliedSettings(loaded)
-      optsLoaded.current = true
-    }).catch(() => { optsLoaded.current = true })
+      if (r.ok) setDeviceOpts(readDeviceOptions(r.state))
+    }).catch(() => {})
   }, [])
-
-  // 4.5: dirty detector. True when any working value differs from the
-  // applied snapshot. Apply button appears + Sync gets gated when dirty.
-  const isDirty =
-    optOpenOnConnect !== appliedSettings.optOpenOnConnect ||
-    optSyncOnlyChecked !== appliedSettings.optSyncOnlyChecked ||
-    optConvertBitrate !== appliedSettings.optConvertBitrate ||
-    optConvertBitrateTarget !== appliedSettings.optConvertBitrateTarget ||
-    optManualManage !== appliedSettings.optManualManage ||
-    optDiskUse !== appliedSettings.optDiskUse
-
-  // 4.5: Apply persists current state to disk AND updates the applied
-  // snapshot so the dirty flag drops to false. Sync becomes available.
-  // The auto-save-on-change useEffect above was REMOVED — settings now
-  // only persist on Apply click, matching iTunes' commit pattern Jake
-  // asked for.
-  const handleApplySettings = async () => {
-    try {
-      const r = await window.electronAPI.loadUiState()
-      const existing = (r.ok && r.state) ? r.state : {}
-      const snapshot = {
-        optOpenOnConnect, optSyncOnlyChecked, optConvertBitrate,
-        optConvertBitrateTarget, optManualManage, optDiskUse,
-      }
-      await window.electronAPI.saveUiState({ ...existing, ...snapshot })
-      setAppliedSettings(snapshot)
-    } catch (err) {
-      console.warn('[device-settings] apply failed:', err)
-    }
-  }
 
   const stats = useMemo(() => {
     // Capacity bar estimates the NEXT workout sync (~1000 tracks), not the
@@ -431,7 +365,7 @@ export default function DeviceView() {
 
   // The FULL-LIBRARY mirror (pre-activity behavior) — used for clean-slate
   // rebuilds (like the fragmentation cure) where the device must carry
-  // everything, at the applied convert setting.
+  // everything, at the convert setting.
   const runFullLibrarySync = async () => {
     setShowFullSyncConfirm(false)
     const activity = await import('../activity')
@@ -440,12 +374,9 @@ export default function DeviceView() {
     activity.setSync({ active: true, step: 'Copying your whole library to the iPod…' })
     try {
       const syncPlaylists = buildSmartPlaylistsForSync(state.tracks, state.playlists)
-      const targetKbpsNum: 128 | 192 | 256 =
-        appliedSettings.optConvertBitrateTarget === '256' ? 256
-        : appliedSettings.optConvertBitrateTarget === '192' ? 192
-        : 128
+      const targetKbpsNum = convertKbps(optConvertBitrateTarget)
       const result = await window.electronAPI.syncToIpod(state.tracks, syncPlaylists, {
-        enabled: appliedSettings.optConvertBitrate,
+        enabled: optConvertBitrate,
         targetKbps: targetKbpsNum,
       }, { origin: 'full-library-click' })
       if (result.alreadyRunning) return
@@ -599,13 +530,10 @@ export default function DeviceView() {
       const playlists = assembleSyncPlaylists(finalTracks, state.playlists, fresh.setName)
       setSyncStatus({ state: 'syncing', step: syncingStep(fresh.setName, finalTracks.length), target: finalTracks.length })
       activity.setSync({ active: true, step: syncingStep(fresh.setName, finalTracks.length) })
-      // The user's APPLIED convert setting — toggle ON = AAC mirrors, OFF = ALAC preserved.
-      const targetKbpsNum: 128 | 192 | 256 =
-        appliedSettings.optConvertBitrateTarget === '256' ? 256
-        : appliedSettings.optConvertBitrateTarget === '192' ? 192
-        : 128
+      // The convert setting — toggle ON = AAC mirrors, OFF = ALAC preserved.
+      const targetKbpsNum = convertKbps(optConvertBitrateTarget)
       const result = await window.electronAPI.syncToIpod(finalTracks, playlists, {
-        enabled: appliedSettings.optConvertBitrate,
+        enabled: optConvertBitrate,
         targetKbps: targetKbpsNum,
       }, { wipeFirst: true, origin: 'activity-click' })  // dedicated activity engine; click-only
       if (result.alreadyRunning) return
@@ -770,14 +698,14 @@ export default function DeviceView() {
           {plan?.ok && renaming === null && (
             <button
               className="device-itunes-btn device-itunes-btn--sync"
-              disabled={syncing || isDirty}
+              disabled={syncing}
               onClick={() => { void runOneSync() }}
-              title={isDirty ? 'Click Apply first' : (syncing ? 'Syncing…' : `Put these ${plan.trackIds.length.toLocaleString('en-US')} songs on ${plan.ipodName}`)}
+              title={syncing ? 'Syncing…' : `Put these ${plan.trackIds.length.toLocaleString('en-US')} songs on ${plan.ipodName}`}
             >{syncing ? 'Syncing…' : syncButtonLabel(plan.ipodName)}</button>
           )}
           <span className="device-sync-spacer" />
-          <button type="button" className="device-link-btn" disabled={syncing || isDirty} onClick={handleFullSync} title={isDirty ? 'Click Apply first' : 'Put your whole library on the iPod'}>Full Sync…</button>
-          <button type="button" className="device-link-btn" aria-expanded={optionsOpen || isDirty} onClick={() => setOptionsOpen((o) => !o)}>Options {optionsOpen || isDirty ? '▾' : '▸'}</button>
+          <button type="button" className="device-link-btn" disabled={syncing} onClick={handleFullSync} title="Put your whole library on the iPod">Full Sync…</button>
+          <button type="button" className="device-link-btn" aria-expanded={optionsOpen} onClick={() => setOptionsOpen((o) => !o)}>Options {optionsOpen ? '▾' : '▸'}</button>
         </div>
         <div className="device-sync-facts">
           {renameMsg && renaming === null && <span>{renameMsg}</span>}
@@ -883,60 +811,29 @@ export default function DeviceView() {
             </div>
           </div>
         )}
-        {(optionsOpen || isDirty) && (
+        {optionsOpen && (
           <div className="device-itunes-options device-itunes-options--disclosure">
             <label className="device-itunes-option">
               <input
                 type="checkbox"
                 checked={optOpenOnConnect}
-                onChange={e => setOptOpenOnConnect(e.target.checked)}
+                onChange={e => changeDeviceOption({ optOpenOnConnect: e.target.checked })}
               />
               <span>Open JakeTunes when this iPod is connected</span>
             </label>
             <label className="device-itunes-option">
               <input
                 type="checkbox"
-                checked={optSyncOnlyChecked}
-                onChange={e => setOptSyncOnlyChecked(e.target.checked)}
-              />
-              <span>Sync only checked songs</span>
-            </label>
-            <label className="device-itunes-option">
-              <input
-                type="checkbox"
                 checked={optConvertBitrate}
-                onChange={e => setOptConvertBitrate(e.target.checked)}
+                onChange={e => changeDeviceOption({ optConvertBitrate: e.target.checked })}
               />
               <span>Convert higher bit rate songs to <select
                 className="device-itunes-select"
                 value={optConvertBitrateTarget}
                 disabled={!optConvertBitrate}
-                onChange={e => setOptConvertBitrateTarget(e.target.value as '128' | '192' | '256')}
+                onChange={e => changeDeviceOption({ optConvertBitrateTarget: e.target.value as ConvertTarget })}
               ><option value="128">128 kbps</option><option value="192">192 kbps</option><option value="256">256 kbps</option></select> AAC</span>
             </label>
-            <label className="device-itunes-option">
-              <input
-                type="checkbox"
-                checked={optManualManage}
-                onChange={e => setOptManualManage(e.target.checked)}
-              />
-              <span>Manually manage music</span>
-            </label>
-            <label className="device-itunes-option">
-              <input
-                type="checkbox"
-                checked={optDiskUse}
-                onChange={e => setOptDiskUse(e.target.checked)}
-              />
-              <span>Enable disk use</span>
-            </label>
-            {isDirty && (
-              <button
-                className="device-itunes-btn device-itunes-btn--apply"
-                onClick={handleApplySettings}
-                title="Apply the changed sync settings before running Sync"
-              >Apply</button>
-            )}
           </div>
         )}
       </div>
