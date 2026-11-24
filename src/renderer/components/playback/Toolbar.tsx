@@ -5,7 +5,7 @@ import { usePlayback } from '../../context/PlaybackContext'
 import NowPlayingActions from './NowPlayingActions'
 import LyricsToggle from './LyricsToggle'
 import { useLibrary } from '../../context/LibraryContext'
-import { useAudio, setAutoDjMode } from '../../hooks/useAudio'
+import { useAudio, setAutoDjMode, DUCK_LIFTED_EVENT } from '../../hooks/useAudio'
 import { duckAt, DUCK_LEVEL } from '../../audio/volumeModel'
 import { attachClipToBroadcast, attachAnnouncerToBroadcast, detachClipFromBroadcast, startRecording, stopRecording } from '../../audio/eq'
 import { playStinger, randomPreStinger, randomEndStinger, STINGER_DURATIONS } from '../../audio/stingers'
@@ -273,6 +273,19 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       }, 50)
     })
   }, [applyDuck, clearFade])
+
+  // The duck was lifted from outside (Jake moved the volume, or the watchdog
+  // found no voice over it): stop any ramp so it can't pull the music back
+  // down, and clear the latch so the next speech ducks again.
+  useEffect(() => {
+    const onLifted = () => {
+      clearFade()
+      duckRef.current = 1
+      isFadedRef.current = false
+    }
+    window.addEventListener(DUCK_LIFTED_EVENT, onLifted)
+    return () => window.removeEventListener(DUCK_LIFTED_EVENT, onLifted)
+  }, [clearFade])
 
   // Global fade for any Music Man speech (MusicManView, SmartPlaylistView, etc.)
   const isFadedRef = useRef(false)

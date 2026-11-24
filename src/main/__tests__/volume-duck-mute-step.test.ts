@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { VOLUME_STEP, DUCK_LEVEL, stepVolume, toggleMute, outputVolume, duckAt } from '../../renderer/audio/volumeModel.ts'
+import { VOLUME_STEP, DUCK_LEVEL, stepVolume, toggleMute, outputVolume, duckAt, duckWatch, DUCK_ORPHAN_MS, rememberLevel, MUTE_RESTORE_FLOOR, MUTE_RESTORE_DEFAULT } from '../../renderer/audio/volumeModel.ts'
 
 const src = (p: string) => readFileSync(join(import.meta.dirname, '../../renderer', p), 'utf8')
 
@@ -72,4 +72,55 @@ test('one volume step everywhere: 5%, on a clean grid, clamped', () => {
   const app = src('App.tsx')
   assert.doesNotMatch(app, /volume \+ 0\.1|volume - 0\.1|v \+ 0\.05|v - 0\.05/)
   assert.equal((app.match(/stepVolume\(/g) || []).length, 4, 'arrow keys and the menu use the same step')
+})
+
+test('a duck with no voice over it is lifted after the orphan time, never while a voice plays', () => {
+  let q: number | null = null
+  let r = duckWatch(q, DUCK_LEVEL, false, 0); q = r.quietSince
+  assert.equal(r.lift, false)
+  r = duckWatch(q, DUCK_LEVEL, false, DUCK_ORPHAN_MS - 1); q = r.quietSince
+  assert.equal(r.lift, false)
+  r = duckWatch(q, DUCK_LEVEL, false, DUCK_ORPHAN_MS)
+  assert.equal(r.lift, true, 'an orphaned duck lifts')
+  // A voice playing resets the quiet clock.
+  q = duckWatch(null, DUCK_LEVEL, false, 0).quietSince
+  q = duckWatch(q, DUCK_LEVEL, true, 5000).quietSince
+  assert.equal(q, null)
+  assert.equal(duckWatch(q, DUCK_LEVEL, false, DUCK_ORPHAN_MS + 100).lift, false, 'the clock restarted at the voice')
+  for (let t = 0; t <= 60_000; t += 1000) assert.equal(duckWatch(0, DUCK_LEVEL, true, t).lift, false)
+  assert.equal(duckWatch(0, 1, false, 60_000).lift, false, 'no duck, nothing to lift')
+})
+
+test('wiring: any volume change of Jake\'s lifts the duck; the watchdog runs while ducked; Toolbar drops its ramp', () => {
+  const ua = src('hooks/useAudio.ts')
+  const sv = ua.slice(ua.indexOf('const setVolume = useCallback'), ua.indexOf('const setDuck = useCallback'))
+  assert.match(sv, /if \(duckGain < 1\) \{\s*duckGain = 1/, 'setVolume must lift the duck')
+  assert.match(sv, /DUCK_LIFTED_EVENT/)
+  const sd = ua.slice(ua.indexOf('const setDuck = useCallback'), ua.indexOf('}, [])', ua.indexOf('const setDuck = useCallback')))
+  assert.match(sd, /if \(duckGain < 1\) armDuckWatch\(\)/)
+  assert.match(ua, /duckWatch\(duckQuietSince, duckGain, isTalkOverPlaying\(\), Date\.now\(\)\)/)
+  assert.match(ua, /if \(r\.lift\) liftDuck\('orphan'\)/)
+  const tb = src('components/playback/Toolbar.tsx')
+  const on = tb.slice(tb.indexOf('const onLifted'), tb.indexOf('window.addEventListener(DUCK_LIFTED_EVENT'))
+  assert.match(on, /clearFade\(\)/)
+  assert.match(on, /duckRef\.current = 1/)
+  assert.match(on, /isFadedRef\.current = false/)
+  const eq = src('audio/eq.ts')
+  for (const fn of ['attachClipToBroadcast', 'attachAnnouncerToBroadcast']) {
+    const body = eq.slice(eq.indexOf(`export function ${fn}(`))
+    assert.match(body.slice(0, 120), /registerTalkClip\(audio\)/, `${fn} must register the clip before any early return`)
+  }
+})
+
+test('unmute never brings back a level below the floor (a slider dragged to ~1%)', () => {
+  assert.equal(rememberLevel(0.6, 0.01), 0.6, 'a 1% release is not remembered')
+  assert.equal(rememberLevel(0.6, 0.3), 0.3)
+  assert.equal(rememberLevel(0.6, MUTE_RESTORE_FLOOR), MUTE_RESTORE_FLOOR)
+  // Muting at 1% keeps the earlier good level.
+  assert.deepEqual(toggleMute(0.01, 0.7), { volume: 0, lastAudible: 0.7 })
+  // Whatever was remembered, unmute is never below the floor.
+  assert.equal(toggleMute(0, 0.02).volume, MUTE_RESTORE_DEFAULT)
+  const vs = src('components/playback/VolumeSlider.tsx')
+  assert.doesNotMatch(vs, /if \(state\.volume > 0\) lastAudibleRef\.current = state\.volume/, 'not recorded on every render')
+  assert.match(vs, /lastAudibleRef\.current = rememberLevel\(lastAudibleRef\.current, getPercent\(ev\.clientX\)\)/)
 })

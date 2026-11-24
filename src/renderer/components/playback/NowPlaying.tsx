@@ -227,13 +227,20 @@ export default function NowPlaying() {
     }
     step({ type: 'down', pct: getPercent(e.clientX) })
     const onMove = (ev: MouseEvent) => step({ type: 'move', pct: getPercent(ev.clientX) })
-    const onUp = (ev: MouseEvent) => {
+    const detach = () => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
-      step({ type: 'up', pct: getPercent(ev.clientX) })
+      window.removeEventListener('blur', onCancel)
+      window.removeEventListener('pointercancel', onCancel)
     }
+    const onUp = (ev: MouseEvent) => { detach(); step({ type: 'up', pct: getPercent(ev.clientX) }) }
+    // No mouse-up ever comes after Cmd-Tab / a lost window: let go of the
+    // knob without seeking, or it stays frozen where the drag left it.
+    const onCancel = () => { detach(); step({ type: 'cancel' }) }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
+    window.addEventListener('blur', onCancel)
+    window.addEventListener('pointercancel', onCancel)
   }, [seek, state.duration, getPercent])
 
   const progress = knobPct(scrubState, state.position, state.duration) * 100

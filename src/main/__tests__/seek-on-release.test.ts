@@ -74,3 +74,17 @@ test('wiring: the bar seeks only through the drag model; useAudio seeks only thr
   assert.match(seekFn, /requestSeek\(seekChase/)
   assert.doesNotMatch(seekFn, /sharedHowl\.seek\(/, 'seek() never hands the element a position directly')
 })
+
+test('a lost mouse-up (blur, pointercancel) lets go of the knob without seeking', () => {
+  const down = scrub(scrubIdle, { type: 'down', pct: 0.2 })
+  const moved = scrub(down.state, { type: 'move', pct: 0.7 })
+  const c = scrub(moved.state, { type: 'cancel' })
+  assert.equal(c.seekTo, null)
+  assert.equal(c.state.dragging, false)
+  assert.equal(knobPct(c.state, 10, 100), 0.1, 'the knob is the song again, not frozen at 0.7')
+  const np = src('components/playback/NowPlaying.tsx')
+  const handler = np.slice(np.indexOf('const handleMouseDown'), np.indexOf('const progress ='))
+  assert.match(handler, /const onCancel = \(\) => \{ detach\(\); step\(\{ type: 'cancel' \}\) \}/)
+  assert.match(handler, /window\.addEventListener\('blur', onCancel\)/)
+  assert.match(handler, /window\.addEventListener\('pointercancel', onCancel\)/)
+})

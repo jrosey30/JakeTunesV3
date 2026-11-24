@@ -5,9 +5,9 @@ import { Howl } from 'howler'
 import { usePlayback } from '../context/PlaybackContext'
 import { useLibrary } from '../context/LibraryContext'
 import { Track } from '../types'
-import { outputVolume } from '../audio/volumeModel'
+import { outputVolume, duckWatch } from '../audio/volumeModel'
 import { newSeekChase, requestSeek, seekLanded, SEEK_STALE_MS } from '../audio/seekChase'
-import { attachHowlToEq, detachHowlFromEq, resumeEqContext, snapHowlOutputVolume, primeAudioGraph, getEqAudioContext } from '../audio/eq'
+import { isTalkOverPlaying, attachHowlToEq, detachHowlFromEq, resumeEqContext, snapHowlOutputVolume, primeAudioGraph, getEqAudioContext } from '../audio/eq'
 import {
   scheduleAbsoluteFadeOut,
   scheduleAbsoluteStart,
@@ -556,6 +556,30 @@ let sharedTracksRef: { current: Track[] } | null = null
 let duckGain = 1
 function outVolume(): number {
   return outputVolume(sharedStateRef ? sharedStateRef.current.volume : 1, duckGain)
+}
+/** The event Toolbar hears when the duck was lifted from outside it (Jake
+ *  moved the volume, or the watchdog found a duck with no voice over it). */
+export const DUCK_LIFTED_EVENT = 'jaketunes-duck-lifted'
+function liftDuck(why: 'user' | 'orphan'): void {
+  if (duckGain >= 1) return
+  duckGain = 1
+  snapHowlOutputVolume(sharedHowl, outVolume())
+  logAudioEvent('duck.lifted', { why })
+  window.dispatchEvent(new CustomEvent(DUCK_LIFTED_EVENT, { detail: { why } }))
+}
+// The watchdog: a duck below 1 with no talk-over clip playing for
+// DUCK_ORPHAN_MS is lifted. Runs only while ducked.
+let duckWatchTimer: ReturnType<typeof setInterval> | null = null
+let duckQuietSince: number | null = null
+function armDuckWatch(): void {
+  if (duckWatchTimer) return
+  duckQuietSince = null
+  duckWatchTimer = setInterval(() => {
+    const r = duckWatch(duckQuietSince, duckGain, isTalkOverPlaying(), Date.now())
+    duckQuietSince = r.quietSince
+    if (r.lift) liftDuck('orphan')
+    if (duckGain >= 1 && duckWatchTimer) { clearInterval(duckWatchTimer); duckWatchTimer = null }
+  }, 1000)
 }
 
 // One seek at a time (seekChase.ts). Keyed by the howl, so a position still
@@ -2276,7 +2300,13 @@ export function useAudio(opts?: { primary?: boolean }) {
     }
   }, [])
 
+  // Only Jake moves the volume (slider, arrows, menu, mute): any change of
+  // his lifts the duck, so a duck that never lifted can always be fixed by hand.
   const setVolume = useCallback((v: number) => {
+    if (duckGain < 1) {
+      duckGain = 1
+      window.dispatchEvent(new CustomEvent(DUCK_LIFTED_EVENT, { detail: { why: 'user' } }))
+    }
     snapHowlOutputVolume(sharedHowl, outputVolume(v, duckGain))
     dispatchRef.current({ type: 'SET_VOLUME', volume: v })
   }, [])
@@ -2285,6 +2315,7 @@ export function useAudio(opts?: { primary?: boolean }) {
   const setDuck = useCallback((g: number) => {
     duckGain = Number.isFinite(g) ? Math.max(0, Math.min(1, g)) : 1
     snapHowlOutputVolume(sharedHowl, outVolume())
+    if (duckGain < 1) armDuckWatch()
   }, [])
 
   useEffect(() => {
