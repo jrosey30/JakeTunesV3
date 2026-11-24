@@ -9,6 +9,7 @@
  *     (main/ipod-headlines.ts, main/ipod-list-client.ts, main/ipod-lists-gather.ts)
  *   • a homemini that doesn't send the new fields changes nothing
  *   • the page is wired: the ad in the list's own scroller, Headline… beside Rename…
+ *   • the story under the ad (2026-11-24): homemini's, read, kept, shown; never written here
  *
  * No homemini here: fetch is a fake.
  */
@@ -18,9 +19,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  adCopy, adCounts, adHeadline, adLegal, homeminiCounts, checkHeadline, cleanHeadline, countArtists, headlineLines, headlineSizePx, hoursWords,
-  ipodDrawingColors, ipodModelWords, ipodScreenTitle, syncedDateWords,
-  HEADLINE_FULL_PX, HEADLINE_MAX, HEADLINE_MIN_PX, TOP_1000_DEFAULT_HEADLINE,
+  adCopy, adCounts, adHeadline, adLegal, homeminiCounts, checkHeadline, cleanHeadline, cleanStory, countArtists, headlineLines, headlineSizePx, hoursWords,
+  ipodDrawingColors, ipodModelWords, ipodScreenTitle, storyParagraphs, syncedDateWords,
+  HEADLINE_FULL_PX, HEADLINE_MAX, HEADLINE_MIN_PX, STORY_MAX, TOP_1000_DEFAULT_HEADLINE,
 } from '../../common/ipod-ad.ts'
 import { IPOD_COLORS, IPOD_MODELS, ipodColorHex } from '../../common/ipod-covers.ts'
 import { parseIpodList, type IpodList } from '../../common/ipod-list-doc.ts'
@@ -491,45 +492,45 @@ describe('Headline… reaches homemini (PATCH a list, PUT the Top 1000)', () => 
     const remote = createTop1000HeadlineRemote({ baseUrl: 'http://homemini:3000/', fetchImpl: h.fetchImpl, warn: quiet })
     assert.equal(await remote.put('Every one a keeper.'), 'done')
     assert.deepEqual(h.seen[0], { url: 'http://homemini:3000/api/top1000/name', method: 'PUT', body: { headline: 'Every one a keeper.' } })
-    assert.deepEqual(await remote.get(), { headline: 'Every one a keeper.', counts: null }, 'no counts sent: none')
+    assert.deepEqual(await remote.get(), { headline: 'Every one a keeper.', counts: null, story: null }, 'no counts sent: none')
     // older than the field: 400 on the PUT ("only name can be set"), no headline on the GET
     const old = createTop1000HeadlineRemote({ baseUrl: 'http://homemini:3000', fetchImpl: fakeHomemini(400).fetchImpl, warn: quiet })
     assert.equal(await old.put('Every one a keeper.'), 'retry')
     const oldGet = createTop1000HeadlineRemote({ baseUrl: 'http://homemini:3000', fetchImpl: fakeHomemini(200, { name: 'Top 1000', custom: null }).fetchImpl, warn: quiet })
-    assert.deepEqual(await oldGet.get(), { headline: null, counts: null })
+    assert.deepEqual(await oldGet.get(), { headline: null, counts: null, story: null })
     const down = createTop1000HeadlineRemote({ baseUrl: 'http://homemini:3000', fetchImpl: fakeHomemini('down').fetchImpl, warn: quiet })
     assert.equal(await down.put(null), 'retry')
     assert.equal(await down.get(), undefined)
   })
   it('the Top 1000\'s headline: a waiting one wins, then homemini\'s, then its last answer kept here', async () => {
     const stateDir = tmp()
-    assert.deepEqual(await localTop1000Headline(stateDir), { headline: null, pending: false, counts: null })
+    assert.deepEqual(await localTop1000Headline(stateDir), { headline: null, pending: false, counts: null, story: null })
     const counts = { songCount: 1000, artistCount: 458 }
-    assert.deepEqual(await readTop1000Headline({ stateDir, get: async () => ({ headline: 'From homemini.', counts }) }), { headline: 'From homemini.', pending: false, counts })
+    assert.deepEqual(await readTop1000Headline({ stateDir, get: async () => ({ headline: 'From homemini.', counts, story: null }) }), { headline: 'From homemini.', pending: false, counts, story: null })
     // homemini away: the copy kept from its last answer, counts included
-    assert.deepEqual(await readTop1000Headline({ stateDir, get: async () => undefined }), { headline: 'From homemini.', pending: false, counts })
-    assert.deepEqual(await localTop1000Headline(stateDir), { headline: 'From homemini.', pending: false, counts })
+    assert.deepEqual(await readTop1000Headline({ stateDir, get: async () => undefined }), { headline: 'From homemini.', pending: false, counts, story: null })
+    assert.deepEqual(await localTop1000Headline(stateDir), { headline: 'From homemini.', pending: false, counts, story: null })
     // Jake changes it with homemini away: his words show, here, at once
     const r = await setHeadline({ stateDir, send: async () => 'retry', warn: quiet }, TOP1000_HEADLINE_KEY, 'Mine now.')
     assert.equal(r.ok && r.homemini, 'later')
     // homemini answers with its old line and new counts: the line owed wins, the counts are taken,
     // and the old line is not what the next launch paints
     const later = { songCount: 1000, artistCount: 457 }
-    assert.deepEqual(await readTop1000Headline({ stateDir, get: async () => ({ headline: 'From homemini.', counts: later }) }), { headline: 'Mine now.', pending: true, counts: later })
-    assert.deepEqual(await localTop1000Headline(stateDir), { headline: 'Mine now.', pending: true, counts: later })
+    assert.deepEqual(await readTop1000Headline({ stateDir, get: async () => ({ headline: 'From homemini.', counts: later, story: null }) }), { headline: 'Mine now.', pending: true, counts: later, story: null })
+    assert.deepEqual(await localTop1000Headline(stateDir), { headline: 'Mine now.', pending: true, counts: later, story: null })
     // homemini back: sent, and the kept copy is the new line with homemini's counts kept (a PUT answer has none)
     const again = await setHeadline({ stateDir, send: async () => 'done' }, TOP1000_HEADLINE_KEY, 'Mine now.')
     assert.equal(again.ok && again.homemini, 'saved')
-    assert.deepEqual(await localTop1000Headline(stateDir), { headline: 'Mine now.', pending: false, counts: later })
+    assert.deepEqual(await localTop1000Headline(stateDir), { headline: 'Mine now.', pending: false, counts: later, story: null })
     // a homemini that can't build the Top 1000 leaves the counts out: this Mac counts again
-    assert.deepEqual(await readTop1000Headline({ stateDir, get: async () => ({ headline: 'Mine now.', counts: null }) }), { headline: 'Mine now.', pending: false, counts: null })
+    assert.deepEqual(await readTop1000Headline({ stateDir, get: async () => ({ headline: 'Mine now.', counts: null, story: null }) }), { headline: 'Mine now.', pending: false, counts: null, story: null })
   })
 
   it('homemini\'s Top 1000 answer: both counts or none', async () => {
     const both = createTop1000HeadlineRemote({ baseUrl: 'http://homemini:3000', fetchImpl: fakeHomemini(200, { name: 'Top 1000', custom: null, headline: null, songCount: 1000, artistCount: 458 }).fetchImpl, warn: quiet })
-    assert.deepEqual(await both.get(), { headline: null, counts: { songCount: 1000, artistCount: 458 } })
+    assert.deepEqual(await both.get(), { headline: null, counts: { songCount: 1000, artistCount: 458 }, story: null })
     const one = createTop1000HeadlineRemote({ baseUrl: 'http://homemini:3000', fetchImpl: fakeHomemini(200, { name: 'Top 1000', custom: null, songCount: 1000 }).fetchImpl, warn: quiet })
-    assert.deepEqual(await one.get(), { headline: null, counts: null })
+    assert.deepEqual(await one.get(), { headline: null, counts: null, story: null })
   })
 })
 
@@ -607,5 +608,66 @@ describe('the page is wired', () => {
     assert.match(lists, /export async function setIpodListHeadline[\s\S]*?if \(!r\.ok\) \{\s*snap = before/)
     const top = read('../../renderer/top1000Headline.ts')
     assert.match(top, /export async function setTop1000Headline[\s\S]*?if \(!r\.ok\) \{\s*edits\+\+\s*put\(before\)/)
+  })
+})
+
+describe('the story under the ad (2026-11-24)', () => {
+  const STORY = 'Three chords, two minutes, no permission.\n\nPunk split almost immediately.\n\nLouder than it looks.'
+  it('cleanStory keeps homemini\'s text as it is; anything homemini wouldn\'t keep is none', () => {
+    assert.equal(cleanStory(STORY), STORY)
+    assert.equal(cleanStory(`  ${STORY.replace(/\n/g, '\r\n')}\n`), STORY)
+    assert.equal(cleanStory('x'.repeat(STORY_MAX)), 'x'.repeat(STORY_MAX))
+    for (const bad of [null, undefined, 7, '', ' \n ', 'x'.repeat(STORY_MAX + 1), 'a\tb', 'bell\u0007']) assert.equal(cleanStory(bad), null, JSON.stringify(bad))
+  })
+  it('storyParagraphs splits at each blank line and keeps the words; none is []', () => {
+    assert.deepEqual(storyParagraphs(STORY), ['Three chords, two minutes, no permission.', 'Punk split almost immediately.', 'Louder than it looks.'])
+    assert.deepEqual(storyParagraphs('One.\n  \n\n\nTwo.'), ['One.', 'Two.'])
+    assert.deepEqual(storyParagraphs('Line a\nline b\n\nNext.'), ['Line a\nline b', 'Next.'])
+    assert.deepEqual(storyParagraphs(null), [])
+    assert.deepEqual(storyParagraphs('   '), [])
+  })
+  it('homemini\'s list carries it; a bad one is absent and the list still parses', () => {
+    assert.equal(parseIpodList({ ...list(PUNK_ID, 'punkPod', [1]), story: STORY })?.story, STORY)
+    for (const bad of [null, 7, '', 'x'.repeat(STORY_MAX + 1)]) {
+      const l = parseIpodList({ ...list(PUNK_ID, 'punkPod', [1]), story: bad })
+      assert.ok(l)
+      assert.equal('story' in l, false)
+    }
+  })
+  it('the lists the page reads carry it, hub and replica, and null when homemini sends none', async () => {
+    const stateDir = tmp()
+    const punk = buildDeviceMarker({ id: PUNK_ID, name: 'punkPod', color: 'red', primary: false, now })
+    const base = {
+      registry: async () => [punk],
+      refresh: async () => ({ poolIds: [1], listIds: [1], names: {}, source: 'homemini' as const, note: null, updatedAt: now }),
+      all: async () => [list(PUNK_ID, 'punkPod', [1], { story: STORY }), list(Y2K_ID, 'Y2K', [2])],
+      cacheFile: ipodListsCachePath(stateDir),
+    }
+    assert.deepEqual((await gatherIpodLists({ ...base, isReplica: async () => false })).lists.map((l) => l.story), [STORY, null])
+    assert.deepEqual((await gatherIpodLists({ ...base, isReplica: async () => true })).lists.map((l) => l.story), [STORY, null])
+    // homemini away: the kept copy still has it
+    assert.deepEqual((await gatherIpodLists({ ...base, all: async () => null, isReplica: async () => true })).lists.map((l) => l.story), [STORY, null])
+  })
+  it('the Top 1000\'s: read from GET /api/top1000/name, kept for the first paint, and a headline save keeps it', async () => {
+    const remote = createTop1000HeadlineRemote({ baseUrl: 'http://homemini:3000', fetchImpl: fakeHomemini(200, { name: 'Top 1000', custom: null, headline: null, story: STORY }).fetchImpl, warn: quiet })
+    assert.deepEqual(await remote.get(), { headline: null, counts: null, story: STORY })
+    const stateDir = tmp()
+    assert.equal((await readTop1000Headline({ stateDir, get: remote.get })).story, STORY)
+    assert.equal((await localTop1000Headline(stateDir)).story, STORY, 'on disk: the next launch paints it at once')
+    assert.equal((await readTop1000Headline({ stateDir, get: async () => undefined })).story, STORY, 'homemini away: the kept copy')
+    await setHeadline({ stateDir, send: async () => 'done' }, TOP1000_HEADLINE_KEY, 'New line.')
+    assert.equal((await localTop1000Headline(stateDir)).story, STORY, 'a headline save never drops it')
+    // homemini cleared it: gone here too
+    assert.equal((await readTop1000Headline({ stateDir, get: async () => ({ headline: 'New line.', counts: null, story: null }) })).story, null)
+  })
+  it('the page shows it under the ad, from the same reads as the headline', () => {
+    const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf-8')
+    const view = read('../../renderer/views/SmartPlaylistView.tsx')
+    assert.match(view, /story=\{adKnown \? \(playlistId === 'top-1000' \? top1000Story : ipodList\?\.story\) : null\}/)
+    const ad = read('../../renderer/components/IpodAd.tsx')
+    assert.match(ad, /<\/section>\s*<IpodAdStory story=\{story\} dark=\{dark\} \/>/)
+    assert.match(ad, /if \(!paragraphs\.length\) return null/)
+    const css = read('../../renderer/styles/ipod-ad.css')
+    assert.match(css, /\.ipod-ad-story-text \{ max-width: 620px; \}/)
   })
 })

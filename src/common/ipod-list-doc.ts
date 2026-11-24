@@ -22,7 +22,7 @@
  */
 
 import { isIpodModel, normalizeIpodColor, type IpodModel } from './ipod-covers.ts'
-import { cleanHeadline } from './ipod-ad.ts'
+import { cleanHeadline, cleanStory } from './ipod-ad.ts'
 
 /**
  * No iPod list is ever bigger than this, whatever homemini says its cap is.
@@ -70,6 +70,8 @@ export interface IpodList {
   color?: string
   /** The line at the top of its page (2026-11-14, common/ipod-ad.ts): 1 to 60 characters. Absent = its name and a full stop. */
   headline?: string
+  /** The story under the ad (2026-11-24, common/ipod-ad.ts cleanStory): paragraphs by a blank line. Absent = none. */
+  story?: string
   /** homemini's count of its songs and of their artists (the main-artist rule, the phone's numbers). Absent = not sent. */
   songCount?: number
   artistCount?: number
@@ -178,6 +180,8 @@ export function parseIpodList(raw: unknown, expectedId?: string): IpodList | nul
     ...(normalizeIpodColor(r.color) ? { color: normalizeIpodColor(r.color)! } : {}),
     // The page's headline (2026-11-14): optional, a bad one is just absent.
     ...(cleanHeadline(r.headline) ? { headline: cleanHeadline(r.headline)! } : {}),
+    // The story under the ad (2026-11-24): optional, a bad one is just absent.
+    ...(cleanStory(r.story) ? { story: cleanStory(r.story)! } : {}),
     // homemini's counts (2026-11-14): optional, anything but a whole count is absent.
     ...(wholeCount(r.songCount) ? { songCount: r.songCount } : {}),
     ...(wholeCount(r.artistCount) ? { artistCount: r.artistCount } : {}),

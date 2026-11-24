@@ -10,7 +10,7 @@
 // Same module-store idiom as top1000List.ts.
 import { useEffect, useSyncExternalStore } from 'react'
 import { isIpodModel, normalizeIpodColor, IPOD_DEFAULT_COLOR, type IpodModel } from '../common/ipod-covers'
-import { checkHeadline, cleanHeadline } from '../common/ipod-ad'
+import { checkHeadline, cleanHeadline, cleanStory } from '../common/ipod-ad'
 
 export interface IpodListEntry {
   /** The iPod's marker id. */
@@ -29,6 +29,8 @@ export interface IpodListEntry {
   registered: boolean
   /** The line at the top of its page (2026-11-14, common/ipod-ad.ts); null = its name and a full stop. */
   headline: string | null
+  /** Jake's story under the ad (2026-11-24, common/ipod-ad.ts); null = none. */
+  story: string | null
   /** How many songs it may hold; null = not known on this Mac. */
   cap: number | null
   /** When its iPod was last synced (the hub's record); null = not known. */
@@ -76,6 +78,7 @@ export function refreshIpodLists(): Promise<void> {
         note: typeof l.note === 'string' && l.note ? l.note : null,
         registered: l.registered === true,
         headline: cleanHeadline(l.headline),
+        story: cleanStory(l.story),
         cap: typeof l.cap === 'number' && Number.isInteger(l.cap) && l.cap > 0 ? l.cap : null,
         lastSyncedAt: typeof l.lastSyncedAt === 'string' && l.lastSyncedAt ? l.lastSyncedAt : null,
         songCount: typeof l.songCount === 'number' && Number.isInteger(l.songCount) && l.songCount >= 0 ? l.songCount : null,

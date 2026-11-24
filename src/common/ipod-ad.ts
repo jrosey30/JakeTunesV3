@@ -13,6 +13,8 @@
  *   copy       "<N> songs by <M> artists."
  *   grey line  "<name>. iPod <model>, <colour>. <N> of <cap> songs, <hours>
  *              hours. Last synced <date>." Whatever isn't known is left out.
+ *   story      (2026-11-24) Jake's story for the iPod, under the ad: homemini's
+ *              `story` (plain text, paragraphs by a blank line). None: nothing.
  *
  * ⚠️ TWIN: the headline's rules (1 to 60 characters, one line) are
  * JakeTunesMobile backend/src/util/ipodLists.ts checkHeadline; homemini
@@ -44,6 +46,34 @@ export function cleanHeadline(raw: unknown): string | null {
   if (typeof raw !== 'string') return null
   const c = checkHeadline(raw)
   return c.ok ? c.headline : null
+}
+
+/** The longest story homemini keeps (⚠️ TWIN: JakeTunesMobile backend/src/util/ipodStory.ts MAX_STORY). */
+export const STORY_MAX = 3000
+
+/**
+ * A received story (2026-11-24): the text when it is one homemini would keep
+ * (1 to 3000 characters, no control characters but the newline), line endings
+ * made "\n" and the ends trimmed; anything else is null. The words are Jake's
+ * and are never changed. ⚠️ TWIN: JakeTunesMobile backend/src/util/ipodStory.ts checkStory.
+ */
+export function cleanStory(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const story = raw.replace(/\r\n?/g, '\n').trim()
+  if (!story || story.length > STORY_MAX) return null
+  if (/[\u0000-\u0009\u000b-\u001f\u007f]/.test(story)) return null
+  return story
+}
+
+/**
+ * The story's paragraphs: split at each blank line (spaces on it aside), each
+ * trimmed, the empty ones dropped; a single line break stays inside its
+ * paragraph. None = []. ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/IpodAdCopy.swift storyParagraphs.
+ */
+export function storyParagraphs(story: string | null | undefined): string[] {
+  const s = cleanStory(story)
+  if (!s) return []
+  return s.split(/\n[ \t]*\n\s*/).map((p) => p.trim()).filter(Boolean)
 }
 
 /** The headline a page shows. */

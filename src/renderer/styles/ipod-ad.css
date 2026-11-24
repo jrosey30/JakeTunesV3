@@ -107,6 +107,40 @@
   transform-origin: 0 100%;
 }
 
+/* ── The story under the ad (2026-11-24) ─────────────────────────────────
+   Jake's story for the iPod, when it has one. The field's paper and ink, its
+   serif at a reading size (not narrowed: long text reads better at full
+   width), the left edge of the headline, a column no wider than reads
+   comfortably. It scrolls away with the ad; it stays put when the table
+   scrolls sideways. Unlike the ad, its text can be selected. */
+
+.ipod-ad-story {
+  --ipod-ad-paper: #fff;
+  --ipod-ad-ink: #1d1d1f;
+  flex: none;
+  position: sticky;
+  left: 0;
+  width: 100cqw;
+  box-sizing: border-box;
+  padding: 6px min(84px, 8cqw) 40px;
+  background: var(--ipod-ad-paper);
+  color: var(--ipod-ad-ink);
+  font-family: "Hoefler Text", Georgia, serif;
+}
+.ipod-ad-story--dark,
+:root[data-theme="dark"] .ipod-ad-story {
+  --ipod-ad-paper: #000;
+  --ipod-ad-ink: #f5f5f7;
+}
+.ipod-ad-story-text { max-width: 620px; }
+.ipod-ad-story-p {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.55;
+  white-space: pre-line;
+}
+.ipod-ad-story-p + .ipod-ad-story-p { margin-top: 14px; }
+
 /* ── The page under the ad ────────────────────────────────────────────────
    The ad is the top of the list's own scroller, so it scrolls away with the
    songs. The bar (name, count, Rename…, Play All), anything between it and

@@ -7,8 +7,13 @@
 // field is 340px tall whatever is in it, the headline's size comes from its
 // length (common/ipod-ad.ts headlineSizePx), and the iPod's box is the same
 // for a drawing and a photo. So the page under it never moves when data arrives.
+//
+// Under the field, Jake's story for the iPod when it has one (2026-11-24,
+// homemini's `story`; common/ipod-ad.ts storyParagraphs): the ad's serif at a
+// reading size, in a column no wider than reads comfortably. It is part of
+// the same scroller, so it scrolls away with the ad. None: nothing at all.
 import { memo, useEffect, useState } from 'react'
-import { headlineLines, headlineSizePx, HEADLINE_FULL_PX } from '../../common/ipod-ad'
+import { headlineLines, headlineSizePx, HEADLINE_FULL_PX, storyParagraphs } from '../../common/ipod-ad'
 import type { IpodLook } from '../../common/ipod-covers'
 import { IpodDrawing } from './IpodDrawing'
 import top1000Photo from '../assets/playlist-covers/top-1000-photo.jpg'
@@ -27,6 +32,8 @@ export interface IpodAdProps {
   photo: string | null
   /** Black field, white type, no floor shadow. The app has no dark theme yet; this is ready for it. */
   dark?: boolean
+  /** Jake's story for this iPod (paragraphs by a blank line); null or absent = nothing under the ad. */
+  story?: string | null
 }
 
 // ── The Original's photo, cut out ────────────────────────────────────────
@@ -89,11 +96,25 @@ function useIsOriginalPhoto(photo: string | null): boolean | null {
   return judged.get(photo) ?? null
 }
 
-function IpodAdInner({ name, headline, copy, legal, look, photo, dark }: IpodAdProps) {
+/** The story under the ad: one paragraph element each. */
+export function IpodAdStory({ story, dark }: { story: string | null | undefined; dark?: boolean }) {
+  const paragraphs = storyParagraphs(story)
+  if (!paragraphs.length) return null
+  return (
+    <section className={`ipod-ad-story${dark ? ' ipod-ad-story--dark' : ''}`} aria-label="The story">
+      <div className="ipod-ad-story-text">
+        {paragraphs.map((p, i) => <p key={i} className="ipod-ad-story-p">{p}</p>)}
+      </div>
+    </section>
+  )
+}
+
+function IpodAdInner({ name, headline, copy, legal, look, photo, dark, story }: IpodAdProps) {
   const lines = headlineLines(headline)
   const scale = headlineSizePx(lines) / HEADLINE_FULL_PX
   const original = useIsOriginalPhoto(photo)
   return (
+    <>
     <section className={`ipod-ad${dark ? ' ipod-ad--dark' : ''}${photo ? ' ipod-ad--photo' : ''}`} aria-label={`${name}: ${headline}`}>
       <div className="ipod-ad-text">
         <h1 className="ipod-ad-headline" style={{ ['--ipod-ad-hl' as string]: scale }}>
@@ -111,6 +132,8 @@ function IpodAdInner({ name, headline, copy, legal, look, photo, dark }: IpodAdP
       </div>
       <p className="ipod-ad-legal">{legal}</p>
     </section>
+    <IpodAdStory story={story} dark={dark} />
+    </>
   )
 }
 

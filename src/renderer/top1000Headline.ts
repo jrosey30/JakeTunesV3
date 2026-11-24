@@ -7,7 +7,7 @@
 // them when Jake changed the headline somewhere else.
 // Same module-store idiom as top1000Name.ts.
 import { useEffect, useSyncExternalStore } from 'react'
-import { checkHeadline, homeminiCounts, type HomeminiCounts } from '../common/ipod-ad'
+import { checkHeadline, cleanStory, homeminiCounts, type HomeminiCounts } from '../common/ipod-ad'
 
 let headline: string | null = null
 let asked = false
@@ -29,6 +29,14 @@ function putCounts(next: HomeminiCounts | null): void {
   counts = next
   for (const l of listeners) l()
 }
+/** Jake's story under the Top 1000's ad (2026-11-24); homemini's, read only. null = none. */
+let story: string | null = null
+const getStory = (): string | null => story
+function putStory(next: string | null): void {
+  if (next === story) return
+  story = next
+  for (const l of listeners) l()
+}
 function put(next: string | null): void {
   if (next === headline) return
   headline = next
@@ -40,6 +48,7 @@ async function ask(local: boolean): Promise<void> {
   const r = await window.electronAPI.top1000HeadlineGet?.(local)
   if (!r?.ok) return
   putCounts(homeminiCounts(r.counts))
+  putStory(cleanStory(r.story))
   if (at === edits) put(r.headline)
 }
 
@@ -67,6 +76,13 @@ export function useTop1000Counts(): HomeminiCounts | null {
   const c = useSyncExternalStore(subscribe, getCounts)
   useEffect(() => { void refreshTop1000Headline() }, [])
   return c
+}
+
+/** Jake's story for the Top 1000, or null (nothing is shown under the ad). Shares the headline's read. */
+export function useTop1000Story(): string | null {
+  const s = useSyncExternalStore(subscribe, getStory)
+  useEffect(() => { void refreshTop1000Headline() }, [])
+  return s
 }
 
 /** Headline… on the Top 1000: shown at once; the old line comes back on a refusal. Empty = the default. */
