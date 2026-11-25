@@ -122,7 +122,9 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
   }
 
   return (
-    <div className="ipod-setup" role="dialog" aria-label="Set up this iPod">
+    // A dialog only while setting up (Escape is Cancel from its fields); the
+    // inline strip on the Device page is not an overlay.
+    <div className="ipod-setup" {...(mode === 'setup' ? { role: 'dialog', 'aria-label': 'Set up this iPod' } : {})}>
       {stops.length > 0 && <Checks checks={stops} />}
       {look.sameIpod && (
         <form

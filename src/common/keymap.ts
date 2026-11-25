@@ -17,7 +17,7 @@
  *               Electron registers a menu accelerator even with
  *               registerAccelerator: false, so a menu "Space" would toggle
  *               the music while typing a space). Used for keys that depend
- *               on focus: Space, ⌘←/⌘→, ⌘↑/⌘↓, ⌘[ ⌘], Escape, ⌘Z outside a
+ *               on focus: Space, ⌘←/⌘→, ⌘↑/⌘↓, ⌘[ ⌘], ⌘T, Escape, ⌘Z outside a
  *               field. A keymap shortcut may name one `menuAccelerator`, a
  *               key that is safe anywhere (F7/F8/F9): that one is the
  *               menu's, and the host leaves it alone.
@@ -92,7 +92,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: 'music-man', label: 'The Music Man', section: 'Panels', keys: ['Shift+CmdOrCtrl+M'], wiring: 'menu', action: 'toggle-music-man' },
   { id: 'lyrics', label: 'Lyrics', section: 'Panels', keys: ['Shift+CmdOrCtrl+L'], wiring: 'menu', action: 'toggle-lyrics' },
   { id: 'downloads', label: 'Downloads', section: 'Panels', keys: ['Alt+CmdOrCtrl+L'], wiring: 'menu', action: 'toggle-downloads' },
-  { id: 'visualizer', label: 'Visualizer', section: 'Panels', keys: ['CmdOrCtrl+T'], wiring: 'menu', action: 'toggle-visualizer' },
+  { id: 'visualizer', label: 'Visualizer', section: 'Panels', keys: ['CmdOrCtrl+T'], wiring: 'keymap', note: 'Not while typing' },
   { id: 'close-top', label: 'Close', section: 'Panels', keys: ['Escape'], wiring: 'keymap', whileTyping: true, note: 'The top-most panel, sheet or dialog. In a text field it lets go of the field first' },
   { id: 'keyboard-shortcuts', label: 'Keyboard Shortcuts', section: 'Panels', keys: ['CmdOrCtrl+/'], wiring: 'menu', action: 'keyboard-shortcuts' },
   { id: 'preferences', label: 'Preferences…', section: 'Panels', keys: ['CmdOrCtrl+,'], wiring: 'menu', action: 'open-preferences' },

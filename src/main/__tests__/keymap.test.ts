@@ -57,13 +57,14 @@ describe('who gets each key — nothing open, nothing focused', () => {
     assert.equal(to(cmd('ArrowRight', { shiftKey: true })), 'native')
     assert.equal(to(key(' ', { metaKey: true })), 'native')
   })
-  it('/ goes to Search; ⌘[ / ⌘] go back and forward', () => {
+  it('/ goes to Search; ⌘[ / ⌘] go back and forward; ⌘T is the Visualizer', () => {
     assert.equal(to(key('/')), 'shortcut:search')
+    assert.equal(to(cmd('t')), 'shortcut:visualizer')
     assert.equal(to(cmd('[')), 'shortcut:back')
     assert.equal(to(cmd(']')), 'shortcut:forward')
   })
-  it('menu-wired keys are never the renderer\'s: ⌘I, ⌘L, ⌘K, ⌘1, ⌘F, ⌘T, ⌥⌘L, ⌘/ fall through', () => {
-    for (const e of [cmd('i'), cmd('l'), cmd('k'), cmd('1'), cmd('f'), cmd('t'), cmd('/'), key('¬', { code: 'KeyL', metaKey: true, altKey: true }), cmd('s', { shiftKey: true })]) {
+  it('menu-wired keys are never the renderer\'s: ⌘I, ⌘L, ⌘K, ⌘1, ⌘F, ⌥⌘L, ⌘/ fall through', () => {
+    for (const e of [cmd('i'), cmd('l'), cmd('k'), cmd('1'), cmd('f'), cmd('/'), key('¬', { code: 'KeyL', metaKey: true, altKey: true }), cmd('s', { shiftKey: true })]) {
       assert.equal(to(e), 'native', `${e.code}`)
     }
   })
@@ -75,8 +76,8 @@ describe('who gets each key — nothing open, nothing focused', () => {
 
 describe('who gets each key — a text field has focus', () => {
   const field = ctx({ focus: 'field' })
-  it('Space, ⌘←/⌘→, ⌘↑/⌘↓, ⌘[ ⌘] and / are the field\'s', () => {
-    for (const e of [key(' '), cmd('ArrowLeft'), cmd('ArrowRight'), cmd('ArrowUp'), cmd('ArrowDown'), cmd('['), cmd(']'), key('/')]) {
+  it('Space, ⌘←/⌘→, ⌘↑/⌘↓, ⌘[ ⌘], ⌘T and / are the field\'s', () => {
+    for (const e of [key(' '), cmd('ArrowLeft'), cmd('ArrowRight'), cmd('ArrowUp'), cmd('ArrowDown'), cmd('['), cmd(']'), cmd('t'), key('/')]) {
       assert.equal(to(e, field), 'native', e.key)
     }
   })
@@ -233,7 +234,7 @@ describe('the Mac menu bar — one wiring per shortcut', () => {
       }
     }
     // The ones that matter most, by name: typing a space, or ⌘← in a field.
-    for (const bad of ['Space', 'CmdOrCtrl+Left', 'CmdOrCtrl+Right', 'CmdOrCtrl+Up', 'CmdOrCtrl+Down', 'CmdOrCtrl+[', 'CmdOrCtrl+]', 'Escape', '/']) {
+    for (const bad of ['Space', 'CmdOrCtrl+Left', 'CmdOrCtrl+Right', 'CmdOrCtrl+Up', 'CmdOrCtrl+Down', 'CmdOrCtrl+[', 'CmdOrCtrl+]', 'CmdOrCtrl+T', 'Escape', '/']) {
       assert.ok(!accels.includes(bad), `${bad} is on the menu`)
     }
   })

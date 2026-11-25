@@ -60,6 +60,9 @@ describe('one wiring per shortcut: the old duplicates are gone', () => {
   it('the renderer never handles the media keys (main does, in before-input-event)', () => {
     assert.doesNotMatch(app, /MediaPlayPause|MediaTrackNext/)
   })
+  it('the iPod setup strip is a dialog only while setting up (the Device page strip is not an overlay)', () => {
+    assert.match(src('components/IpodSetupSheet.tsx'), /\.\.\.\(mode === 'setup' \? \{ role: 'dialog'/)
+  })
   it('every surface the brief names closes on Escape', () => {
     const want: [string, RegExp][] = [
       ['App.tsx', /useEscape\('up-next', showQueue/],

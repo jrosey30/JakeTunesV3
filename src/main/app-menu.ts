@@ -42,6 +42,7 @@ const KEYMAP_MENU_ACTIONS: Record<string, string> = {
   'volume-down': 'volume-down',
   back: 'history-back',
   forward: 'history-forward',
+  visualizer: 'toggle-visualizer',
 }
 
 const sep: MenuItemConstructorOptions = { type: 'separator' }

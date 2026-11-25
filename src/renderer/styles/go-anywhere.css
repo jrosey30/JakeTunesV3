@@ -19,16 +19,14 @@
   border: 1px solid #b8a87f;
   border-radius: 10px;
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28), 0 2px 6px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.55);
-  animation: go-anywhere-in 140ms cubic-bezier(0.18, 0.9, 0.4, 1) both;
+  animation: go-anywhere-in var(--motion-normal) var(--motion-ease) both;
 }
 
 @keyframes go-anywhere-in {
   from { opacity: 0; transform: translateY(-6px) scale(0.98); }
   to   { opacity: 1; transform: none; }
 }
-@media (prefers-reduced-motion: reduce) {
-  .go-anywhere, .kb-sheet { animation: none; }
-}
+/* Reduce Motion is motion.css's, for every animation in the app. */
 
 .go-anywhere {
   width: min(560px, calc(100vw - 32px));

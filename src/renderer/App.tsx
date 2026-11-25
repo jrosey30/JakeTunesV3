@@ -702,6 +702,8 @@ function AppInner() {
     'back': () => goBack(),
     'forward': () => goForward(),
     'search': () => focusSearchPill(),
+    // ⌘T: never mid-word in a text field (the host's typing rule).
+    'visualizer': () => window.dispatchEvent(new CustomEvent('toggle-visualizer')),
   }
   useEffect(() => installKeyboard({
     shortcut: (id) => keyActionsRef.current[id]?.(),
