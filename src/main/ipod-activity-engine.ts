@@ -65,6 +65,7 @@ import {
   retireIpodFirmwareScratch,
 } from './ipod-sync-card.ts'
 import { isAacEncoderMissing } from './aac-mirror-recipe.ts'
+import { landedVerdict, readLandedRecord, recipeFor, writeLandedRecord, type LandedCodec, type LandedEntry } from './ipod-landed-record.ts'
 
 /** The plain reason a song wasn't converted when afconvert can't be used (Brief 265). */
 export const NO_AAC_ENCODER = "Apple's AAC encoder isn't available on this Mac"
@@ -514,6 +515,10 @@ async function runActivitySyncHolding(
   // What a sync stopped by a USB drop left confirmed on the card (Brief 260).
   const priorPartialRaw = await readStateJson(PARTIAL_ON_CARD_FILE)
   const priorSealRaw = await readStateJson(TSA_SEAL_FILE)
+  // What each converted song on the card is (Brief 265 Part 5; ipod-landed-record.ts).
+  const landedRecord = await readLandedRecord(host.stateDir)
+  let keptByLandedRecord = 0
+  const landedMisses = new Map<string, number>()
 
   // A song not on this Mac that the last sync's record proves is on the card,
   // as this sync would write it, is not asked about here (2026-11-08). The
@@ -712,11 +717,15 @@ async function runActivitySyncHolding(
     masterSize: number
     /** Not on this Mac, needs converting, on the card by the last sync's record:
      *  not fetched unless the swap plan says it must move (§2c). */
-    later?: { track: Record<string, unknown>; rawColon: string; localFile: string; overCeiling: boolean }
+    later?: { track: Record<string, unknown>; rawColon: string; localFile: string; overCeiling: boolean; needsPull?: boolean }
+    /** What the card copy is when it was converted (Brief 265 Part 5): written into the landed record at the seal. */
+    converted?: { codec: LandedCodec; kbps: number | null; source: { size: number; mtimeMs: number } | null; rawColon: string }
+    /** Kept by the landed record without building its mirror; the mirror is built only if it must be copied. */
+    landed?: LandedEntry
   }
   const plan: CopyPlanEntry[] = []
   type Prepared =
-    | { ok: true; srcToCopy: string; dstToCopy: string; restage?: { colon: string; id: number }; knownSourceSize?: number }
+    | { ok: true; srcToCopy: string; dstToCopy: string; restage?: { colon: string; id: number }; knownSourceSize?: number; converted?: { codec: LandedCodec; kbps: number | null } }
     | { ok: false; kind: 'stage'; msg: string }
     | { ok: false; kind: 'unconvertible'; why: string }
     | { ok: false; kind: 'no-encoder'; why: string }
@@ -733,6 +742,7 @@ async function runActivitySyncHolding(
     let dstToCopy = a.dstToCopy
     let restage: { colon: string; id: number } | undefined
     let knownSourceSize: number | undefined
+    let converted: { codec: LandedCodec; kbps: number | null } | undefined
     let bytesForMirror = localFile
     let stageCleanup: (() => Promise<void>) | null = null
     if (a.needsPull && (convertOptions?.enabled || needsIpodAlacTranscode(localFile) || overCeiling)) {
@@ -761,6 +771,7 @@ async function runActivitySyncHolding(
             srcToCopy = mirror
             // The card file wears the mirror's own extension: .m4a for AAC, .mp3 for Gen 1.
             const outExt = mirror.slice(mirror.lastIndexOf('.')).toLowerCase()
+            converted = { codec: outExt === '.mp3' ? 'mp3' : 'aac', kbps: convertOptions.targetKbps }
             const srcExt = localFile.slice(localFile.lastIndexOf('.')).toLowerCase()
             const sameKind = outExt === '.mp3' ? srcExt === '.mp3' : (srcExt === '.m4a' || srcExt === '.mp4')
             if (outExt === '.mp3') track.codec = 'mp3'
@@ -804,6 +815,7 @@ async function runActivitySyncHolding(
           const mirror = await host.buildIpodSafeAlacMirror(bytesForMirror)
           if (!mirror) return { ok: false, kind: 'unconvertible', why: 'no iPod-safe ALAC' }
           srcToCopy = mirror
+          converted = { codec: 'alac-safe', kbps: null }
           dstToCopy = ipodPlayableDestPath(dstToCopy)
           const newRel = dstToCopy.startsWith(IPOD_MOUNT) ? dstToCopy.slice(IPOD_MOUNT.length + 1) : dstToCopy
           track.path = tsaNormalizeColonPath(newRel)
@@ -832,7 +844,7 @@ async function runActivitySyncHolding(
       const remote = remoteBytes.get(id) || sizeFromRecord.get(id)
       if (knownSourceSize == null && remote && remote > 0) knownSourceSize = remote
     }
-    return { ok: true, srcToCopy, dstToCopy: ipodPlayableDestPath(dstToCopy), restage, knownSourceSize }
+    return { ok: true, srcToCopy, dstToCopy: ipodPlayableDestPath(dstToCopy), restage, knownSourceSize, converted }
   }
   // Everything in this loop happens BEFORE the wipe, so its progress is
   // 'preflight' (the Prepare step). It used to say 'copy', and when a
@@ -905,6 +917,34 @@ async function runActivitySyncHolding(
       })
       continue
     }
+    // The landed record (Brief 265 Part 5): a converted song the last sync put on the card,
+    // whose master, format, bitrate and recipe all still match, is kept by the record without
+    // building its mirror, so an emptied convert cache never means converting it again. Its
+    // mirror is made only if the plan says it must be copied (§2c, or a recopy).
+    const sourceStat = needsPull ? null : await stat(localFile).catch(() => null)
+    const wantCodec: LandedCodec | null = convertOptions?.enabled ? (convertOptions.codec === 'mp3' ? 'mp3' : 'aac') : (convertNeeded ? 'alac-safe' : null)
+    const rec = landedRecord.get(id)
+    if (wantCodec && sourceStat && rec && i < reserveFrom) {
+      const cardAbs = join(IPOD_MOUNT, tsaRelFromColon(rec.destPath, pathSep))
+      const verdict = landedVerdict(rec, {
+        rawColon, sourceSize: sourceStat.size, sourceMtimeMs: sourceStat.mtimeMs, codec: wantCodec,
+        kbps: wantCodec === 'alac-safe' ? null : convertOptions!.targetKbps,
+        cardSize: (await stat(cardAbs).catch(() => null))?.size ?? null,
+      })
+      if (verdict === 'keep') {
+        track.path = rec.destPath
+        if (rec.destPath !== rawColon) cardOnlyIds.add(id)
+        if (wantCodec === 'mp3') track.codec = 'mp3'
+        if (wantCodec === 'alac-safe') track.codec = 'alac'
+        plan.push({
+          i, id, title, srcToCopy: localFile, dstToCopy: cardAbs, knownSourceSize: rec.size, masterSize: sourceBytes,
+          later: { ...later, needsPull: false }, landed: rec,
+        })
+        keptByLandedRecord++
+        continue
+      }
+      landedMisses.set(verdict, (landedMisses.get(verdict) ?? 0) + 1)
+    }
     const out = await prepareForCard({ i, id, title, dstToCopy, needsPull, ...later })
     if (!out.ok) {
       // Not a damaged song: no song can be converted, so the sync stops here, before the
@@ -923,7 +963,14 @@ async function runActivitySyncHolding(
       skipUnconvertible(title, String(track.artist || ''), id, out.why)
       continue
     }
-    plan.push({ i, id, title, srcToCopy: out.srcToCopy, dstToCopy: out.dstToCopy, restage: out.restage, knownSourceSize: out.knownSourceSize, masterSize: sourceBytes })
+    plan.push({
+      i, id, title, srcToCopy: out.srcToCopy, dstToCopy: out.dstToCopy, restage: out.restage, knownSourceSize: out.knownSourceSize, masterSize: sourceBytes,
+      ...(out.converted ? { converted: { ...out.converted, rawColon, source: sourceStat ? { size: sourceStat.size, mtimeMs: sourceStat.mtimeMs } : null } } : {}),
+    })
+  }
+  if (keptByLandedRecord > 0 || landedMisses.size > 0) {
+    console.log(`activity-sync: landed record — ${keptByLandedRecord} converted song(s) kept without converting again` +
+      (landedMisses.size > 0 ? `; going the normal way: ${[...landedMisses].map(([why, n]) => `${n} (${why})`).join(', ')}` : ''))
   }
 
   // Damaged songs were dropped above; reserves fill their places. Only if
@@ -1134,7 +1181,15 @@ async function runActivitySyncHolding(
     }
     const out = await prepareForCard({ i: e.i, id: e.id, title: e.title, dstToCopy: e.dstToCopy, needsPull: true, ...e.later! })
     if (out.ok) {
-      Object.assign(e, { srcToCopy: out.srcToCopy, dstToCopy: out.dstToCopy, restage: out.restage, knownSourceSize: out.knownSourceSize, later: undefined })
+      // A local master (kept by the landed record, now must move) is recorded with its revision;
+      // a song staged from homemini has no local revision and is not recorded.
+      const local = e.later!.needsPull === false
+      const src = local ? await stat(e.later!.localFile).catch(() => null) : null
+      const rawColon = e.later!.rawColon
+      Object.assign(e, {
+        srcToCopy: out.srcToCopy, dstToCopy: out.dstToCopy, restage: out.restage, knownSourceSize: out.knownSourceSize, later: undefined, landed: undefined,
+        ...(out.converted ? { converted: { ...out.converted, rawColon, source: src ? { size: src.size, mtimeMs: src.mtimeMs } : null } } : {}),
+      })
       dstById.set(e.id, out.dstToCopy)
       continue
     }
@@ -1769,6 +1824,13 @@ async function runActivitySyncHolding(
   const prepareSource = async (entry: { id: number; localFile: string }): Promise<{ abs: string; cleanup: () => Promise<void> }> => {
     const held = preStaged.get(entry.id)
     if (held) return { abs: held.abs, cleanup: async () => {} }   // released when the run ends
+    // A song kept by the landed record has no mirror yet: a recopy makes it now (never the master).
+    const kept = plan.find((e) => e.id === entry.id)
+    if (kept?.landed && kept.later) {
+      const out = await prepareForCard({ i: kept.i, id: kept.id, title: kept.title, dstToCopy: kept.dstToCopy, ...kept.later, needsPull: false })
+      if (!out.ok) throw new Error(out.kind === 'stage' ? out.msg : out.why)
+      return { abs: out.srcToCopy, cleanup: async () => {} }
+    }
     const rs = restageById.get(entry.id)
     if (!rs) return { abs: entry.localFile, cleanup: async () => {} }
     const staged = await host.stageTrack(rs.colon, rs.id)
@@ -2357,6 +2419,26 @@ async function runActivitySyncHolding(
       })
     } catch (mErr) {
       console.warn('activity-sync: sealed, but last-sync-manifest update failed:', mErr)
+    }
+    // The landed record for the card just sealed: every converted song on it, as it is now.
+    try {
+      const next = new Map<number, LandedEntry>()
+      const planById = new Map(plan.map((e) => [e.id, e]))
+      for (const p of seal.passengers) {
+        const e = planById.get(p.id)
+        if (!e) continue
+        if (e.landed) { next.set(p.id, { ...e.landed, destPath: p.destPath, size: p.expectedSize }); continue }
+        const c = e.converted
+        if (!c || !c.source) continue
+        next.set(p.id, {
+          rawColon: c.rawColon,
+          destPath: p.destPath, size: p.expectedSize, source: c.source, codec: c.codec, kbps: c.kbps, recipe: recipeFor(c.codec),
+        })
+      }
+      await writeLandedRecord(host.stateDir, next, seal.sealedAt)
+      console.log(`activity-sync: landed record — ${next.size} converted song(s) on the card recorded`)
+    } catch (lErr) {
+      console.warn('activity-sync: sealed, but the landed record could not be written:', lErr instanceof Error ? lErr.message : lErr)
     }
   } catch (sealErr) {
     return fail({

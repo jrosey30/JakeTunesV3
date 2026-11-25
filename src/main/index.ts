@@ -52,7 +52,9 @@ import { computeDeletedPaths } from './library-deletions'; import { createPhoneI
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createPlayCache } from './play-cache.ts'
 import { atBackgroundPriority } from './background-priority.ts'
-import { AacEncoderMissingError, aacMirrorCacheName, afconvertAacArgs, createAfconvertCheck, pcmDecodeArgs } from './aac-mirror-recipe.ts'
+import { startSyncConvertCache } from './ipc/sync-cache-ipc.ts'
+import { touchUsed } from './sync-convert-cache.ts'
+import { AacEncoderMissingError, IPOD_ALAC_MIRROR_TOKEN, MP3_MIRROR_TOKEN, aacMirrorCacheName, afconvertAacArgs, createAfconvertCheck, pcmDecodeArgs } from './aac-mirror-recipe.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
 import { mergeQueuedDuringPass, runConvertPass, type ConvertOutcome, type QueueTrack, type StreamConvertItem } from './stream-convert-pass.ts'; import { confirmHomeminiHoldsFile, keptLocalMessage, USER_PENDING_RETRIES, type RefusalMemo } from './offload-confirm.ts'
@@ -3432,7 +3434,7 @@ async function buildAacMirror(srcPath: string, targetKbps: number, format: 'aac'
   const cached = join(cacheDir, aacMirrorCacheName(srcPath, targetKbps))
   try {
     const cStat = await stat(cached)
-    if (cStat.mtimeMs >= srcStat.mtimeMs) return cached  // fresh
+    if (cStat.mtimeMs >= srcStat.mtimeMs) { await touchUsed(cached); return cached }  // fresh; marked used for the cap's LRU
   } catch { /* not cached yet */ }
 
   // Apple's encoder or nothing: a refusal is thrown, so the sync never quietly copies the
@@ -3493,11 +3495,11 @@ async function buildMp3Mirror(srcPath: string, targetKbps: number): Promise<stri
   const kbps = Math.min(320, Math.max(128, Math.round(Number(targetKbps) || 320)))
   const cacheDir = join(app.getPath('userData'), SYNC_CONVERT_CACHE_SUBDIR)
   await mkdir(cacheDir, { recursive: true }).catch((err) => console.warn('[sync-convert] cache folder:', err instanceof Error ? err.message : err))
-  const hash = createHash('sha1').update(`${srcPath}|${kbps}|mp3-lame-cbr-44100-2-v1`).digest('hex').slice(0, 16)
+  const hash = createHash('sha1').update(`${srcPath}|${kbps}|${MP3_MIRROR_TOKEN}`).digest('hex').slice(0, 16)
   const cached = join(cacheDir, `${hash}.mp3`)
   try {
     const cStat = await stat(cached)
-    if (cStat.mtimeMs >= srcStat.mtimeMs && cStat.size > 0) return cached
+    if (cStat.mtimeMs >= srcStat.mtimeMs && cStat.size > 0) { await touchUsed(cached); return cached }
   } catch { /* not cached yet */ }
   const tmp = cached + '.partial.mp3'
   const { rename: renameFS } = await import('fs/promises')
@@ -3537,11 +3539,11 @@ async function buildIpodSafeAlacMirror(srcPath: string): Promise<string | null> 
   const cacheDir = join(app.getPath('userData'), SYNC_CONVERT_CACHE_SUBDIR)
   await mkdir(cacheDir, { recursive: true }).catch(() => {})
   const { createHash } = await import('crypto')
-  const hash = createHash('sha1').update(`${srcPath}|ipod-alac-16-44100-v1`).digest('hex').slice(0, 16)
+  const hash = createHash('sha1').update(`${srcPath}|${IPOD_ALAC_MIRROR_TOKEN}`).digest('hex').slice(0, 16)
   const cached = join(cacheDir, `${hash}.m4a`)
   try {
     const cStat = await stat(cached)
-    if (cStat.mtimeMs >= srcStat.mtimeMs && cStat.size > 0) return cached
+    if (cStat.mtimeMs >= srcStat.mtimeMs && cStat.size > 0) { await touchUsed(cached); return cached }
   } catch { /* miss */ }
   const tmp = cached + '.partial.m4a'
   try {
@@ -5368,6 +5370,8 @@ const syncEngine = createSyncEngine({
   roundTripHost: roundTripHostFor,
   devicePlaylists: (input) => createDevicePlaylists({ baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), warn: (m) => console.warn(m) }).forSync(input),
 })
+// The convert cache's upkeep: leftover partials swept, a size cap (off until Jake sets one), clear (Brief 265 Part 5).
+startSyncConvertCache(ipc, { userData: app.getPath('userData'), syncInFlight: () => syncEngine.isSyncInFlight() })
 const { handleSyncToIpod, handleSyncIpodFromDevice } = syncEngine
 
 // (Removed: the 'alac-compat-scan' / 'alac-compat-fix' IPC handlers and
