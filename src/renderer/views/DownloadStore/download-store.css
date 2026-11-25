@@ -827,82 +827,15 @@
 }
 .dl-rel:hover .dl-rel-art { transform: translateY(-3px); box-shadow: 0 2px 5px rgba(0,0,0,0.2), 0 16px 26px -12px rgba(0,0,0,0.5); }
 .dl-rel.is-open .dl-rel-art { box-shadow: 0 0 0 2px var(--brand-orange), 0 10px 20px -12px rgba(0,0,0,0.45); }
-.dl-rel-owned {
-  position: absolute; top: 5px; right: 5px;
-  width: 17px; height: 17px; border-radius: 50%;
-  display: grid; place-items: center;
-  font-size: 10px; font-weight: 900; line-height: 1;
-  color: #fff; background: var(--color-success);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.35);
-}
 .dl-rel-title { margin-top: var(--space-3); font-size: var(--font-12); font-weight: var(--fw-bold); line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dl-rel-facts { display: flex; align-items: center; gap: 5px; margin-top: 2px; min-width: 0; }
-.dl-rel-count { font-size: var(--font-11); color: var(--text-dim); white-space: nowrap; }
+.dl-rel-facts { display: block; margin-top: 2px; min-width: 0; font-size: var(--font-11); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dl-rel-sub { margin-top: 1px; font-size: var(--font-11); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Expanded tracklist spans the whole grid row, so the shelf keeps its shape
-   and the panel opens directly beneath the card you clicked. */
-.dl-rel-panel {
-  grid-column: 1 / -1;
-  margin: var(--space-2) 0 var(--space-3);
-  border: 1px solid var(--border-warm);
-  border-radius: var(--radius-lg);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-1);
-  overflow: hidden;
-  animation: dl-drawer var(--motion-normal) var(--motion-ease) both;
-}
-.dl-rel-panel-head {
-  display: flex; align-items: center; gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--border-warm);
-  background: linear-gradient(180deg, rgba(255,255,255,0.7), rgba(0,0,0,0.014));
-}
-.dl-rel-panel-title { font-size: var(--font-13); font-weight: var(--fw-heavy); }
-.dl-rel-panel-meta { font-size: var(--font-11); color: var(--text-dim); }
-.dl-rel-panel-spacer { flex: 1; }
-.dl-rel-panel-close { border: none; background: none; color: var(--text-dim); font-size: 11px; cursor: pointer; padding: 2px 4px; }
-.dl-rel-panel-close:hover { color: var(--brand-orange-dark); }
+/* A note on the shop's album and artist pages: loading, or why nothing shows. */
 .dl-rel-panel-note { padding: var(--space-4); font-size: var(--font-12); color: var(--text-dim); display: flex; align-items: center; gap: var(--space-3); }
 .dl-rel-panel-note--err { color: var(--color-danger, #b23b2e); }
 
-.dl-track-list {
-  list-style: none; margin: 0; padding: 0;
-  /* NOT `columns: 2`. Multi-column let an over-wide cell spill across the gap,
-     and the gap was 0 — so a track's "In your library" state printed on top of
-     the next column's title. Explicit rows + column flow keeps the same
-     down-then-across reading order and clips instead. */
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  column-gap: var(--space-7);
-}
-.dl-track {
-  /* tick (Brief 255) · number · title · length · state */
-  display: grid; grid-template-columns: 16px 26px minmax(0, 1fr) 42px 116px;
-  align-items: center; gap: var(--space-3);
-  min-width: 0; overflow: hidden;
-  height: 30px; padding: 0 var(--space-4);
-  font-size: var(--font-12);
-  border-bottom: 1px solid rgba(0,0,0,0.04);
-}
-/* Whatever state lands in a track row has to fit a 116px cell on one line. */
-.dl-track-act > * { max-width: 100%; }
-.dl-track .dl-state, .dl-track .download-result-btn, .dl-track .download-retry,
-.dl-track .download-cancel, .dl-track .dl-inlib {
-  font-size: var(--font-10);
-  white-space: nowrap;
-}
-.dl-track .dl-state svg { width: 10px; height: 10px; }
-.dl-track:hover { background: rgba(var(--brand-orange-rgb), 0.055); }
-.dl-track-lead { position: relative; width: 26px; height: 20px; }
-.dl-track-num { position: absolute; inset: 0; display: grid; place-items: center; font-size: var(--font-10); color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.dl-track-play { position: absolute; inset: 0; display: grid; place-items: center; border: none; background: none; color: var(--brand-orange-dark); font-size: 9px; cursor: pointer; opacity: 0; }
-.dl-track:hover .dl-track-num { opacity: 0; }
-.dl-track:hover .dl-track-play, .dl-track-play.is-on { opacity: 1; }
-.dl-track-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dl-track-dur { font-size: var(--font-11); color: var(--text-dim); font-variant-numeric: tabular-nums; text-align: right; }
-.dl-track-act { text-align: right; }
+/* The tick on an album page's song, to save a few. */
 .dl-track-tick { margin: 0; width: 13px; height: 13px; cursor: pointer; accent-color: rgb(var(--brand-orange-rgb)); }
 .dl-track-tick:disabled { cursor: default; opacity: 0.35; }
 
@@ -921,18 +854,12 @@
 .dl-song:nth-child(even) { background: rgba(0,0,0,0.016); }
 .dl-song:hover { background: rgba(var(--brand-orange-rgb), 0.065); }
 .dl-song-lead { position: relative; width: 26px; height: 22px; }
-.dl-song-idx { position: absolute; inset: 0; display: grid; place-items: center; font-size: var(--font-10); color: #b3ac9e; font-variant-numeric: tabular-nums; }
 .dl-song-play { position: absolute; inset: 0; display: grid; place-items: center; border: none; background: none; color: var(--brand-orange-dark); font-size: 10px; cursor: pointer; opacity: 0; }
-.dl-song:hover .dl-song-idx { opacity: 0; }
 .dl-song:hover .dl-song-play, .dl-song-play.is-on { opacity: 1; }
-.dl-song-art { width: 30px; height: 30px; border-radius: 3px; object-fit: cover; box-shadow: 0 1px 2px rgba(0,0,0,0.22); }
 .dl-song-title { font-weight: var(--fw-bold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dl-song-artist { color: var(--text-secondary, #5c554a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dl-song-album { color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dl-song-year { color: var(--text-dim); font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; font-size: var(--font-11); }
 .dl-song-dur { color: #a9a294; font-variant-numeric: tabular-nums; font-size: var(--font-11); text-align: right; }
 .dl-song-act { text-align: right; }
-.dl-inlib { font-size: var(--font-10); font-weight: var(--fw-heavy); letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-success); }
 
 /* Placeholder art, wherever it lands. */
 .download-result-art--ph { display: grid; place-items: center; background: linear-gradient(160deg, #efe9dd, #ded6c6); color: #b3ab99; }
@@ -949,7 +876,7 @@
 .dl-empty-sub { font-size: var(--font-12); max-width: 380px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .dl-rel, .dl-song, .dl-hero, .dl-rel-panel, .dl-setup-panel { animation: none; }
+  .dl-rel, .dl-song, .dl-hero, .dl-setup-panel { animation: none; }
   .dl-rel:hover .dl-rel-art { transform: none; }
 }
 
