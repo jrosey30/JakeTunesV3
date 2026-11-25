@@ -109,7 +109,7 @@
   letter-spacing: 1px;
 }
 
-.spool--spin { animation: spool-rotate 1.8s linear infinite; }
+.spool--spin { animation: spool-rotate var(--motion-spin) linear infinite; }
 @keyframes spool-rotate { to { transform: rotate(360deg); } }
 
 .mixtape-hero-info { min-width: 0; }
@@ -170,7 +170,7 @@
 .mixtape-mic-dot {
   width: 8px; height: 8px; border-radius: 50%;
   background: #d0321e;
-  animation: mic-blink 1s steps(2, start) infinite;
+  animation: mic-blink var(--motion-blink) steps(2, start) infinite;
 }
 @keyframes mic-blink { to { visibility: hidden; } }
 .mixtape-mic-status { color: #666; }
@@ -342,7 +342,7 @@
   box-shadow: -8px 0 8px rgba(245, 239, 221, 0.9);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 120ms ease;
+  transition: opacity var(--motion-instant) var(--motion-ease);
 }
 .mixsheet-row:hover .mixsheet-row-tools { opacity: 1; pointer-events: auto; }
 .mixsheet-row-tools button {
@@ -421,7 +421,7 @@
   font-family: inherit;
   font-size: 9px;
 }
-.deckbar-cassette--rolling .deckbar-spool { animation: spool-rotate 1.4s linear infinite; }
+.deckbar-cassette--rolling .deckbar-spool { animation: spool-rotate var(--motion-spin) linear infinite; }
 .deckbar-counter { display: flex; flex-direction: column; min-width: 90px; }
 .deckbar-side { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: #f4eeda; }
 .deckbar-left { font-size: 11px; color: #aaa; font-variant-numeric: tabular-nums; }
@@ -453,7 +453,7 @@
 .deckbar-btn--talk.is-talking {
   background: linear-gradient(#c23a24, #8f1d10);
   color: #fff;
-  animation: mic-blink 1s steps(2, start) infinite;
+  animation: mic-blink var(--motion-blink) steps(2, start) infinite;
 }
 .deckbar-btn:disabled { opacity: 0.55; cursor: default; }
 .deckbar-eject {
@@ -477,7 +477,7 @@
   box-shadow: 0 6px 20px rgba(0,0,0,0.4), 0 0 18px rgba(220, 60, 40, 0.45);
 }
 .deckbar-status { font-size: 12px; font-weight: 800; letter-spacing: 0.8px; color: #bbb; }
-.deckbar--recording .deckbar-status { color: #ff6a4e; animation: mic-blink 1.2s steps(2, start) infinite; }
+.deckbar--recording .deckbar-status { color: #ff6a4e; animation: mic-blink var(--motion-blink) steps(2, start) infinite; }
 .deckbar--armed .deckbar-status { color: #f0b04a; }
 .deckbar-nowrec { font-size: 10.5px; color: #e8c9a0; font-style: italic; }
 .deckbar-minor { display: flex; flex-direction: column; gap: 4px; margin-left: 6px; }
@@ -494,7 +494,7 @@
 .deckbar-mini.is-talking {
   background: linear-gradient(#c23a24, #8f1d10);
   color: #fff;
-  animation: mic-blink 1s steps(2, start) infinite;
+  animation: mic-blink var(--motion-blink) steps(2, start) infinite;
 }
 
 /* ── the faceplate: traditional as hell ── */
@@ -529,7 +529,7 @@
   background: transparent;
   color: #6d6858;
   cursor: pointer;
-  transition: background 90ms ease, color 90ms ease;
+  transition: background var(--motion-instant) var(--motion-ease), color var(--motion-instant) var(--motion-ease);
 }
 .fp-key:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.9);
@@ -619,7 +619,7 @@
   margin: 18px 0 0;
 }
 .fp-status--armed { color: #b07818; }
-.fp-status--recording { color: #c23a24; animation: mic-blink 1.2s steps(2, start) infinite; }
+.fp-status--recording { color: #c23a24; animation: mic-blink var(--motion-blink) steps(2, start) infinite; }
 .mixtape-smallrow {
   display: flex;
   gap: 16px;
@@ -699,14 +699,14 @@
 }
 
 /* Spool wind — held FF/REW: the reels blur, REW runs them backwards. */
-.spool--fast { animation-duration: 0.18s; }
+.spool--fast { animation-duration: calc(var(--motion-spin) * 0.25); }
 .spool--rev { animation-direction: reverse; }
 
 /* side-wide tape scrubber in the pill */
 .scrubber-fill--tape { background: #5c4a32 !important; }
 .scrubber-track--locked { cursor: default; }
 .fp-counter--winding .fp-counter-digits { color: #f0d78a; text-shadow: 0 0 9px rgba(240, 210, 120, 0.6); }
-.fp-counter--winding .fp-counter-sub { color: #b09a50; animation: mic-blink 0.5s steps(2, start) infinite; }
+.fp-counter--winding .fp-counter-sub { color: #b09a50; animation: mic-blink var(--motion-blink) steps(2, start) infinite; }
 
 /* the flip — side tabs on the faceplate */
 .fp-sides { display: flex; flex-direction: column; gap: 3px; margin-right: 6px; }

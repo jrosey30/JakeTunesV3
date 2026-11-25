@@ -139,24 +139,8 @@
   --font-timestamp: 9.25px;
   --font-title: 12.25px;
 
-  /* Motion — short physical snaps, warm settle (iTunes 8 weight) */
-  --motion-instant: 90ms;
-  --motion-fast: 120ms;
-  --motion-ui: 180ms;
-  --motion-panel: 220ms;
-  --motion-overlay: 280ms;
-  --motion-exit: 300ms;
-  --motion-stagger: 28ms;
-  --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-lift: cubic-bezier(0.2, 0.65, 0.3, 1);
-  --ease-snap: cubic-bezier(0.18, 0.9, 0.4, 1);
-  /* V5 facelift: carousel settle — the one physically-weighted motion in
-     the app (Cover Flow's flip). "Sexy smooth" pass: longer travel with a
-     soft 4% overshoot and a long decel tail (Apple-sheet family curve) —
-     fluid follow-through instead of the springy mechanical snap v1 had.
-     Named generically; CrateBrowse could converge onto it later. */
-  --motion-carousel-snap: 560ms;
-  --ease-carousel: cubic-bezier(0.3, 1.04, 0.22, 1);
+  /* Motion: the tokens live in motion.css (V7, one motion module with
+     src/renderer/motion.ts). Three speeds, one curve. */
 
   /* ══════════════════════════════════════════════════════════════════
      V6 "Facelift+" — the structural scales the app was missing. Color +

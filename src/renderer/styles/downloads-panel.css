@@ -16,9 +16,9 @@
   z-index: 10;
   box-shadow: -2px 0 8px rgba(0,0,0,0.12);
   user-select: none;
-  animation: dlp-slide-in var(--motion-panel) var(--ease-settle) both;
+  animation: dlp-slide-in var(--motion-normal) var(--motion-ease) both;
 }
-.dlp-panel--exiting { animation: dlp-slide-out var(--motion-panel) var(--ease-settle) both; }
+.dlp-panel--exiting { animation: dlp-slide-out var(--motion-normal) var(--motion-ease) both; }
 @media (prefers-reduced-motion: reduce) { .dlp-panel, .dlp-panel--exiting { animation: none; } }
 
 .dlp-header {
@@ -73,7 +73,7 @@
 .dlp-row--canceled { background: rgba(255,255,255,0.25); color: #666; }
 /* "Save album" on a record that already has a job opens the panel on it
    (Brief 253): the row says "this one" for a moment. */
-.dlp-row--focus { box-shadow: inset 3px 0 0 rgba(var(--brand-orange-rgb), 0.9); background: rgba(var(--brand-orange-rgb), 0.08); transition: background 0.6s ease; }
+.dlp-row--focus { box-shadow: inset 3px 0 0 rgba(var(--brand-orange-rgb), 0.9); background: rgba(var(--brand-orange-rgb), 0.08); transition: background var(--motion-normal) var(--motion-ease); }
 
 .dlp-row-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
 .dlp-status {

@@ -25,6 +25,7 @@
     "sync:contracts": "bash scripts/sync-jaketunes-contracts.sh",
     "check": "npx tsc -p tsconfig.web.json --noEmit && npx tsc -p tsconfig.node.json --noEmit && npm test && node scripts/check-no-root-bundle.mjs && npm run check:slop",
     "check:slop": "python3 tools/vale/slop-check.py --repo v3",
+    "test:frames": "node scripts/motion-frames/run.mjs",
     "check:root-bundle": "node scripts/check-no-root-bundle.mjs"
   },
   "build": {

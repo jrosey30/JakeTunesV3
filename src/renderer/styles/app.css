@@ -347,7 +347,7 @@
   justify-content: center;
   z-index: 500;
   pointer-events: none;
-  animation: drop-overlay-in var(--motion-ui) var(--ease-settle) both;
+  animation: drop-overlay-in var(--motion-normal) var(--motion-ease) both;
 }
 
 .app-drop-overlay--importing {
@@ -364,7 +364,7 @@
   padding: 16px 32px;
   border-radius: 10px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  animation: sheet-enter var(--motion-overlay) var(--ease-snap) both;
+  animation: sheet-enter var(--motion-normal) var(--motion-ease) both;
 }
 
 .app-drop-overlay--importing .app-drop-message {
@@ -786,7 +786,7 @@
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
   backdrop-filter: blur(4px);
   z-index: 40;
-  animation: scroll-top-in 160ms ease-out;
+  animation: scroll-top-in var(--motion-normal) var(--motion-ease);
 }
 .scroll-top-btn:hover { background: #fff; box-shadow: 0 3px 14px rgba(0, 0, 0, 0.2); }
 @keyframes scroll-top-in {
@@ -808,7 +808,7 @@
   border: 1px solid rgba(252, 85, 1, 0.3);
   border-radius: 10px;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.16);
-  animation: scroll-top-in 140ms ease-out;
+  animation: scroll-top-in var(--motion-instant) var(--motion-ease);
 }
 .find-bar-icon { color: #9a958c; font-size: 14px; }
 .find-bar-input {
@@ -893,7 +893,7 @@
   width: 40%;
   border-radius: 2px;
   background: var(--brand-orange, #F9864C);
-  animation: page-gate-slide 1.1s ease-in-out infinite;
+  animation: page-gate-slide var(--motion-spin) ease-in-out infinite;
 }
 @keyframes page-gate-slide {
   0% { transform: translateX(-100%); }
@@ -906,7 +906,7 @@
    Appears only on genuinely slow loads (the component self-delays). ── */
 .page-gate--v3 {
   display: flex; flex-direction: column; align-items: stretch; gap: 26px;
-  padding: 36px 28px; animation: pg-fade-in 240ms ease-out both;
+  padding: 36px 28px; animation: pg-fade-in var(--motion-normal) var(--motion-ease) both;
 }
 .page-gate--v3 .page-gate-name {
   font-size: 30px; font-weight: 700; color: #33302a; letter-spacing: -0.02em;
@@ -916,20 +916,20 @@
 .page-gate-eq { display: inline-flex; align-items: flex-end; gap: 3px; height: 14px; }
 .page-gate-eq span {
   width: 3px; border-radius: 2px 2px 0 0; background: var(--brand-orange, #F9864C);
-  animation: pg-eq 900ms ease-in-out infinite; transform-origin: bottom;
+  animation: pg-eq var(--motion-pulse) ease-in-out infinite; transform-origin: bottom;
 }
 .page-gate-eq span:nth-child(1) { animation-delay: 0ms;   height: 60%; }
-.page-gate-eq span:nth-child(2) { animation-delay: 140ms; height: 95%; }
-.page-gate-eq span:nth-child(3) { animation-delay: 280ms; height: 75%; }
-.page-gate-eq span:nth-child(4) { animation-delay: 70ms;  height: 100%; }
-.page-gate-eq span:nth-child(5) { animation-delay: 210ms; height: 55%; }
+.page-gate-eq span:nth-child(2) { animation-delay: calc(var(--motion-stagger) * 5); height: 95%; }
+.page-gate-eq span:nth-child(3) { animation-delay: calc(var(--motion-stagger) * 9); height: 75%; }
+.page-gate-eq span:nth-child(4) { animation-delay: calc(var(--motion-stagger) * 2);  height: 100%; }
+.page-gate-eq span:nth-child(5) { animation-delay: calc(var(--motion-stagger) * 7); height: 55%; }
 @keyframes pg-eq { 0%, 100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }
 @keyframes pg-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 .pg-shimmer {
   background: linear-gradient(100deg, #e4dfd4 38%, #f1ede4 50%, #e4dfd4 62%);
   background-size: 220% 100%;
-  animation: pg-shimmer 1.5s linear infinite;
+  animation: pg-shimmer var(--motion-spin) linear infinite;
 }
 @keyframes pg-shimmer { from { background-position: 130% 0; } to { background-position: -90% 0; } }
 
@@ -940,12 +940,12 @@
 .pg-list-head { display: flex; flex-direction: column; gap: 8px; }
 .pg-section { width: 140px; height: 11px; border-radius: 6px; }
 .pg-row { display: flex; gap: 16px; }
-.pg-card { display: flex; flex-direction: column; gap: 7px; animation: home-card-in 300ms cubic-bezier(0.2, 0.65, 0.3, 1) both; }
+.pg-card { display: flex; flex-direction: column; gap: 7px; animation: home-card-in var(--motion-normal) var(--motion-ease) both; }
 .pg-card-art { width: 118px; height: 118px; border-radius: 8px; box-shadow: 0 3px 10px rgba(70, 55, 40, 0.10); border: 1px solid rgba(85, 78, 64, 0.07); }
 .pg-line { height: 12px; border-radius: 6px; }
 .pg-line--thin { height: 8px; border-radius: 4px; }
 .pg-list { display: flex; flex-direction: column; gap: 13px; max-width: 720px; }
-.pg-listrow { display: flex; align-items: center; gap: 12px; animation: home-card-in 300ms cubic-bezier(0.2, 0.65, 0.3, 1) both; }
+.pg-listrow { display: flex; align-items: center; gap: 12px; animation: home-card-in var(--motion-normal) var(--motion-ease) both; }
 .pg-dot { width: 26px; height: 26px; border-radius: 6px; flex: 0 0 auto; }
 
 /* ═══ 5.0 COLD BOOT splash (2026-08-08) — the device powers on ═══
@@ -1083,7 +1083,7 @@
   width: 38%;
   border-radius: 2px;
   background: var(--accent, #FC5501);
-  animation: pg4-travel 1.15s ease-in-out infinite;
+  animation: pg4-travel var(--motion-spin) ease-in-out infinite;
 }
 @keyframes pg4-travel {
   0%   { left: -38%; }

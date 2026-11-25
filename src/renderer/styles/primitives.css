@@ -32,10 +32,10 @@
   cursor: pointer;
   user-select: none;
   transition:
-    filter var(--motion-fast) var(--ease-settle),
-    box-shadow var(--motion-ui) var(--ease-settle),
-    transform var(--motion-instant) var(--ease-snap),
-    border-color var(--motion-fast) var(--ease-settle);
+    filter var(--motion-instant) var(--motion-ease),
+    box-shadow var(--motion-normal) var(--motion-ease),
+    transform var(--motion-instant) var(--motion-ease),
+    border-color var(--motion-instant) var(--motion-ease);
 }
 .ui-btn:hover { filter: brightness(1.02); box-shadow: var(--gloss-top), var(--shadow-2); }
 .ui-btn:active {
@@ -87,7 +87,7 @@
   color: var(--text-primary);
   font-family: var(--font-family);
   font-size: var(--font-14);
-  transition: border-color var(--motion-fast) var(--ease-settle), box-shadow var(--motion-fast) var(--ease-settle);
+  transition: border-color var(--motion-instant) var(--motion-ease), box-shadow var(--motion-instant) var(--motion-ease);
 }
 .ui-field::placeholder { color: var(--text-dim); }
 .ui-field:focus, .ui-field:focus-visible {
@@ -113,7 +113,7 @@
   font-size: var(--font-13);
   font-weight: var(--fw-medium);
   cursor: pointer;
-  transition: box-shadow var(--motion-ui) var(--ease-settle), filter var(--motion-fast) var(--ease-settle);
+  transition: box-shadow var(--motion-normal) var(--motion-ease), filter var(--motion-instant) var(--motion-ease);
 }
 .ui-select:hover { filter: brightness(1.02); box-shadow: var(--gloss-top), var(--shadow-2); }
 .ui-select:focus-visible { outline: none; box-shadow: var(--gloss-top), var(--shadow-1), var(--ring-focus); }
@@ -143,9 +143,9 @@
   letter-spacing: var(--track-tight);
   cursor: pointer;
   transition:
-    background var(--motion-fast) var(--ease-settle),
-    color var(--motion-fast) var(--ease-settle),
-    box-shadow var(--motion-fast) var(--ease-settle);
+    background var(--motion-instant) var(--motion-ease),
+    color var(--motion-instant) var(--motion-ease),
+    box-shadow var(--motion-instant) var(--motion-ease);
 }
 .ui-seg__item:hover { color: var(--text-primary); background: rgba(255, 255, 255, 0.5); }
 .ui-seg__item[aria-selected="true"], .ui-seg__item.is-active {

@@ -39,7 +39,7 @@
 }
 
 .sidebar-chevron {
-  transition: transform 0.15s;
+  transition: transform var(--motion-instant) var(--motion-ease);
   flex-shrink: 0;
 }
 
@@ -70,7 +70,7 @@
  * Same iTunes-8 colored icons (kept their original palette per Jake);
  * just the row-fill animates. */
 .sidebar-item {
-  transition: background-color 0.12s ease, color 0.12s ease;
+  transition: background-color var(--motion-instant) var(--motion-ease), color var(--motion-instant) var(--motion-ease);
 }
 .sidebar-item:hover {
   background: rgba(0,0,0,0.06);
@@ -282,7 +282,7 @@
 .sidebar-eject-btn {
   flex-shrink: 0;
   opacity: 0.5;
-  transition: opacity 0.15s;
+  transition: opacity var(--motion-instant) var(--motion-ease);
   padding: 2px 4px;
 }
 
@@ -312,7 +312,7 @@
   height: 100%;
   object-fit: contain;
   background: #888;
-  animation: art-fade-in var(--motion-panel) var(--ease-settle) both;
+  animation: art-fade-in var(--motion-normal) var(--motion-ease) both;
 }
 
 .album-art-placeholder {
@@ -376,7 +376,7 @@
   background: var(--brand-orange);
   color: #fff;
   border-color: var(--brand-orange-border);
-  transition: filter 0.15s, box-shadow 0.15s, color 0.15s;
+  transition: filter var(--motion-instant) var(--motion-ease), box-shadow var(--motion-instant) var(--motion-ease), color var(--motion-instant) var(--motion-ease);
 }
 
 .album-art-btn--dj:hover {
@@ -390,7 +390,7 @@
   background: #4a4a52;
   color: #d8d8e0;
   border-color: #333339;
-  transition: background 0.15s, box-shadow 0.15s, color 0.15s;
+  transition: background var(--motion-instant) var(--motion-ease), box-shadow var(--motion-instant) var(--motion-ease), color var(--motion-instant) var(--motion-ease);
 }
 
 .album-art-btn--vinyl:hover {

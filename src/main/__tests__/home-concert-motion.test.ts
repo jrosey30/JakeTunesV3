@@ -2,6 +2,8 @@
 // throughout the home page wherever it makes the most sense. Like not album art. But other
 // things." The concert card's moves (home.css), on the Home's other artist photos: NOW DIGGING's
 // posters (TonightOnJakeTunes.tsx, home-tonight.css).
+// V7 motion (Jake approved the plan, 2026-11-24): "Cut: the endless backdrop drift, drifting
+// posters, the bouncing rank pop". What stays is the equalizer on the act playing now.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -11,9 +13,9 @@ const css = readFileSync(new URL('../../renderer/styles/home-tonight.css', impor
 const reduce = css.slice(css.lastIndexOf('@media (prefers-reduced-motion: reduce)'))
 
 describe('the concert motion on the Home', () => {
-  it('the artist posters drift with the scroll, scroll-driven, as the concert photos drift with their rail', () => {
-    assert.match(css, /@supports \(animation-timeline: view\(\)\) \{\n  \.tn-poster img \{\n    height: calc\(100% \+ 28px\);\n    margin-top: -14px;\n    animation: tn-poster-drift linear both;\n    animation-timeline: view\(\);/)
-    assert.match(css, /@keyframes tn-poster-drift \{\n  from \{ transform: translateY\(14px\); \}\n  to \{ transform: translateY\(-14px\); \}/)
+  it('the artist posters hold still (V7 cut the drift)', () => {
+    assert.doesNotMatch(css, /tn-poster-drift/)
+    assert.doesNotMatch(css, /\.tn-poster img \{[^}]*animation/)
   })
 
   it('the poster clips without becoming the scroller its photo\'s timeline would follow', () => {
@@ -22,20 +24,18 @@ describe('the concert motion on the Home', () => {
     assert.doesNotMatch(poster, /overflow: hidden;/)
   })
 
-  it('album art never moves: the drift is on the posters\' artist photos only', () => {
-    const drifting = [...css.matchAll(/([^{}]+)\{[^{}]*animation: tn-poster-drift/g)].map((m) => m[1]!.trim())
-    assert.deepEqual(drifting, ['.tn-poster img'])
-    assert.ok(!/tn-flow|tn-art|tn-cover/.test(drifting.join(' ')))
+  it('album art never moves', () => {
+    assert.doesNotMatch(css, /\.tn-(flow|art|cover)[\w-]* (img )?\{[^}]*animation:\s*(?!none)/)
   })
 
-  it('the ranks flip down like the date stubs, one poster after another; the playing act gets the equalizer', () => {
-    assert.match(css, /\.tn-dig-rank \{\n  transform-origin: top center;\n  animation: tn-rank-in 420ms cubic-bezier\(0\.3, 1\.5, 0\.5, 1\) both;\n  animation-delay: calc\(80ms \+ var\(--i, 0\) \* 70ms\);/)
+  it('the rank is simply there (V7 cut the bouncing pop); the playing act gets the equalizer', () => {
+    assert.doesNotMatch(css, /tn-rank-in/)
+    assert.doesNotMatch(css, /\.tn-dig-rank \{[^}]*animation/)
     assert.match(tonight, /<span className="tn-dig-rank" style=\{\{ '--i': i \} as CSSProperties\}>\{i \+ 1\}<\/span>\n\s+<DigPlaying artist=\{d\.artist\} \/>/)
     assert.match(tonight, /function DigPlaying\(\{ artist \}: \{ artist: string \}\)[\s\S]*?usePlayback\(\)[\s\S]*?className="home-concert-eq tn-dig-eq"/)
   })
 
-  it('Reduce Motion stills all of it', () => {
-    assert.match(reduce, /\.tn-poster img \{ animation: none; height: 100%; margin-top: 0; \}/)
-    assert.match(reduce, /\.tn-dig-rank \{ animation: none; \}/)
+  it('Reduce Motion stills what still moves (the global switch in motion.css does the rest)', () => {
+    assert.match(reduce, /\.tn-case-plastic \{ animation: none; \}/)
   })
 })

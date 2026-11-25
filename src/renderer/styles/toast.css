@@ -13,13 +13,13 @@
   align-items: center;
   gap: 12px;
   z-index: 250;
-  animation: toast-in 0.3s ease-out;
+  animation: toast-in var(--motion-normal) var(--motion-ease);
   user-select: none;
   -webkit-user-select: none;
 }
 
 .undo-toast--exiting {
-  animation: toast-out 0.3s ease-in forwards;
+  animation: toast-out var(--motion-normal) var(--motion-ease) forwards;
 }
 
 .undo-toast-message {

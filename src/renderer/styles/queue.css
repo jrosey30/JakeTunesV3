@@ -21,11 +21,11 @@
   z-index: 10;
   box-shadow: -2px 0 8px rgba(0,0,0,0.12);
   user-select: none;
-  animation: queue-slide-in var(--motion-panel) var(--ease-settle) both;
+  animation: queue-slide-in var(--motion-normal) var(--motion-ease) both;
 }
 
 .queue-panel--exiting {
-  animation: queue-slide-out var(--motion-panel) var(--ease-settle) both;
+  animation: queue-slide-out var(--motion-normal) var(--motion-ease) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -231,7 +231,7 @@
   padding: 0 4px;
   line-height: 1;
   flex-shrink: 0;
-  transition: opacity 0.1s;
+  transition: opacity var(--motion-instant) var(--motion-ease);
 }
 
 .queue-item:hover .queue-item-remove { opacity: 1; }

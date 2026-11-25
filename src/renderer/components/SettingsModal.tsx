@@ -56,7 +56,7 @@ function CorrelationMeter() {
       <div style={{ position: 'relative', height: 8, background: '#e8e4dc', borderRadius: 4, overflow: 'hidden' }}>
         {/* danger zone shading below 0.3 (left of 65%) */}
         <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '65%', background: 'rgba(192,57,43,0.10)' }} />
-        <div style={{ position: 'absolute', left: `calc(${pct}% - 2px)`, top: 0, bottom: 0, width: 4, background: color, borderRadius: 2, transition: 'left 100ms linear' }} />
+        <div style={{ position: 'absolute', left: `calc(${pct}% - 2px)`, top: 0, bottom: 0, width: 4, background: color, borderRadius: 2, transition: 'left var(--motion-instant) linear' }} />
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#b3ab9d', marginTop: 2 }}>
         <span>−1 · out of phase</span><span>0.3</span><span>+1 · mono</span>
@@ -394,7 +394,7 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                 <span>Radio captions — show what the hosts are saying</span>
               </label>
 
-              <div style={{ opacity: draft.crossfade.enabled ? 1 : 0.4, transition: 'opacity 0.15s' }}>
+              <div style={{ opacity: draft.crossfade.enabled ? 1 : 0.4, transition: 'opacity var(--motion-instant) var(--motion-ease)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
                   <span style={{ fontSize: 12, color: '#555', minWidth: 30 }}>1 sec</span>
                   <input
@@ -559,7 +559,7 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                 <span>Equalizer enabled</span>
               </label>
 
-              <div style={{ opacity: draft.eq.enabled ? 1 : 0.4, transition: 'opacity 0.15s' }}>
+              <div style={{ opacity: draft.eq.enabled ? 1 : 0.4, transition: 'opacity var(--motion-instant) var(--motion-ease)' }}>
                 <label style={{ display: 'block', fontSize: 12, color: '#3a3a3a', marginBottom: 4 }}>
                   Preset
                 </label>
@@ -866,7 +866,7 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                 <span>Auto-import from inbox folder</span>
               </label>
 
-              <div style={{ opacity: draft.inbox.enabled ? 1 : 0.4, transition: 'opacity 0.15s' }}>
+              <div style={{ opacity: draft.inbox.enabled ? 1 : 0.4, transition: 'opacity var(--motion-instant) var(--motion-ease)' }}>
                 <label style={{ display: 'block', fontSize: 12, color: '#3a3a3a', marginBottom: 4 }}>
                   Inbox folder
                 </label>
@@ -1024,7 +1024,7 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                 <span>Move music to another speaker during calls</span>
               </label>
 
-              <div style={{ opacity: draft.audio.callRouteEnabled ? 1 : 0.4, transition: 'opacity 0.15s' }}>
+              <div style={{ opacity: draft.audio.callRouteEnabled ? 1 : 0.4, transition: 'opacity var(--motion-instant) var(--motion-ease)' }}>
                 <label style={{ display: 'block', fontSize: 12, color: '#3a3a3a', marginBottom: 4 }}>
                   Speaker to use during calls
                 </label>

@@ -65,7 +65,7 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background var(--motion-instant) var(--motion-ease), border-color var(--motion-instant) var(--motion-ease);
 }
 .booth-btn:hover:not(:disabled) { background: #26262a; border-color: #3a3a40; }
 .booth-btn:disabled { opacity: 0.35; cursor: default; }
@@ -336,7 +336,7 @@
 .booth-verdict-miss { color: var(--booth-kill); }
 
 @media (prefers-reduced-motion: no-preference) {
-  .booth-verdict { animation: booth-pop 420ms ease-out; }
+  .booth-verdict { animation: booth-pop var(--motion-display-verdict) var(--motion-ease); }
 }
 @keyframes booth-pop {
   from { opacity: 0; transform: translate(-50%, -50%) scale(0.7); }
@@ -483,7 +483,7 @@
   position: absolute; top: 1px; bottom: 1px; width: 6px;
   margin-left: -3px; border-radius: 3px;
   background: var(--booth-kill);
-  transition: left 60ms linear, background 160ms ease;
+  transition: left var(--motion-instant) linear, background var(--motion-instant) var(--motion-ease);
 }
 .booth-align-marker.is-locked { background: #7ac74f; box-shadow: 0 0 10px rgba(122,199,79,0.7); }
 .booth-align-read {
@@ -714,7 +714,7 @@
   letter-spacing: 0.06em;
   cursor: pointer;
   user-select: none;
-  transition: transform 90ms ease, background 120ms ease;
+  transition: transform var(--motion-instant) var(--motion-ease), background var(--motion-instant) var(--motion-ease);
 }
 .lesson-action:hover { background: #efa055; }
 .lesson-action:active { transform: translateY(1px); }
@@ -735,7 +735,7 @@
 .lesson-meter-marker {
   position: absolute; top: 3px; bottom: 3px; width: 10px; margin-left: -5px;
   border-radius: 5px; background: var(--booth-kill);
-  transition: left 60ms linear, background 160ms ease;
+  transition: left var(--motion-instant) linear, background var(--motion-instant) var(--motion-ease);
 }
 .lesson-meter-marker.is-locked {
   background: #7ac74f; box-shadow: 0 0 14px rgba(122,199,79,0.8);
