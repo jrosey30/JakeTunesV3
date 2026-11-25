@@ -1,0 +1,35 @@
+---
+# One name for each thing (the V7 and Mobile V3 plans, "One name for each thing").
+# House style for JakeTunes, not vendored: TWIN, the same file in JakeTunesMobile and
+# JakeTunesV3 (tools/vale/styles/JakeTunes). Read by tools/vale/slop-check.py over the
+# words a person reads, never over code. Case doesn't matter: "RECOMMENDATIONS" and
+# "recommendations" are both the Listening List. Concerts are in Concerts.yml (a choice).
+extends: substitution
+message: "Say '%s', not '%s' (one name for each thing)."
+level: error
+ignorecase: true
+nonword: true
+swap:
+  # Songs, not tracks. A track's number and its position ("Track X", "track #X") stay.
+  '(?<!\d-)\btracks?\b(?! ?(?:numbers?|#|X\b|records?\b))': songs
+  # Listening List
+  '\bListen(?: to the)? List\b': Listening List
+  '\bRecommendations\b': Listening List
+  '\brecos?\b': Listening List
+  # Record Shop
+  '\b(?:The Racks|The Crates|Bandcamp Store|Download Store|In the Store)\b': Record Shop
+  # Up Next
+  '\b(?:add|added) to (?:the )?queue\b': Up Next
+  '\bqueue\b': Up Next
+  # Shows are tickets, Live Albums are recordings.
+  '\b(?:Full )?live concerts?\b': Live Albums
+  '\blive sets?\b': Live Albums
+  # Download / Downloaded / Remove Download
+  '\b(?:Save|Saving|Saved) offline\b': Download
+  '\bKeep on Phone\b': Download
+  # the Music Man (a sentence may start "The Music Man").
+  '(?<!\bthe )\bMusic Man\b': the Music Man
+  # Offline
+  '\b(?:weak signal|can(?:no|[’''])t reach|couldn[’'']t reach|could not reach|isn[’'']t answering|didn[’'']t answer|check tailscale)\b': Offline
+  # One spelling
+  '\bcolour(?:s|ed)?\b': color

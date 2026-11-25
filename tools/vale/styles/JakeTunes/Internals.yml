@@ -1,0 +1,23 @@
+---
+# Never name the machinery to the person (Jake, 2026-11-19: "no ids, no internals").
+# TWIN, the same file in JakeTunesMobile and JakeTunesV3. Read only over the words a person
+# reads (tools/vale/slop-check.py). Say "Offline", or say what happened in plain words.
+extends: existence
+message: "Internal name in words a person reads: '%s'. Say what happened, not what did it."
+level: error
+ignorecase: true
+nonword: true
+tokens:
+  - '\bhomemini\b'
+  - '\btailscale\b'
+  - '\bNAS\b'
+  - '\bsynology\b'
+  - '\bstreamrip\b'
+  - '\bitunesdb\b'
+  - '\bthe hub\b'
+  - '\bbackend\b'
+  - '\bJSON\b'
+  - '\bHTTP\b'
+  - '\b(?:ENOENT|EACCES|EPERM|EBUSY|ETIMEDOUT|ECONNREFUSED|ECONNRESET|ENOTFOUND)\b'
+  - '\berror code\b'
+  - '\bClaude API\b'

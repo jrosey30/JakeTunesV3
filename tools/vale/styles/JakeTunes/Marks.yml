@@ -1,0 +1,12 @@
+---
+# Marks the house style doesn't use: "..." (the one ellipsis is "…"), "(s)" plurals, "!",
+# emoji. TWIN, the same file in JakeTunesMobile and JakeTunesV3.
+extends: existence
+message: "'%s': no '...', '(s)', '!' or emoji in the app's words."
+level: error
+nonword: true
+tokens:
+  - '\.\.\.'
+  - '\w\(s\)'
+  - '!'
+  - '[\x{1F300}-\x{1FAFF}\x{2728}\x{2705}\x{2714}\x{2716}\x{2713}\x{2717}\x{2715}\x{2726}]'

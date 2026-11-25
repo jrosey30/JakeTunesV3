@@ -1,0 +1,49 @@
+# Strings the slop check lets stand, each with why (tools/vale/slop-check.py reads this).
+# Per repo, not a twin. file<TAB>the words exactly as --dump prints them<TAB>why.
+# Keep it small: a string you can fix, fix; one you can't touch today goes here with the reason.
+# A line that matches nothing any more is reported as a note; delete it then.
+src/common/record-shop-page.ts	The Crates	Record Shop rebuild (feat/shop-*) owns these words
+src/common/shop-names.ts	Bandcamp Store	the list of retired names the app must never show (RETIRED_SHOP_NAMES)
+src/common/shop-names.ts	Listen List	the list of retired names the app must never show (RETIRED_SHOP_NAMES)
+src/common/shop-names.ts	Listen to the List	the list of retired names the app must never show (RETIRED_SHOP_NAMES)
+src/common/shop-names.ts	The Racks	the list of retired names the app must never show (RETIRED_SHOP_NAMES)
+src/common/shop-save-button.ts	In your library ✓	Record Shop rebuild (feat/shop-*) owns these words
+src/renderer/components/DownloadsPanel.tsx	Checking which tracks match…	Record Shop rebuild (feat/shop-*) owns these words
+src/renderer/components/DownloadsPanel.tsx	Retry only the tracks that failed or were canceled	Record Shop rebuild (feat/shop-*) owns these words
+src/renderer/components/GetInfoModal.tsx	Track	the track-number field; Jake's call whether it becomes a song word
+src/renderer/components/IpodLibraryModal.tsx	Add the iPod-only tracks to your local library so they show up everywhere in JakeTunes.	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/components/IpodLibraryModal.tsx	Reading iTunesDB from iPod…	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/components/IpodLibraryModal.tsx	Search X iPod tracks…	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/components/MusicSourcesPanel.tsx	Checking streamrip…	the sign-in screen names the tool Jake installs (streamrip); rewrite with Jake (for-jake-desktop.json)
+src/renderer/components/MusicSourcesPanel.tsx	Saved to streamrip’s config on this Mac — your credentials never leave your machine or go through chat.	the sign-in screen names the tool Jake installs (streamrip); rewrite with Jake (for-jake-desktop.json)
+src/renderer/components/MusicSourcesPanel.tsx	pipx install streamrip	the sign-in screen names the tool Jake installs (streamrip); rewrite with Jake (for-jake-desktop.json)
+src/renderer/components/MusicSourcesPanel.tsx	streamrip (the	the sign-in screen names the tool Jake installs (streamrip); rewrite with Jake (for-jake-desktop.json)
+src/renderer/components/NearEditionTable.tsx	Track	Record Shop rebuild (feat/shop-*) owns these words
+src/renderer/components/OrphanCleanupModal.tsx	Orphan files are audio on disk not referenced by any track in your library.	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/components/OrphanCleanupModal.tsx	library track	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/components/OrphanCleanupModal.tsx	tracks indexed	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/components/PlayCacheModal.tsx	JakeTunes converts ALAC files to AAC the first time you play them so Chromium can decode them. Without a cached AAC mirror, first-play takes ~5 seconds while ffmpeg runs. This action transcodes every ALAC track in your library now so first-play is instant going forward. AAC tracks (the majority of your library) are skipped — they play raw and need no cache.	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/components/SettingsModal.tsx	Daily Claude API call ceiling	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/components/SettingsModal.tsx	Homemini sync is not configured on this machine.	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/components/SettingsModal.tsx	Library backups to homemini	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/components/SettingsModal.tsx	Sets the persona + voice for chat, picks, recommendations, and DJ Set commentary. Each host has distinct taste and opinions — they disagree on almost everything. Radio Mode co-hosts both regardless of this setting.	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/components/SettingsModal.tsx	This Mac stays the hub and keeps publishing the library. New imports stream once homemini has the same bytes, and a symlink plays from homemini. Files already on this Mac stay put until File → Library → Offload Audio — Dry Run, then Start. Do not set the stream source to homemini.	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/components/SettingsModal.tsx	Used for every import: drag and drop, Import and Convert, and CDs. Lossless sources (FLAC, WAV, AIFF) convert to this format. MP3 and AAC are copied unchanged. Tracks already in the library are left alone.	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/components/SettingsModal.tsx	When set, Music Man / Larry / Stephen / chat all get	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/components/ShowDuplicatesModal.tsx	Hide this group — these are intentionally distinct (e.g. clip vs full, AAC vs ALAC). Reappears if a new track joins the group.	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/components/yir/YirImg.tsx	concerts: StoryConcert[]	a TypeScript type the extractor reads as words; never shown
+src/renderer/hooks/useAudio.ts	Couldn't play 'X' — skipping to the next track	Do-Not-Touch file: changes only with Jake's OK
+src/renderer/utils/libraryMenus.ts	Declare Live Concert Mode	the action's name; Jake picks the new one (slop-sweep/for-jake-desktop.json)
+src/renderer/views/CDImportView.tsx	Reading CD...	Do-Not-Touch file: changes only with Jake's OK
+src/renderer/views/ConcertDetailView.tsx	Drop a concert poster here, or click to choose one	the poster drop zone's only hint; Shows or Live Albums is Jake's pick (for-jake-desktop.json)
+src/renderer/views/ConcertsView.tsx	Declare Live Concert Mode	names the menu item "Declare Live Concert Mode"; changes with it
+src/renderer/views/DeviceView.tsx	Estimated room for additional songs based on your average track size	Do-Not-Touch file: changes only with Jake's OK
+src/renderer/views/DownloadStore/DownloadView.tsx	Remove from queue	Record Shop rebuild (feat/shop-*) owns these words; the download queue, not Up Next
+src/renderer/views/MusicManView.tsx	All tracks already analyzed.	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/views/MusicManView.tsx	Done — X tracks analyzed.	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/views/MusicManView.tsx	In the Store	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/views/MusicManView.tsx	Re-run BPM/key analysis on every track — fixes half/double tempo errors from older analysis	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/views/MusicManView.tsx	Songs where the brain has written a prose descriptor of how the track FEELS	the self-care rebuild (feat/v7-self-care) rewrites this page
+src/renderer/views/SongsView.tsx	JakeTunes can't find this track's audio file. The library entry is preserved — re-import the file to restore playback.	needs a rewrite, not a swap (for-jake-desktop.json)
+src/renderer/views/Top1000AuditPanel.tsx	This build can’t reach the blind check.	means this build has no such feature, not Offline
+src/renderer/views/Top1000QuizView.tsx	This build can’t reach the quiz.	means this build has no such feature, not Offline

@@ -17,13 +17,27 @@ Vale itself is NOT in the repo: JT_VALE, else ~/.jaketunes-vale/bin/vale.
 Missing, the check prints one line and passes, unless JT_VALE_REQUIRED=1 (CI
 sets it after fetching a checksum-pinned v3.26.0).
 
-A line that must say something a rule dislikes can carry `slop-ok` in a
-comment on the same source line.
+Two kinds of rule. The vendored ai-tells rules (machine-prose tells), and JakeTunes' own
+house style (tools/vale/styles/JakeTunes, also a twin): one name for each thing (Songs,
+Listening List, Record Shop, Up Next, Live Albums, Download, the Music Man, Offline, color;
+any case), a bare "concert" flagged for a person to say Shows or Live Albums, no internals (homemini, Tailscale, NAS, error codes), no "...", "(s)", "!" or emoji. The house
+rules fail the check in JakeTunesV3; in JakeTunesMobile they are counted, not enforced, until
+the phone's own sweep lands (HOUSE_ENFORCED).
+
+A line that must say something a rule dislikes can carry `slop-ok` (and why) in a comment on
+the same source line. A string that can't take a comment there (a file another change owns,
+a protected file) can go in tools/vale/allow.tsv instead: one line per string, the file, the
+words exactly as --dump prints them, and why; that file is per repo and kept small.
+
+Before reading the tree the check runs itself over a planted file (`selftest`): every house
+rule, a single word, and a string after a JSX closing tag at a known line. A check that can no
+longer see those fails instead of passing blind.
 
 Usage:
   python3 tools/vale/slop-check.py --repo mobile|v3          # the check
   python3 tools/vale/slop-check.py --repo mobile --calibrate # every rule, counts
   python3 tools/vale/slop-check.py --repo mobile --dump      # the extracted words
+  python3 tools/vale/slop-check.py --repo mobile --house     # house-style hits, enforced or not
 """
 import bisect
 import json
@@ -36,6 +50,10 @@ import tempfile
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 VALE_DIR = os.path.join(ROOT, 'tools', 'vale')
 CONFIG = os.path.join(VALE_DIR, '.vale.ini')
+ALLOW = os.path.join(VALE_DIR, 'allow.tsv')
+HOUSE = 'JakeTunes.'
+# The repos whose house-style hits fail the check. The phone joins when its sweep lands.
+HOUSE_ENFORCED = {'v3'}
 
 
 def vale_binary():
@@ -129,7 +147,26 @@ def _swift_strings(src):
     return out
 
 
-_REGEX_PREV = set('(,=:[!&|?{};+-*%<>~^')
+# Where a `/` starts a regex literal. Not after `<`: that is a JSX closing tag (`</div>`).
+_REGEX_PREV = set('(,=:[!&|?{};+-*%>~^')
+
+
+_TS_ESCAPE = re.compile(r'\\(?:u\{([0-9a-fA-F]+)\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|(.))', re.S)
+
+
+def _ts_escape(src, i):
+    """The character a TS escape at src[i] (a backslash) stands for, and where it ends."""
+    m = _TS_ESCAPE.match(src, i)
+    if not m:
+        return '', i + 1
+    code = m.group(1) or m.group(2) or m.group(3)
+    if code:
+        try:
+            return chr(int(code, 16)), m.end()
+        except (ValueError, OverflowError):
+            return '', m.end()
+    c = m.group(4)
+    return {'n': ' ', 't': ' ', 'r': ' ', '\n': ''}.get(c, c), m.end()
 
 
 def _ts_strings(src):
@@ -145,11 +182,10 @@ def _ts_strings(src):
             if c == '\n':
                 return ''.join(buf), i, line   # unterminated (JSX text "don't")
             if c == '\\' and i + 1 < n:
-                nxt = src[i + 1]
-                buf.append({'n': ' ', 't': ' '}.get(nxt, nxt))
-                if nxt == '\n':
+                if src[i + 1] == '\n':
                     line += 1
-                i += 2
+                ch, i = _ts_escape(src, i)
+                buf.append(ch)
                 continue
             buf.append(c)
             i += 1
@@ -167,8 +203,10 @@ def _ts_strings(src):
                 i += 1
                 continue
             if c == '\\' and i + 1 < n:
-                buf.append(src[i + 1])
-                i += 2
+                if src[i + 1] == '\n':
+                    line += 1
+                ch, i = _ts_escape(src, i)
+                buf.append(ch)
                 continue
             if src.startswith('${', i):
                 i, line = skip_expr(i + 2, line)
@@ -219,9 +257,11 @@ def _ts_strings(src):
             line += src.count('\n', i, j)
             i = j
             continue
-        if c == '/' and (prev == '' or prev in _REGEX_PREV):
-            # A regex literal: skip to its closing slash on this line.
-            j, cls = i + 1, False
+        if c == '/' and (prev == '' or prev in _REGEX_PREV) and not src.startswith('/>', i):
+            # A regex literal: skip to its closing slash on this line. One that never closes on
+            # its line was not a regex (a `/` in JSX text): read on from the next character, so
+            # nothing on the line is lost and its newline is still counted.
+            j, cls, closed = i + 1, False, False
             while j < n and src[j] != '\n':
                 if src[j] == '\\':
                     j += 2
@@ -231,10 +271,15 @@ def _ts_strings(src):
                 elif src[j] == ']':
                     cls = False
                 elif src[j] == '/' and not cls:
+                    closed = True
                     break
                 j += 1
-            i = j + 1
-            prev = 'r'
+            if closed:
+                i = j + 1
+                prev = 'r'
+            else:
+                i += 1
+                prev = '/'
             continue
         if c in '\'"':
             start, sl = i, line
@@ -255,9 +300,16 @@ def _ts_strings(src):
 
 # ── What counts as words a person reads ───────────────────────────────────────
 
+# One word a person reads: a capitalised word ("Tracks", "Queue", "Concerts") or a shouted one
+# ("RECOMMENDATIONS"), with at most a closing mark. Lowercase single words are ids and keys.
+SINGLE_WORD = re.compile(r'[A-Z](?:[a-z]+(?:[’\'-][A-Za-z]+)*|[A-Z]{2,})[.!?…]{0,3}')
+
+
 def is_prose(text):
     t = text.strip()
-    if len(t) < 4 or ' ' not in t or not re.search(r'[A-Za-z]{2}', t):
+    if ' ' not in t:
+        return SINGLE_WORD.fullmatch(t) is not None
+    if len(t) < 4 or not re.search(r'[A-Za-z]{2}', t):
         return False
     if re.search(r'https?://|var\(--|rgba?\(|\bpx\b|=>|\$\{|^\s*[.#]?[a-z-]+\s*\{', t):
         return False
@@ -286,8 +338,21 @@ BACKEND_TRIGGER_BODY = r'\b(?:error|message|notice|hint)\s*:\s*'
 
 TS_TRIGGER_BODY = (
     r'(?:\b(?:notify|notifyToast|showToast|toast|pushToast|confirm|alert)\(\s*'
-    r'|\b(?:title|subtitle|message|label|hint|body|detail|placeholder|happened|next|line|headline|caption|empty|tooltip)\s*:\s*'
-    r'|\b(?:title|placeholder|alt|label|aria-label)=\{?\s*)')
+    r'|\b(?:\w+\.)?set\w*(?:Notice|Error|Status)\(\s*'
+    r'|\b(?:title|subtitle|message|label|hint|body|detail|placeholder|happened|next|line|headline|caption|empty|tooltip'
+    r'|confirmLabel|cancelLabel)\s*:\s*'
+    r'|\b(?:title|placeholder|alt|label|aria-label|confirmLabel|cancelLabel)=\{?\s*)')
+
+# The desktop's main process: menu items (`label:`) anywhere, and the words of a dialog or a
+# notification inside its call. Not every `title:` / `message:` there: the sync engines'
+# progress titles and raw errors are never shown (src/common/sync-failure-copy.ts and
+# sync-progress-model.ts turn them into the plain lines a person reads).
+MAIN_MENU_BODY = r'\blabel\s*:\s*'
+MAIN_DIALOG_BODY = (
+    r'(?:\b(?:label|title|message|detail|body|subtitle|buttonLabel)\s*:\s*'
+    r'|\bbuttons\s*:\s*\[\s*(?:\'[^\'\n]*\'\s*,\s*|"[^"\n]*"\s*,\s*)*)')
+LOG_CALL = re.compile(r'\bconsole\.\w+\(')
+MAIN_DIALOG_CALL = re.compile(r'\bdialog\.show\w*\(|\bnew\s+Notification\(')
 
 
 class Trigger:
@@ -306,6 +371,8 @@ class Trigger:
 SWIFT_TRIGGER = Trigger(SWIFT_TRIGGER_BODY)
 BACKEND_TRIGGER = Trigger(BACKEND_TRIGGER_BODY)
 TS_TRIGGER = Trigger(TS_TRIGGER_BODY)
+MAIN_MENU = Trigger(MAIN_MENU_BODY)
+MAIN_DIALOG = Trigger(MAIN_DIALOG_BODY)
 
 # A function or computed property whose job is to say something: its `return "…"` is read.
 MESSAGE_NAME = re.compile(r'(?i)(message|title|text|line|label|copy|caption|headline|banner|toast|words|hint|reason|summary|sentence|phrase)')
@@ -317,7 +384,7 @@ RETURN = re.compile(r'\breturn\s+(?:[^\n"\';{}]{1,100}?\s\?\s*)?$')
 ELSE_BRANCH = re.compile(r'^\s*:\s*$')
 CONCAT = re.compile(r'^\s*\+\s*(?:[\w.?!()\[\]]+\s*\+\s*)?$')
 
-JSX_ATTR = re.compile(r'''\b(?:title|placeholder|alt|aria-label|label)="([^"{}]+)"''')
+JSX_ATTR = re.compile(r'''\b(?:title|placeholder|alt|aria-label|label|confirmLabel|cancelLabel)="([^"{}]+)"''')
 JSX_INLINE = re.compile(r'(?<![=\-])>([^<>{}]*[A-Za-z][^<>{}]*)(?=<|\{)')
 JSX_AFTER_EXPR = re.compile(r'\}([^<>{}]*[A-Za-z][^<>{}]*)<')
 JSX_TEXT_LINE = re.compile(r'''^[A-Za-z0-9"'“‘(—–.…!?&$][^<>{}=;]*$''')
@@ -395,6 +462,18 @@ def literal_hits(path, src, strings, trigger, everything=False, decl=None, spans
     return out
 
 
+def call_spans(src, call):
+    """(start, end) of every call `call` finds: from its name to the `)` that closes it."""
+    spans = []
+    for m in call.finditer(src):
+        depth, i = 1, m.end()
+        while i < len(src) and depth:
+            depth += {'(': 1, ')': -1}.get(src[i], 0)
+            i += 1
+        spans.append((m.start(), i))
+    return spans
+
+
 def function_spans(src, names):
     """(start, end) of each named top-level TS function: its header to the `}` closing it."""
     spans = []
@@ -416,6 +495,7 @@ BACKEND_UTIL_WORDS = {
 
 def extract(repo):
     items = []   # (relpath, line, text)
+    seen = set()
 
     def add(path, pairs, src):
         rel = os.path.relpath(path, ROOT)
@@ -426,6 +506,9 @@ def extract(repo):
                 continue
             if 0 < line <= len(src_lines) and 'slop-ok' in src_lines[line - 1]:
                 continue
+            if (rel, line, text) in seen:   # the lexer and the JSX pass can both read one string
+                continue
+            seen.add((rel, line, text))
             items.append((rel, line, text))
 
     if repo == 'mobile':
@@ -438,17 +521,32 @@ def extract(repo):
             src = open(path, encoding='utf-8', errors='replace').read()
             add(path, literal_hits(path, src, _ts_strings(src), BACKEND_TRIGGER, decl=TS_DECL), src)
     elif repo == 'v3':
+        def ts(src):
+            # A literal inside console.*(…) is a log line, never words a person reads.
+            logs = call_spans(src, LOG_CALL)
+            return [t for t in _ts_strings(src) if not any(a <= t[0] < b for a, b in logs)]
+
         copy_files = re.compile(r'^(sync-failure-copy|downloads-panel-model|record-shop(-[a-z-]+)?|shop-[a-z-]+)\.ts$')
         for path in walk('src/renderer', ('.tsx', '.ts')):
             src = open(path, encoding='utf-8', errors='replace').read()
-            add(path, literal_hits(path, src, _ts_strings(src), TS_TRIGGER), src)
+            add(path, literal_hits(path, src, ts(src), TS_TRIGGER), src)
             if path.endswith('.tsx'):
                 add(path, jsx_text(path, src), src)
         for path in walk('src/common', ('.ts',)):
             if not copy_files.match(os.path.basename(path)):
                 continue
             src = open(path, encoding='utf-8', errors='replace').read()
-            add(path, literal_hits(path, src, _ts_strings(src), TS_TRIGGER, True), src)
+            add(path, literal_hits(path, src, ts(src), TS_TRIGGER, True), src)
+        for path in walk('src/main', ('.ts',)):
+            if '/scotus-archive/' in path:   # the archive's own content, not the app's words
+                continue
+            src = open(path, encoding='utf-8', errors='replace').read()
+            strings = ts(src)
+            add(path, literal_hits(path, src, strings, MAIN_MENU), src)
+            spans = call_spans(src, MAIN_DIALOG_CALL)
+            if spans:
+                inside = [t for t in strings if any(a <= t[0] < b for a, b in spans)]
+                add(path, literal_hits(path, src, inside, MAIN_DIALOG), src)
     else:
         raise SystemExit(f'slop check: unknown --repo {repo}')
     for rel, names in BACKEND_UTIL_WORDS[repo]:
@@ -509,7 +607,7 @@ def main(argv):
     for a in argv:
         if a.startswith('--repo='):
             repo = a.split('=', 1)[1]
-        elif a in ('--calibrate', '--dump'):
+        elif a in ('--calibrate', '--dump', '--house'):
             mode = a[2:]
         elif a in ('mobile', 'v3'):
             repo = a
@@ -533,7 +631,7 @@ def main(argv):
         return 0
 
     try:
-        return report(mode, vale, items)
+        return report(mode, vale, items, repo)
     except ValeBroken as err:
         # Vale installed but crashing or hanging here: one line, and the commit is not held,
         # except where Vale is required (CI).
@@ -544,7 +642,79 @@ def main(argv):
         return 0
 
 
-def report(mode, vale, items):
+def read_allow():
+    """{(file, words): why} from tools/vale/allow.tsv. Missing file: nothing allowed."""
+    allow = {}
+    if not os.path.isfile(ALLOW):
+        return allow
+    for no, raw in enumerate(open(ALLOW, encoding='utf-8'), 1):
+        if not raw.strip() or raw.startswith('#'):
+            continue
+        parts = raw.rstrip('\n').split('\t')
+        if len(parts) < 3 or not parts[2].strip():
+            raise SystemExit(f'slop check: {ALLOW}:{no}: needs three tab-separated fields: file, words, why')
+        allow[(parts[0], parts[1])] = parts[2]
+    return allow
+
+
+SELFTEST_SRC = """export function Panel() {
+  return (
+    <div>
+      <span>a</span>
+    </div>
+  )
+}
+const a = { label: 'Tracks' }
+const b = { title: 'Ask the Music Man' }
+const c = { title: 'Have Music Man pick' }
+const d = { message: 'Added to your Listen List' }
+const e = { message: 'Saved to homemini over Tailscale' }
+const f = { label: 'Import...' }
+const g = { label: 'Pick a colour' }
+const h = { label: 'Play Live Set' }
+const i = { label: 'Two song(s) left!' }
+const j = { label: 'Bandcamp Store' }
+const k = { label: 'Track number' }
+const l = { label: 'Weak signal' }
+const m = { title: 'RECOMMENDATIONS' }
+const n = { label: 'Queue' }
+const o = { title: 'CONCERTS NEAR YOU' }
+const p = { label: 'Go to Concert' }
+const q = { label: 'Play the 8-track' }
+"""
+# (line, check, what it must see). Line 8 sits after the closing tags on lines 4 and 5
+# (the line-number bug read each `</` as a regex and lost a newline). Line 9 is the house
+# style's own spelling, line 18 a track's number and line 24 an 8-track: none may fire.
+# Lines 20-23: the name rules ignore case, and a bare concert asks for a choice.
+SELFTEST_WANT = [
+    (8, 'JakeTunes.Names', 'Tracks'), (10, 'JakeTunes.Names', 'Music Man'),
+    (11, 'JakeTunes.Names', 'Listen List'), (12, 'JakeTunes.Internals', 'homemini'),
+    (12, 'JakeTunes.Internals', 'Tailscale'), (13, 'JakeTunes.Marks', '...'),
+    (14, 'JakeTunes.Names', 'colour'), (15, 'JakeTunes.Names', 'Live Set'),
+    (16, 'JakeTunes.Marks', 'g(s)'), (16, 'JakeTunes.Marks', '!'),
+    (17, 'JakeTunes.Names', 'Bandcamp Store'), (19, 'JakeTunes.Names', 'Weak signal'),
+    (20, 'JakeTunes.Names', 'RECOMMENDATIONS'), (21, 'JakeTunes.Names', 'Queue'),
+    (22, 'JakeTunes.Concerts', 'CONCERTS'), (23, 'JakeTunes.Concerts', 'Concert'),
+]
+
+
+def selftest(vale):
+    """The check over a planted file: None when it sees every planted word where it is, and
+    nothing else; otherwise what it missed or saw wrongly."""
+    src = SELFTEST_SRC
+    pairs = literal_hits('selftest.tsx', src, _ts_strings(src), TS_TRIGGER)
+    items = [('selftest.tsx', line, re.sub(r'\s+', ' ', t).strip()) for line, t in pairs
+             if is_prose(re.sub(r'\s+', ' ', t).strip())]
+    hits = run_vale(vale, CONFIG, items)
+    seen = {(line, check, match) for _, line, check, _, match, _ in hits}
+    missing = [w for w in SELFTEST_WANT if w not in seen]
+    extra = sorted(h for h in seen if h not in set(SELFTEST_WANT))
+    if missing or extra:
+        return f'missed {missing}, saw wrongly {extra}'
+    return None
+
+
+def report(mode, vale, items, repo='v3'):
     if mode == 'calibrate':
         with tempfile.TemporaryDirectory() as tmp:
             hits = run_vale(vale, calibrate_config(tmp), items)
@@ -558,16 +728,45 @@ def report(mode, vale, items):
         print(f'{len(items)} strings read, {len(hits)} hits, {len(counts)} rules fired')
         return 0
 
-    hits = run_vale(vale, CONFIG, items)
+    broken = selftest(vale)
+    if broken:
+        print(f'slop check: FAIL: the check is blind to its own planted words: {broken}')
+        return 1
+
+    allow = read_allow()
+    used = set()
+    hits, house_waiting = [], []
+    for h in run_vale(vale, CONFIG, items):
+        rel, line, check, msg, match, text = h
+        if (rel, text) in allow:
+            used.add((rel, text))
+            continue
+        if check.startswith(HOUSE) and repo not in HOUSE_ENFORCED and mode != 'house':
+            house_waiting.append(h)
+            continue
+        hits.append(h)
+    stale = sorted(k for k in allow if k not in used)
+    if stale:
+        # Not a failure: a fix for an allowed string can land before its allow line is pruned.
+        print(f'slop check: note: {len(stale)} line(s) in tools/vale/allow.tsv match nothing now; prune them:')
+        for rel, text in stale:
+            print(f'      {rel}: "{text[:100]}"')
+    if house_waiting:
+        print(f'slop check: {len(house_waiting)} house-style word(s) waiting for this repo\'s sweep '
+              '(not enforced here yet; --house lists them)')
     if not hits:
         print(f'slop check: ok ({len(items)} strings read)')
         return 0
-    print(f'slop check: FAIL: {len(hits)} AI tell(s) in words a person reads')
+    if mode == 'house':
+        print(f'slop check --house: {len(hits)} hit(s), house style and AI tells, enforced here or not')
+    else:
+        print(f'slop check: FAIL: {len(hits)} AI tell(s) or house-style word(s) in words a person reads')
     for rel, line, check, msg, match, text in hits:
         print(f'  {rel}:{line}: {check}: {msg}')
         print(f'      "{text[:140]}"')
-    print('  Say it in one short plain line (Jake: "no AI slop"). A line that must keep it: `slop-ok` in a comment.')
-    return 1
+    print('  Say it in one short plain line, in the app\'s own words (Jake: "no AI slop").'
+          ' A line that must keep it: `slop-ok` and why in a comment.')
+    return 1 if mode == 'check' else 0
 
 
 if __name__ == '__main__':
