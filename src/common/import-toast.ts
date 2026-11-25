@@ -54,7 +54,7 @@ export function summarizeImportBatch(batch: readonly ImportedTrackLike[]): Impor
   let topCount = 0
   for (const [a, c] of albumCounts) if (c > topCount) { topAlbum = a; topCount = c }
   const label = topAlbum ? `'${topAlbum}'` : 'your purchase'
-  return { message: `Added ${batch.length} tracks from ${label} to your library`, trackIds }
+  return { message: `Added ${batch.length} songs from ${label} to your library`, trackIds }
 }
 
 export interface PlayableImported {

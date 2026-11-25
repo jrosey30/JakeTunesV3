@@ -23,24 +23,24 @@ describe('the "Added to your library" toast', () => {
       { id: 1, title: 'And She Was', album: 'Little Creatures' },
       { id: 2, title: 'Give Me Back My Name', album: 'Little Creatures' },
     ])
-    assert.deepEqual(s, { message: "Added 3 tracks from 'Little Creatures' to your library", trackIds: [3, 1, 2] })
+    assert.deepEqual(s, { message: "Added 3 songs from 'Little Creatures' to your library", trackIds: [3, 1, 2] })
   })
 
   it('two purchases in one window: the bigger album wins the headline, both play', () => {
     const s = summarizeImportBatch([
       { id: 1, album: 'A' }, { id: 2, album: 'B' }, { id: 3, album: 'B' },
     ])
-    assert.equal(s?.message, "Added 3 tracks from 'B' to your library")
+    assert.equal(s?.message, "Added 3 songs from 'B' to your library")
     assert.deepEqual(s?.trackIds, [1, 2, 3])
   })
 
   it('no album anywhere falls back to "your purchase"', () => {
-    assert.equal(summarizeImportBatch([{ id: 1 }, { id: 2 }])?.message, 'Added 2 tracks from your purchase to your library')
+    assert.equal(summarizeImportBatch([{ id: 1 }, { id: 2 }])?.message, 'Added 2 songs from your purchase to your library')
   })
 
   it('events without a real id count toward the message but never into the queue; repeats collapse', () => {
     const s = summarizeImportBatch([{ id: 5, album: 'X' }, { album: 'X' }, { id: 5, album: 'X' }, { id: Number.NaN, album: 'X' }])
-    assert.equal(s?.message, "Added 4 tracks from 'X' to your library")
+    assert.equal(s?.message, "Added 4 songs from 'X' to your library")
     assert.deepEqual(s?.trackIds, [5])
   })
 })

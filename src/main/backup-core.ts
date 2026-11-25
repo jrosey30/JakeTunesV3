@@ -188,7 +188,7 @@ export async function restoreBackupAt(
     const raw = await readFile(join(backupDir, safe), 'utf-8')
     const lib = JSON.parse(raw) as { tracks?: unknown[] }
     const count = Array.isArray(lib.tracks) ? lib.tracks.length : -1
-    if (count <= 0) return { ok: false, error: 'That backup has no tracks — refusing to restore it.' }
+    if (count <= 0) return { ok: false, error: 'That backup has no songs — refusing to restore it.' }
     await snapshotLibraryAt(libraryPath, backupDir, 'pre-restore')
     const tmp = libraryPath + '.restore.tmp'
     await writeFile(tmp, raw)

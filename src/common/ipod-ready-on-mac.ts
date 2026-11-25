@@ -137,7 +137,7 @@ export const ROOM_LOW_BYTES = 20 * 1024 ** 3
 export function roomLine(r: { hold: boolean; freeBytes: number; offloadable: number | null }): string | null {
   const low = Number.isFinite(r.freeBytes) && r.freeBytes < ROOM_LOW_BYTES
   const gb = Number.isFinite(r.freeBytes) ? Math.max(0, Math.floor(r.freeBytes / 1024 ** 3)) : null
-  if (r.hold) return low ? `This Mac is almost full (${gb} GB free), and nothing can be moved off it until homemini answers.` : 'Nothing is being moved off this Mac until homemini answers.'
+  if (r.hold) return low ? `This Mac is almost full (${gb} GB free). Offline, so nothing can be moved off it.` : 'Offline. Nothing is being moved off this Mac.'
   if (low && r.offloadable === 0) return `This Mac is almost full (${gb} GB free), and everything left on it is needed by an iPod or was just added or played.`
   return null
 }
@@ -165,7 +165,7 @@ export function listFetchOutcome(
   const unclean = after.missing.filter((id) => !gone.has(id) && uncleanIds.has(id))
   // One song never blocks the iPod; every song on it failing to come cleanly is not a sync.
   if (unclean.length > 0 && typeof after.total === 'number' && leftOff.length + unclean.length >= after.total) {
-    return { kind: 'stuck', error: `${songs(unclean.length)} couldn’t be fetched cleanly from homemini. Try Sync again later.` }
+    return { kind: 'stuck', error: `${songs(unclean.length)} couldn’t be fetched cleanly. Try Sync again later.` }
   }
   return unclean.length > 0 ? { kind: 'go', leftOff, unclean } : { kind: 'go', leftOff }
 }

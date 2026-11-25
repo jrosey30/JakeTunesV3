@@ -590,7 +590,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
   ) => {
     try {
       if (!Array.isArray(payload?.trackIds) || payload.trackIds.length === 0) {
-        return { ok: false, error: 'Nothing to commit — empty track list.' }
+        return { ok: false, error: 'Nothing to commit — empty song list.' }
       }
       const state: WorkoutSyncState = {
         trackIds: payload.trackIds.map(Number),

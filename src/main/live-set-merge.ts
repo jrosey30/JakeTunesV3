@@ -331,7 +331,7 @@ export async function mergeLiveSet(
     }
 
     // ── Stage 3: encode to ALAC + embed tags (existing pipeline) ──
-    onProgress({ stage: 'encode', current: 1, total: 1, label: 'Encoding the live set…' })
+    onProgress({ stage: 'encode', current: 1, total: 1, label: 'Encoding the live album…' })
     const safeName = album.name.replace(/[/\\:*?"<>|]/g, '_').slice(0, 120)
     const mergedPath = join(scratchDir, `${safeName} — Full Set.m4a`)
     const tags: AudioTags = {

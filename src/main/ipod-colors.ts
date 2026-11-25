@@ -90,7 +90,7 @@ export type ChooseColorResult =
 export async function chooseIpodColor(deps: ChooseColorDeps, deviceId: unknown, raw: unknown): Promise<ChooseColorResult> {
   if (typeof deviceId !== 'string' || !/^[a-z0-9-]{6,64}$/.test(deviceId)) return { ok: false, error: 'No iPod.' }
   const color = normalizeIpodColor(raw)
-  if (!color) return { ok: false, error: 'That isn’t a colour JakeTunes knows.' }
+  if (!color) return { ok: false, error: 'That isn’t a color JakeTunes knows.' }
   let registry = false
   if (deps.hub) {
     const chosen = await readChosenColors(deps.stateDir)

@@ -135,10 +135,10 @@ async function confirmStart(message: string, interactive: boolean): Promise<bool
   if (!interactive) return true
   const r = await dialog.showMessageBox({
     type: 'question',
-    buttons: ['Cancel', 'Start offload'],
+    buttons: ['Cancel', 'Start Offload'],
     defaultId: 0,
     cancelId: 0,
-    title: 'Offload audio to homemini',
+    title: 'Offload Audio',
     message,
   })
   return r.response === 1

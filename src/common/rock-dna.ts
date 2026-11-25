@@ -48,12 +48,12 @@ export const SECTIONS: Array<{ id: SectionId; title: string; blurb: string }> = 
 
 export type Dimension = 'vocals' | 'songwriting' | 'instruments' | 'experiment' | 'attributes' | 'turnoffs'
 export const DIMENSIONS: Array<{ id: Dimension; title: string }> = [
-  { id: 'vocals', title: 'Vocal preferences' },
-  { id: 'songwriting', title: 'Songwriting preferences' },
-  { id: 'instruments', title: 'Instrumental preferences' },
-  { id: 'experiment', title: 'Experimental tolerance' },
-  { id: 'attributes', title: 'What makes an artist matter' },
-  { id: 'turnoffs', title: 'Musical dealbreakers' },
+  { id: 'vocals', title: 'Vocal Preferences' },
+  { id: 'songwriting', title: 'Songwriting Preferences' },
+  { id: 'instruments', title: 'Instrumental Preferences' },
+  { id: 'experiment', title: 'Experimental Tolerance' },
+  { id: 'attributes', title: 'What Makes an Artist Matter' },
+  { id: 'turnoffs', title: 'Musical Dealbreakers' },
 ]
 
 export const TRAITS = {
