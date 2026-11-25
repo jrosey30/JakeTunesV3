@@ -28,6 +28,10 @@ import { createHash } from 'node:crypto'
  *  v3 = what the cache held up to 2026-11-24: ffmpeg's own AAC, under an Apple name. */
 export const AAC_MIRROR_TOKEN = 'afenc-cbr-44100-2-v4'
 
+/** The MP3 mirror's recipe token (Gen 1), and the iPod-safe 16-bit / 44.1 kHz ALAC mirror's. */
+export const MP3_MIRROR_TOKEN = 'mp3-lame-cbr-44100-2-v1'
+export const IPOD_ALAC_MIRROR_TOKEN = 'ipod-alac-16-44100-v1'
+
 /** The cache file name for one source at one bitrate: sha1(src|kbps|token)[:16].m4a */
 export function aacMirrorCacheName(srcPath: string, targetKbps: number): string {
   const hash = createHash('sha1').update(`${srcPath}|${targetKbps}|${AAC_MIRROR_TOKEN}`).digest('hex').slice(0, 16)
