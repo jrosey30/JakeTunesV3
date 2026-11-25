@@ -185,7 +185,7 @@ export function md5Of(buf: Buffer): string {
   return createHash('md5').update(buf).digest('hex')
 }
 
-export interface RecoveryReport { restored: string[]; released: string[]; removed: string[]; dbRestored: boolean; kept: string[]; stale: boolean }
+export interface RecoveryReport { restored: string[]; released: string[]; removed: string[]; dbRestored: boolean; kept: string[]; stale: boolean; unreadable: boolean }
 
 /**
  * Settle what a run left, from the journal. First, which song list is on the card:
@@ -193,7 +193,9 @@ export interface RecoveryReport { restored: string[]; released: string[]; remove
  *   • the one the run was writing (`inflight`, never proven): the committed one comes back from
  *     its Mac backup;
  *   • neither: the card was changed elsewhere (another Mac, iTunes, a restore). The journal no
- *     longer describes it: nothing is touched and the caller drops the journal (`stale`).
+ *     longer describes it: nothing is touched and the caller drops the journal (`stale`);
+ *   • none can be read: "can't tell" (`unreadable`): nothing is touched, the journal is kept,
+ *     and the caller stops the sync.
  * Then the open wave:
  *   • committed → its originals go (the hidden `.jtorig`, or the old path of a new extension);
  *   • staged    → never committed: every original goes back under its own name (one rename
@@ -206,7 +208,7 @@ export async function recoverFromJournal(
   j: WavesJournal,
   restoreDb: (backupDir: string) => Promise<void>,
 ): Promise<{ ok: boolean; report: RecoveryReport }> {
-  const rep: RecoveryReport = { restored: [], released: [], removed: [], dbRestored: false, kept: [], stale: false }
+  const rep: RecoveryReport = { restored: [], released: [], removed: [], dbRestored: false, kept: [], stale: false, unreadable: false }
   const tryDo = async (label: string, f: () => Promise<void>): Promise<boolean> => {
     try { await f(); return true } catch (err) {
       console.warn(`[ipod-waves] ${label} left as found:`, err instanceof Error ? err.message : err)
@@ -215,10 +217,16 @@ export async function recoverFromJournal(
     }
   }
   const db = await readFile(join(mount, 'iPod_Control', 'iTunes', 'iTunesDB')).catch(() => null)
-  const onCard = db ? md5Of(db) : null
+  // A song list that can't be read (missing, a mount hiccup) is "can't tell", never "changed
+  // elsewhere": nothing is touched and the journal is kept for a sync that can read it.
+  if (!db) {
+    rep.unreadable = true
+    return { ok: false, report: rep }
+  }
+  const onCard = md5Of(db)
   const inflight = j.inflight?.md5 ?? null
   if (onCard !== j.committed.md5) {
-    if (!onCard || onCard !== inflight) {
+    if (onCard !== inflight) {
       rep.stale = true
       return { ok: false, report: rep }
     }
