@@ -109,43 +109,6 @@ function manifestRows(m: Record<string, unknown>): Map<number, SwapManifestRow> 
 }
 
 /**
- * After a run that replaced songs in waves stopped part-way (Brief 265): the card is proven
- * file by file from the song list ON THE CARD, not from the last seal. Only a record that the
- * waves themselves wrote (`waves: true`) is used this way. A row counts when the card's
- * iTunesDB lists its path at the size its file has now; it is kept at that size (an original
- * not yet replaced, or its replacement). Rows that don't match are left out (copied again);
- * files no row explains are `strays` (the removal pass takes them off). The firmware's id order
- * must hold. Never a wipe: the waves pick up where they stopped.
- */
-export function proveCardFromCatalog(manifestRaw: unknown, card: CardState, listed: Map<string, number> | null): SwapProof & { strays?: number } {
-  if (!manifestRaw || typeof manifestRaw !== 'object' || (manifestRaw as Record<string, unknown>).waves !== true) {
-    return { ok: false, why: 'the record of the last sync is not one a replacement wrote' }
-  }
-  const m = manifestRaw as Record<string, unknown>
-  const rows = manifestRows(m)
-  if (!rows || !listed || card.catalogIdsAscend !== true) return { ok: false, why: 'the iPod’s own song list can’t be read' }
-  const proven = new Map<number, SwapManifestRow>()
-  for (const r of rows.values()) {
-    const want = listed.get(r.destPath)
-    const have = card.files.get(r.destPath)
-    if (want !== undefined && have === want && want > 0) proven.set(r.id, { ...r, size: want })
-  }
-  if (proven.size === 0) return { ok: false, why: 'nothing on the iPod matches its song list' }
-  const known = new Set([...proven.values()].map((r) => r.destPath))
-  let strays = 0
-  for (const p of card.files.keys()) if (!known.has(p) && !(p.split(':').pop() || '').startsWith('.')) strays++
-  const swapsSinceFull = Number(m.swapsSinceFull)
-  const bytesRemovedSinceFull = Number(m.bytesRemovedSinceFull)
-  return {
-    ok: true, rows: proven, strays,
-    history: {
-      swapsSinceFull: Number.isInteger(swapsSinceFull) && swapsSinceFull >= 0 ? swapsSinceFull : 0,
-      bytesRemovedSinceFull: Number.isFinite(bytesRemovedSinceFull) && bytesRemovedSinceFull >= 0 ? bytesRemovedSinceFull : 0,
-    },
-  }
-}
-
-/**
  * Can the card be trusted for a swap? Every "no" is one plain line the result
  * shows ("Full copy: <why>.").
  */

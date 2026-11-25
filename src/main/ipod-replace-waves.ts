@@ -21,7 +21,8 @@
  * Hidden names (a leading dot) are never listed by the firmware and never count against the
  * swap proof. Pure planning + small file helpers; node --test loads it.
  */
-import { readdir, rename, stat, unlink } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
 export const NEW_TAG = 'jtnew'
@@ -119,55 +120,144 @@ export function catalogSizesByPath(buf: Buffer): Map<string, number> | null {
   return out
 }
 
-export interface RecoveryReport { restored: string[]; released: string[]; staleNew: string[]; kept: string[] }
+/** The card path a catalog may list for this card file (case-insensitive, as FAT and HFS+ compare). */
+export function cardListsPath(listed: Map<string, number> | null, colon: string): boolean {
+  if (!listed) return false
+  const want = colon.toLowerCase()
+  for (const p of listed.keys()) if (p.toLowerCase() === want) return true
+  return false
+}
+
+// ── The waves journal ───────────────────────────────────────────────────────
+//
+// One file in the iPod's state folder, written ONLY by the waves (never by a catalog's manifest
+// write, so no later step can overwrite it). It says what the card holds after the last
+// VALIDATED catalog commit (`rows`, `committed`: that catalog's md5 and the Mac backup of it),
+// and the wave in progress (`open`). Written before the card is touched, then at every step:
+//   open.state 'staged'    → the wave's new copies may be on the card, not yet committed;
+//   open.state 'committed' → its catalog was written and proven; the originals may still be there.
+// It goes when the run seals. The next run settles an open wave from it (recoverFromJournal) and
+// proves the card from it (proveCardFromJournal): a commit is known by the journal, never guessed
+// from sizes.
+
+export const WAVES_JOURNAL_FILE = 'ipod-waves-journal.json'
+
+export interface JournalRow { id: number; destPath: string; identity: string; size: number; sourceSize: number }
+/** Colon paths (the mount can move between runs). */
+export interface JournalItem { id: number; dstColon: string; oldColon: string }
+
+export function absOnCard(mount: string, colon: string): string {
+  return join(mount, ...colon.replace(/^:/, '').split(':'))
+}
+export interface WavesJournal {
+  version: 1
+  rows: JournalRow[]
+  committed: { md5: string; bytes: number; backupDir: string | null }
+  history: { swapsSinceFull: number; bytesRemovedSinceFull: number }
+  open: { state: 'staged' | 'committed'; items: JournalItem[] } | null
+}
+
+export async function readWavesJournal(stateDir: string): Promise<WavesJournal | null> {
+  try {
+    const j = JSON.parse(await readFile(join(stateDir, WAVES_JOURNAL_FILE), 'utf-8')) as WavesJournal
+    if (j?.version !== 1 || !Array.isArray(j.rows) || typeof j.committed?.md5 !== 'string') return null
+    return j
+  } catch { return null }
+}
+
+/** Written by rename; a failure THROWS: the caller stops before the card changes further. */
+export async function writeWavesJournal(stateDir: string, j: WavesJournal): Promise<void> {
+  const path = join(stateDir, WAVES_JOURNAL_FILE)
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`
+  await writeFile(tmp, JSON.stringify(j), 'utf-8')
+  await rename(tmp, path)
+}
+
+export async function deleteWavesJournal(stateDir: string): Promise<void> {
+  await unlink(join(stateDir, WAVES_JOURNAL_FILE)).catch((err: NodeJS.ErrnoException) => {
+    if (err.code !== 'ENOENT') console.warn('[ipod-waves] the waves journal could not be removed:', err.message)
+  })
+}
+
+export function md5Of(buf: Buffer): string {
+  return createHash('md5').update(buf).digest('hex')
+}
+
+export interface RecoveryReport { restored: string[]; released: string[]; removed: string[]; dbRestored: boolean; kept: string[] }
 
 /**
- * Put right what a cut-off wave left on the card, by the catalog on the card:
- *   • `.X.jtorig` whose size the catalog has for X: the wave never committed: the original
- *     goes back as X (the uncommitted replacement goes);
- *   • `.X.jtorig` when the catalog has X's current size: the wave committed: the original goes;
- *   • `.X.jtnew`: never swapped in: it goes;
- *   • anything else (no catalog, sizes that match neither): left alone and reported.
- * `toColon(abs)` gives the catalog's colon path for a card file.
+ * Settle the wave a run left open, from the journal:
+ *   • committed → its originals go (the hidden `.jtorig`, or the old path of a new extension);
+ *   • staged    → never committed: if the catalog on the card isn't the last committed one (the
+ *                 run died while writing or proving the new one), the committed catalog comes
+ *                 back from its Mac backup first; then every original goes back under its own
+ *                 name (one rename over the new copy) and new-path copies go.
+ * Staged copies (`.jtnew`) of the wave go either way. Anything that can't be done is left as
+ * found and reported; nothing is deleted on a guess. Returns ok:false when the committed
+ * catalog had to come back and couldn't (the caller then can't trust the card).
  */
-export async function recoverInterruptedWaves(
-  musicRoot: string,
-  catalog: Map<string, number> | null,
-  toColon: (abs: string) => string,
-): Promise<RecoveryReport> {
-  const rep: RecoveryReport = { restored: [], released: [], staleNew: [], kept: [] }
-  const dirs = await readdir(musicRoot).catch(() => [] as string[])
-  for (const d of dirs) {
-    const names = await readdir(join(musicRoot, d)).catch(() => [] as string[])
-    for (const n of names) {
-      const abs = join(musicRoot, d, n)
-      const side = ownerOfSide(abs)
-      if (!side) continue
-      try {
-        if (side.tag === NEW_TAG) {
-          await unlink(abs)
-          rep.staleNew.push(abs)
-          continue
-        }
-        const orig = await stat(abs).catch(() => null)
-        const now = await stat(side.owner).catch(() => null)
-        const want = catalog?.get(toColon(side.owner))
-        if (!orig || want === undefined) { rep.kept.push(abs); continue }
-        if (want === orig.size && (!now || now.size !== orig.size)) {
-          // Never committed: the original goes straight back over the new copy (one rename).
-          await rename(abs, side.owner)
-          rep.restored.push(side.owner)
-        } else if (now && want === now.size) {
-          await unlink(abs)
-          rep.released.push(abs)
-        } else {
-          rep.kept.push(abs)
-        }
-      } catch (err) {
-        console.warn(`[ipod-waves] couldn't put right ${abs} (left as found):`, err instanceof Error ? err.message : err)
-        rep.kept.push(abs)
-      }
+export async function recoverFromJournal(
+  mount: string,
+  j: WavesJournal,
+  restoreDb: (backupDir: string) => Promise<void>,
+): Promise<{ ok: boolean; report: RecoveryReport }> {
+  const rep: RecoveryReport = { restored: [], released: [], removed: [], dbRestored: false, kept: [] }
+  const open = j.open
+  if (!open) return { ok: true, report: rep }
+  const tryDo = async (label: string, f: () => Promise<void>): Promise<boolean> => {
+    try { await f(); return true } catch (err) {
+      console.warn(`[ipod-waves] ${label} left as found:`, err instanceof Error ? err.message : err)
+      rep.kept.push(label)
+      return false
     }
   }
-  return rep
+  const items = open.items.map((it) => ({ dst: absOnCard(mount, it.dstColon), oldAbs: absOnCard(mount, it.oldColon) }))
+  for (const it of items) {
+    const staged = sideName(it.dst, NEW_TAG)
+    if (await stat(staged).catch(() => null)) await tryDo(staged, async () => { await unlink(staged); rep.removed.push(staged) })
+  }
+  if (open.state === 'committed') {
+    for (const it of items) {
+      const gone = it.dst === it.oldAbs ? sideName(it.oldAbs, ORIG_TAG) : it.oldAbs
+      if (await stat(gone).catch(() => null)) await tryDo(gone, async () => { await unlink(gone); rep.released.push(gone) })
+    }
+    return { ok: true, report: rep }
+  }
+  // Staged, never committed: the committed catalog first, then the originals.
+  const db = await readFile(join(mount, 'iPod_Control', 'iTunes', 'iTunesDB')).catch(() => null)
+  if (!db || md5Of(db) !== j.committed.md5) {
+    if (!j.committed.backupDir) return { ok: false, report: rep }
+    const ok = await tryDo('the committed song list', async () => { await restoreDb(j.committed.backupDir!) })
+    if (!ok) return { ok: false, report: rep }
+    rep.dbRestored = true
+  }
+  for (const it of items) {
+    if (it.dst === it.oldAbs) {
+      const orig = sideName(it.dst, ORIG_TAG)
+      if (await stat(orig).catch(() => null)) await tryDo(orig, async () => { await rename(orig, it.dst); rep.restored.push(it.dst) })
+    } else if (await stat(it.oldAbs).catch(() => null) && await stat(it.dst).catch(() => null)) {
+      await tryDo(it.dst, async () => { await unlink(it.dst); rep.removed.push(it.dst) })
+    }
+  }
+  return { ok: true, report: rep }
+}
+
+/**
+ * The card proven from the journal: the catalog on it must be the last committed one (same
+ * md5) and every journal row's file must be there at its size. Files no row names are strays
+ * (the removal pass takes them off). Hidden files never count.
+ */
+export function proveCardFromJournal(j: WavesJournal, card: { catalog: { md5: string; bytes: number } | null; catalogIdsAscend: boolean | null; files: Map<string, number> }):
+  { ok: true; rows: Map<number, JournalRow>; strays: number; history: WavesJournal['history'] } | { ok: false; why: string } {
+  if (!card.catalog || card.catalog.md5 !== j.committed.md5) return { ok: false, why: 'the song list on the iPod isn’t the one the replacement left' }
+  if (card.catalogIdsAscend !== true) return { ok: false, why: 'the song list on the iPod breaks the firmware’s id order' }
+  const rows = new Map<number, JournalRow>()
+  for (const r of j.rows) {
+    if (card.files.get(r.destPath) !== r.size) return { ok: false, why: 'a song the replacement left isn’t on the iPod at its size' }
+    rows.set(r.id, r)
+  }
+  const known = new Set(j.rows.map((r) => r.destPath))
+  let strays = 0
+  for (const p of card.files.keys()) if (!known.has(p) && !(p.split(':').pop() || '').startsWith('.')) strays++
+  return { ok: true, rows, strays, history: j.history }
 }

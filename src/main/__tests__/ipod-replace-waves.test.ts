@@ -11,7 +11,10 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { catalogSizesByPath, nextWave, noRoomForReplacement, onCardBytes, ownerOfSide, recoverInterruptedWaves, sideName, waveReserveBytes, WAVE_RESERVE_BYTES } from '../ipod-replace-waves.ts'
+import {
+  absOnCard, cardListsPath, catalogSizesByPath, nextWave, noRoomForReplacement, onCardBytes, ownerOfSide, proveCardFromJournal, recoverFromJournal,
+  sideName, waveReserveBytes, WAVE_RESERVE_BYTES, type WavesJournal,
+} from '../ipod-replace-waves.ts'
 import { runActivitySync, type ActivitySyncHost } from '../ipod-activity-engine.ts'
 import { parseCatalogPaths } from '../sync-engine/roundtrip.ts'
 import { LANDED_RECORD_FILE } from '../ipod-landed-record.ts'
@@ -70,6 +73,14 @@ describe('a format change on the real engine: replaced in place, in waves, never
   let failRemountAtWave = 0
   let wavesSeen = 0
   let remountsFailed = 0
+  /** The most hidden originals seen on the card at any catalog proof (a remount): > 0 proves they outlive the commit's write. */
+  let origsAtCommit = 0
+  const countOrigs = async (): Promise<number> => {
+    let n = 0
+    const music = join(card, 'iPod_Control', 'Music')
+    for (const f of await readdir(music)) for (const x of await readdir(join(music, f))) if (x.endsWith('.jtorig')) n++
+    return n
+  }
   const tracks: Array<Record<string, unknown>> = []
   let host: ActivitySyncHost
   const sync = () => runActivitySync(host, {
@@ -123,6 +134,7 @@ describe('a format change on the real engine: replaced in place, in waves, never
       stageTrack: async () => ({ ok: false, error: 'not in this test', reason: 'other' } as never),
       freeBytes: async () => 500 * 1024 ** 3,
       remountVolume: async (m: string) => {
+        origsAtCommit = Math.max(origsAtCommit, await countOrigs())
         if (failRemountAtWave > 0 && wavesSeen >= failRemountAtWave && remountsFailed === 0) { remountsFailed++; return { ok: false, error: 'the card went away (test)' } }
         return { ok: true, mountPoint: m }
       },
@@ -171,6 +183,7 @@ describe('a format change on the real engine: replaced in place, in waves, never
     assert.equal(paths.length, N)
     const sizes = catalogSizesByPath(db)!
     for (const p of paths) assert.equal(sizes.get(p), 300_000)
+    assert.ok(origsAtCommit > 0, 'each original was still on the card (hidden) while its wave\'s song list was being written and proven')
   })
 
   it('a remount fails right after a wave\'s song list is written: originals left hidden, nothing put back; the next sync settles them from the list on the card and finishes the waves (no wipe)', async () => {
@@ -181,6 +194,7 @@ describe('a format change on the real engine: replaced in place, in waves, never
     const stopped = await sync()
     assert.equal(stopped.ok, false, 'the run stops when the card can\'t be checked after a write')
     assert.equal(remountsFailed, 1)
+    assert.ok(await countOrigs() > 0, 'the stop deleted no hidden original: the next sync decides from the journal')
     failRemountAtWave = 0
     events.length = 0
     const res = await sync()
@@ -219,41 +233,96 @@ describe('a format change on the real engine: replaced in place, in waves, never
   })
 })
 
-describe('a wave cut off part-way is put right by the next sync, from the catalog on the card', () => {
-  it('not committed: the original goes back; committed: the original goes; an unfinished copy goes', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'b265-recover-'))
+describe('the waves journal: a commit is known from it, never from sizes', () => {
+  const mk = async () => {
+    const root = await mkdtemp(join(tmpdir(), 'b265-journal-'))
     const music = join(root, 'iPod_Control', 'Music', 'F01')
     await mkdir(music, { recursive: true })
-    // A: swapped, catalog still the old one (old size 500) -> restore the original.
-    await writeFile(join(music, 'A.m4a'), Buffer.alloc(300))
-    await writeFile(join(music, '.A.m4a.jtorig'), Buffer.alloc(500))
-    // B: swapped and the catalog committed (new size 300) -> release the original.
-    await writeFile(join(music, 'B.m4a'), Buffer.alloc(300))
-    await writeFile(join(music, '.B.m4a.jtorig'), Buffer.alloc(500))
-    // C: staged, never swapped -> the staged copy goes, the original stays.
-    await writeFile(join(music, 'C.m4a'), Buffer.alloc(500))
-    await writeFile(join(music, '.C.m4a.jtnew'), Buffer.alloc(300))
-    const catalog = new Map([[':iPod_Control:Music:F01:A.m4a', 500], [':iPod_Control:Music:F01:B.m4a', 300], [':iPod_Control:Music:F01:C.m4a', 500]])
-    const rep = await recoverInterruptedWaves(join(root, 'iPod_Control', 'Music'), catalog, (abs) => ':' + abs.slice(root.length + 1).split('/').join(':'))
-    assert.equal(rep.restored.length, 1)
-    assert.equal(rep.released.length, 1)
-    assert.equal(rep.staleNew.length, 1)
-    const left = (await readdir(music)).sort()
-    assert.deepEqual(left, ['A.m4a', 'B.m4a', 'C.m4a'])
-    assert.equal((await stat(join(music, 'A.m4a'))).size, 500, 'A is its original again: the catalog describes it')
-    assert.equal((await stat(join(music, 'B.m4a'))).size, 300)
-    assert.equal((await stat(join(music, 'C.m4a'))).size, 500)
-    // Zero catalog entries point at a missing file.
-    for (const [p] of catalog) await stat(join(root, p.slice(1).split(':').join('/')))
+    await mkdir(join(root, 'iPod_Control', 'iTunes'), { recursive: true })
+    await writeFile(join(root, 'iPod_Control', 'iTunes', 'iTunesDB'), Buffer.from('COMMITTED'))
+    return { root, music }
+  }
+  const md5 = (b: Buffer | string) => createHash('md5').update(b).digest('hex')
+  const journal = (state: 'staged' | 'committed', items = [{ id: 1, dstColon: ':iPod_Control:Music:F01:A.m4a', oldColon: ':iPod_Control:Music:F01:A.m4a' }]): WavesJournal => ({
+    version: 1, rows: [], committed: { md5: md5('COMMITTED'), bytes: 9, backupDir: '/backup' }, history: { swapsSinceFull: 0, bytesRemovedSinceFull: 0 }, open: { state, items },
   })
-  it('no catalog to go by: nothing is touched', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'b265-recover-'))
-    const music = join(root, 'iPod_Control', 'Music', 'F01')
-    await mkdir(music, { recursive: true })
-    await writeFile(join(music, 'A.m4a'), Buffer.alloc(300))
-    await writeFile(join(music, '.A.m4a.jtorig'), Buffer.alloc(500))
-    const rep = await recoverInterruptedWaves(join(root, 'iPod_Control', 'Music'), null, (abs) => abs)
-    assert.deepEqual(rep.kept.length, 1)
+  it('committed: the original goes, even when the new copy is the same size (a size never decides)', async () => {
+    const { root, music } = await mk()
+    await writeFile(join(music, 'A.m4a'), Buffer.alloc(300, 1))
+    await writeFile(join(music, '.A.m4a.jtorig'), Buffer.alloc(300, 2))
+    const r = await recoverFromJournal(root, journal('committed'), async () => { throw new Error('not needed') })
+    assert.equal(r.ok, true)
+    assert.deepEqual((await readdir(music)).sort(), ['A.m4a'])
+    assert.equal((await readFile(join(music, 'A.m4a')))[0], 1)
+  })
+  it('staged, song list untouched: the original goes back over the new copy (same size too)', async () => {
+    const { root, music } = await mk()
+    await writeFile(join(music, 'A.m4a'), Buffer.alloc(300, 1))
+    await writeFile(join(music, '.A.m4a.jtorig'), Buffer.alloc(300, 2))
+    await writeFile(join(music, '.A.m4a.jtnew'), Buffer.alloc(10))
+    let restored = 0
+    const r = await recoverFromJournal(root, journal('staged'), async () => { restored++ })
+    assert.equal(r.ok, true)
+    assert.equal(restored, 0, 'the song list on the card is the committed one')
+    assert.deepEqual((await readdir(music)).sort(), ['A.m4a'])
+    assert.equal((await readFile(join(music, 'A.m4a')))[0], 2, 'the original')
+  })
+  it('staged, a newer unproven song list on the card: the committed one comes back from its Mac backup, then the originals', async () => {
+    const { root, music } = await mk()
+    await writeFile(join(root, 'iPod_Control', 'iTunes', 'iTunesDB'), Buffer.from('REJECTED-BY-THE-RUN'))
+    await writeFile(join(music, 'A.m4a'), Buffer.alloc(400, 1))
+    await writeFile(join(music, '.A.m4a.jtorig'), Buffer.alloc(300, 2))
+    let from = ''
+    const r = await recoverFromJournal(root, journal('staged'), async (dir) => { from = dir; await writeFile(join(root, 'iPod_Control', 'iTunes', 'iTunesDB'), Buffer.from('COMMITTED')) })
+    assert.equal(r.ok, true)
+    assert.equal(from, '/backup')
+    assert.equal(r.report.dbRestored, true)
+    assert.equal((await stat(join(music, 'A.m4a'))).size, 300)
+  })
+  it('staged with no backup to restore: not ok, nothing touched', async () => {
+    const { root, music } = await mk()
+    await writeFile(join(root, 'iPod_Control', 'iTunes', 'iTunesDB'), Buffer.from('OTHER'))
+    await writeFile(join(music, 'A.m4a'), Buffer.alloc(400))
+    await writeFile(join(music, '.A.m4a.jtorig'), Buffer.alloc(300))
+    const j = journal('staged'); j.committed.backupDir = null
+    const r = await recoverFromJournal(root, j, async () => {})
+    assert.equal(r.ok, false)
     assert.deepEqual((await readdir(music)).sort(), ['.A.m4a.jtorig', 'A.m4a'])
+  })
+  it('a new extension, staged: the new-path copy goes, the original stays at its path', async () => {
+    const { root, music } = await mk()
+    await writeFile(join(music, 'A.m4a'), Buffer.alloc(300))
+    await writeFile(join(music, 'A.mp3'), Buffer.alloc(200))
+    await recoverFromJournal(root, journal('staged', [{ id: 1, dstColon: ':iPod_Control:Music:F01:A.mp3', oldColon: ':iPod_Control:Music:F01:A.m4a' }]), async () => {})
+    assert.deepEqual((await readdir(music)).sort(), ['A.m4a'])
+  })
+  it('proven from the journal only when the song list is the committed one and every row is there', () => {
+    const j = journal('committed'); j.open = null
+    j.rows = [{ id: 1, destPath: ':iPod_Control:Music:F01:A.m4a', identity: 'fp:x', size: 300, sourceSize: 900 }]
+    const files = new Map([[':iPod_Control:Music:F01:A.m4a', 300], [':iPod_Control:Music:F01:B.m4a', 10], [':iPod_Control:Music:F01:.C.m4a.jtorig', 5]])
+    const ok = proveCardFromJournal(j, { catalog: { md5: md5('COMMITTED'), bytes: 9 }, catalogIdsAscend: true, files })
+    assert.equal(ok.ok, true)
+    if (ok.ok) assert.equal(ok.strays, 1, 'B is a stray; a hidden file never counts')
+    assert.equal(proveCardFromJournal(j, { catalog: { md5: 'other', bytes: 9 }, catalogIdsAscend: true, files }).ok, false)
+    assert.equal(proveCardFromJournal(j, { catalog: { md5: md5('COMMITTED'), bytes: 9 }, catalogIdsAscend: true, files: new Map([[':iPod_Control:Music:F01:A.m4a', 299]]) }).ok, false)
+    assert.equal(absOnCard('/Volumes/X', ':iPod_Control:Music:F01:A.m4a'), '/Volumes/X/iPod_Control/Music/F01/A.m4a')
+  })
+})
+
+describe('the full-library sync never overwrites a song the card lists', () => {
+  it('any size, any letter case', () => {
+    const listed = new Map([[':iPod_Control:Music:F27:ABCD.m4a', 123]])
+    assert.equal(cardListsPath(listed, ':iPod_Control:Music:F27:ABCD.m4a'), true)
+    assert.equal(cardListsPath(listed, ':ipod_control:music:f27:abcd.M4A'), true)
+    assert.equal(cardListsPath(listed, ':iPod_Control:Music:F27:OTHER.m4a'), false)
+    assert.equal(cardListsPath(null, ':iPod_Control:Music:F27:ABCD.m4a'), false)
+  })
+  it('the guard runs before the copy, on the card\'s own song list', async () => {
+    const src = await readFile(new URL('../sync-engine/index.ts', import.meta.url), 'utf-8')
+    const guard = src.indexOf('if (there && cardListsPath(listedOnCard,')
+    const copy = src.indexOf('await copyFile(srcToCopy, dstToCopy)', guard)
+    assert.ok(guard > 0 && copy > guard, 'the guard is right before the in-place copy')
+    assert.match(src.slice(guard, copy), /notReplaced\.push\([\s\S]*continue/)
+    assert.match(src, /const listedOnCard = catalogSizesByPath\(await readFile\(join\(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB'\)\)/)
   })
 })
