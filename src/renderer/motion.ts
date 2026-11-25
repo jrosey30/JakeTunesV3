@@ -32,6 +32,20 @@ export const MOTION_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)'
 /** The step between items that arrive one after another. */
 export const MOTION_STAGGER_MS = 30
 
+/**
+ * Timed displays: how long something stays on screen to be read (shown, held,
+ * gone). Not a move, so not one of the three speeds. Under Reduce Motion each
+ * is shown still for its whole time instead of fading (motion.css).
+ */
+export const TIMED_DISPLAYS_MS = {
+  /** the GOING stamp on a concert card (HomeShows.tsx removes it at the same time) */
+  stamp: 1300,
+  /** the booth's hit verdict (PERFECT / GREAT …) */
+  verdict: 420,
+  /** the visualiser's keyboard hint */
+  hint: 4500,
+} as const
+
 /** Periods for the loops that mean something. A loop is not a speed. */
 export const MOTION_PERIOD_MS = {
   /** a spinner: something is loading */
@@ -52,7 +66,7 @@ export const MEANINGFUL_LOOPS: Readonly<Record<string, string>> = {
   'iq-spin': 'import queue: a file is importing',
   'cd-spin': 'CD import: the disc is being read',
   'mm-refresh-spin': 'Music Man suggestions: refreshing',
-  'ltl-spin': 'Listen to the List: a download is running',
+  'ltl-spin': 'the Listening List: a download is running',
   'dl-spin': 'Record Shop: a download is running',
   'dj-ring-spin': 'DJ: the set is being built',
   'dl-pulse': 'a song row: its download is starting',

@@ -40,7 +40,8 @@
   font-size: 12px;
   letter-spacing: 0.02em;
   color: rgba(255, 255, 255, 0.42);
-  animation: viz-hint-fade var(--motion-slow) var(--motion-ease) calc(var(--motion-slow) * 5) both;
+  /* A timed display: shown, held, then faded (its length is listed in motion.css). */
+  animation: viz-hint-fade var(--motion-display-hint) var(--motion-ease) both;
 }
 @keyframes viz-fade-in { from { opacity: 0 } to { opacity: 1 } }
-@keyframes viz-hint-fade { from { opacity: 0.45 } to { opacity: 0 } }
+@keyframes viz-hint-fade { 0%, 65% { opacity: 0.45 } 100% { opacity: 0 } }

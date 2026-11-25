@@ -336,7 +336,7 @@
 .booth-verdict-miss { color: var(--booth-kill); }
 
 @media (prefers-reduced-motion: no-preference) {
-  .booth-verdict { animation: booth-pop var(--motion-normal) var(--motion-ease); }
+  .booth-verdict { animation: booth-pop var(--motion-display-verdict) var(--motion-ease); }
 }
 @keyframes booth-pop {
   from { opacity: 0; transform: translate(-50%, -50%) scale(0.7); }

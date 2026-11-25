@@ -23,6 +23,11 @@
   --motion-spin: 800ms;
   --motion-blink: 1000ms;
   --motion-pulse: 1200ms;
+  /* Timed displays: not moves but how long something stays on screen to be
+     read (shown, held, gone). Listed in motion.ts TIMED_DISPLAYS. */
+  --motion-display-stamp: 1300ms;
+  --motion-display-verdict: 420ms;
+  --motion-display-hint: 4500ms;
 
   /* Cover Flow stays as it is: its own soft overshoot, at the slow speed. */
   --ease-carousel: cubic-bezier(0.3, 1.04, 0.22, 1);
@@ -78,6 +83,28 @@
   transition-duration: 0.01ms !important;
   transition-delay: 0ms !important;
   scroll-behavior: auto !important;
+}
+
+/* Reduce Motion and timed displays: the global rule above would end a
+   show-hold-hide at once on its last frame (gone). Instead each is shown,
+   still, for its whole time, then hidden. */
+@keyframes jt-display-hold {
+  0%, 99.99% { visibility: visible; }
+  100% { visibility: hidden; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) .home-concert-stamp {
+    animation: jt-display-hold var(--motion-display-stamp) linear both !important;
+  }
+  :root:not([data-motion='full']) .visualizer-hint {
+    animation: jt-display-hold var(--motion-display-hint) linear both !important;
+  }
+}
+:root[data-motion='reduce'] .home-concert-stamp {
+  animation: jt-display-hold var(--motion-display-stamp) linear both !important;
+}
+:root[data-motion='reduce'] .visualizer-hint {
+  animation: jt-display-hold var(--motion-display-hint) linear both !important;
 }
 
 /* Covers (AlbumArtImage): until the picture arrives, hold a square box so it

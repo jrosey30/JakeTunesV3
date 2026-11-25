@@ -1209,10 +1209,10 @@
 .home-card-row > *:nth-child(6)  { animation-delay: calc(var(--motion-stagger) * 5); }
 .home-card-row > *:nth-child(7)  { animation-delay: calc(var(--motion-stagger) * 6); }
 .home-card-row > *:nth-child(8)  { animation-delay: calc(var(--motion-stagger) * 7); }
-.home-card-row > *:nth-child(9)  { animation-delay: calc(var(--motion-stagger) * 7); }
-.home-card-row > *:nth-child(10) { animation-delay: calc(var(--motion-stagger) * 8); }
-.home-card-row > *:nth-child(11) { animation-delay: calc(var(--motion-stagger) * 9); }
-.home-card-row > *:nth-child(12) { animation-delay: calc(var(--motion-stagger) * 10); }
+.home-card-row > *:nth-child(9)  { animation-delay: calc(var(--motion-stagger) * 8); }
+.home-card-row > *:nth-child(10) { animation-delay: calc(var(--motion-stagger) * 9); }
+.home-card-row > *:nth-child(11) { animation-delay: calc(var(--motion-stagger) * 10); }
+.home-card-row > *:nth-child(12) { animation-delay: calc(var(--motion-stagger) * 11); }
 
 /* 4.5 polish: stagger the home SECTIONS so their entrance cascades instead of
    ~8 firing simultaneously (8 concurrent subtree layer-rasterizations janked
@@ -1982,7 +1982,9 @@
   font-weight: 900;
   letter-spacing: 0.14em;
   pointer-events: none;
-  animation: home-concert-stamp var(--motion-normal) var(--motion-ease) both;
+  /* A timed display, not a move: it slams in, holds, and goes (HomeShows.tsx
+     removes it at the same 1.3 s). Its length is listed in motion.css. */
+  animation: home-concert-stamp var(--motion-display-stamp) var(--motion-ease) both;
 }
 @keyframes home-concert-stamp {
   0% { transform: translate(-50%, -50%) rotate(-11deg) scale(1.9); opacity: 0; }
@@ -2008,6 +2010,6 @@
   .home-concert-eq i { animation: none; }
   .home-concert-eq i:nth-child(1) { transform: scaleY(0.5); }
   .home-concert-eq i:nth-child(3) { transform: scaleY(0.7); }
-  .home-concert-stamp { animation: home-concert-stamp-fade var(--motion-normal) var(--motion-ease) both; transform: translate(-50%, -50%) rotate(-11deg); }
-  @keyframes home-concert-stamp-fade { 0%, 100% { opacity: 0; } 15%, 80% { opacity: 1; } }
+  /* Reduce Motion: the stamp is simply shown for its 1.3 s (motion.css, timed displays). */
+  .home-concert-stamp { transform: translate(-50%, -50%) rotate(-11deg); }
 }

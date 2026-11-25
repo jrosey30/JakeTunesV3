@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import {
-  MOTION_MS, MOTION_EASE, MOTION_PERIOD_MS, MOTION_STAGGER_MS,
+  MOTION_MS, MOTION_EASE, MOTION_PERIOD_MS, MOTION_STAGGER_MS, TIMED_DISPLAYS_MS,
   MEANINGFUL_LOOPS, MEANINGFUL_SCRIPT_LOOPS, MOTION_EXEMPT_FILES, MOTION_EXEMPT_SELECTOR, MOTION_CUT,
 } from '../../renderer/motion.ts'
 
@@ -205,6 +205,7 @@ describe('V7 motion — the app', () => {
     assert.equal(vars.get('--motion-spin'), `${MOTION_PERIOD_MS.spin}ms`)
     assert.equal(vars.get('--motion-blink'), `${MOTION_PERIOD_MS.blink}ms`)
     assert.equal(vars.get('--motion-pulse'), `${MOTION_PERIOD_MS.pulse}ms`)
+    for (const [k, ms] of Object.entries(TIMED_DISPLAYS_MS)) assert.equal(vars.get(`--motion-display-${k}`), `${ms}ms`)
     // a fifth of a second for pages and dialogs; three speeds in order
     assert.ok(MOTION_MS.instant < MOTION_MS.normal && MOTION_MS.normal < MOTION_MS.slow)
     assert.ok(Math.abs(MOTION_MS.normal - 200) <= 20)
@@ -253,5 +254,39 @@ describe('V7 motion — the app', () => {
     const css = walk(RENDERER, ['.css']).map((f) => readFileSync(f, 'utf-8')).join('\n')
     const back = Object.keys(MOTION_CUT).filter((k) => new RegExp(`(@keyframes\\s+|animation(-name)?\\s*:[^;]*\\b)${k}\\b`).test(css))
     assert.deepEqual(back, [], `cut in V7 and back again: ${back.map((k) => `${k} (${MOTION_CUT[k]})`).join(', ')}`)
+  })
+
+  test('timed displays keep their time, and under Reduce Motion are shown, not faded to nothing', () => {
+    const shows = readFileSync(join(RENDERER, 'components/HomeShows.tsx'), 'utf-8')
+    assert.match(shows, new RegExp(`setStamped\\(0\\), ${TIMED_DISPLAYS_MS.stamp}\\)`), 'the GOING stamp is removed when its display ends')
+    const home = readFileSync(join(RENDERER, 'styles/home.css'), 'utf-8')
+    assert.match(home, /animation: home-concert-stamp var\(--motion-display-stamp\)/)
+    const viz = readFileSync(join(RENDERER, 'styles/visualizer.css'), 'utf-8')
+    assert.match(viz, /animation: viz-hint-fade var\(--motion-display-hint\)/)
+    const motion = blankComments(readFileSync(join(RENDERER, 'styles/motion.css'), 'utf-8'))
+    for (const gate of ["@media (prefers-reduced-motion: reduce) {\n  :root:not([data-motion='full']) .home-concert-stamp", ":root[data-motion='reduce'] .home-concert-stamp"]) {
+      assert.ok(motion.includes(gate), `Reduce Motion holds the stamp: ${gate}`)
+    }
+    assert.match(motion, /:root\[data-motion='reduce'\] \.visualizer-hint \{\s*animation: jt-display-hold var\(--motion-display-hint\) linear both !important;/)
+    assert.match(motion, /@keyframes jt-display-hold \{\s*0%, 99\.99% \{ visibility: visible; \}\s*100% \{ visibility: hidden; \}/)
+  })
+
+  test('a stagger never repeats a step (each card waits one step more than the one before)', () => {
+    for (const f of walk(RENDERER, ['.css'])) {
+      const css = blankComments(readFileSync(f, 'utf-8'))
+      const rows = new Map<string, Array<[number, number]>>()
+      for (const m of css.matchAll(/([.\w-]+(?: > \*)?):nth-(?:child|of-type)\((\d+)\)\s*\{\s*animation-delay:\s*calc\(var\(--motion-stagger\) \* (\d+)\)/g)) {
+        if (!m[1].startsWith('.')) continue // an element's loop phases (an equalizer's bars) aren't a stagger
+        const list = rows.get(m[1]) ?? []
+        list.push([Number(m[2]), Number(m[3])])
+        rows.set(m[1], list)
+      }
+      for (const [sel, list] of rows) {
+        list.sort((a, b) => a[0] - b[0])
+        for (let i = 1; i < list.length; i++) {
+          assert.ok(list[i][1] > list[i - 1][1], `${rel(f)} ${sel}: child ${list[i][0]} waits ${list[i][1]} steps, no more than child ${list[i - 1][0]}`)
+        }
+      }
+    }
   })
 })
