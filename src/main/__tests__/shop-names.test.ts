@@ -90,7 +90,9 @@ describe('no screen says a retired name', () => {
     const hits: string[] = []
     for (const p of files) {
       const lines = withoutComments(readFileSync(p, 'utf-8')).split('\n')
-      lines.forEach((line, i) => { for (const name of retiredNamesIn(line)) hits.push(`${relative(SRC, p)}:${i + 1} says “${name}”`) })
+      // goAnywhere's `also:` is what people may type to find a page (an old
+      // name included), never words a screen shows; the match is any case now.
+      lines.forEach((line, i) => { for (const name of retiredNamesIn(line.replace(/\balso: '[^']*'/g, ''))) hits.push(`${relative(SRC, p)}:${i + 1} says “${name}”`) })
     }
     assert.deepEqual(hits, [], `retired names (common/shop-names.ts): ${RETIRED_SHOP_NAMES.join(', ')}`)
   })
