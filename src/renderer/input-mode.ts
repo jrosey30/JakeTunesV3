@@ -2,8 +2,9 @@
  * The transport-key claim, kept for the pages that use it (the Supreme Court
  * room, the Listen List's Inbox, the Top 1000 blind check). Since V7 it is a
  * thin name over the keyboard host's general claim (keyboard.ts claimKeys):
- * while a page holds a claim, the app's global shortcuts leave those key codes
- * alone, with any modifiers, and the page's own key layer handles them.
+ * while a page holds a claim, the app's global shortcuts leave those keys
+ * alone when pressed plain (⌘→ still skips), and the page's own key layer
+ * handles them.
  *
  * Deliberately a CLAIM, not focus: a game's canvas often doesn't hold DOM
  * focus, and "Space toggles the music unless the canvas happens to be

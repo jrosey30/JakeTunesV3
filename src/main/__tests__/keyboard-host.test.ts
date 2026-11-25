@@ -6,7 +6,7 @@ import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   addKeyLayer, addEscape, addUndo, claimKeys, isClaimed, escapeStack, offerToLayers, routeGlobal, applyRoute, modalOpen,
-  resetKeyboardForTests,
+  resetKeyboardForTests, installKeyboard,
 } from '../../renderer/keyboard.ts'
 
 interface FakeEvent {
@@ -129,11 +129,11 @@ describe('the keyboard host', () => {
     assert.deepEqual(undone, ['toss', 'playlist'])
   })
 
-  it('claims: a key any live claim names is withheld from the app, with any modifiers', () => {
+  it('claims: a key any live claim names is withheld from the app when pressed plain', () => {
     const a = claimKeys('listen-list', ['Space', 'ArrowUp', 'ArrowDown'])
     const b = claimKeys('scotus', ['Space', 'ArrowLeft', 'ArrowRight'])
     assert.equal(press(SPACE()), 'native')
-    assert.equal(press(ev('ArrowLeft', 'ArrowLeft', { metaKey: true })), 'native')
+    assert.equal(press(ev('ArrowLeft', 'ArrowLeft', { metaKey: true })), 'shortcut:previous', 'a claim holds the plain key only')
     assert.equal(isClaimed('ArrowUp'), true, 'an older claim still holds its own keys under a newer one')
     b()
     assert.equal(isClaimed('ArrowLeft'), false)
@@ -168,5 +168,42 @@ describe('the keyboard host', () => {
     addKeyLayer('track-list', () => { seen.push('list') })
     assert.equal(press(ev('1', 'Digit1')), 'layer')
     assert.deepEqual(seen, ['list', 'quiz'])
+  })
+})
+
+describe('installKeyboard: the two listeners together', () => {
+  beforeEach(() => resetKeyboardForTests())
+
+  // A window stand-in: node's EventTarget, listeners in the order added
+  // (early before late, as on a real window at target).
+  function withWindow(run: (fire: (k: string, code: string) => Event) => void): string[] {
+    const fired: string[] = []
+    const g = globalThis as unknown as { window?: EventTarget }
+    const before = g.window
+    g.window = new EventTarget()
+    const off = installKeyboard({ shortcut: (id) => fired.push(id), clearSearch: () => fired.push('clear-search') })
+    try {
+      run((k, code) => {
+        const e = new Event('keydown', { cancelable: true })
+        Object.assign(e, { key: k, code, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, isComposing: false })
+        Object.defineProperty(e, 'target', { value: { tagName: 'DIV' } })
+        g.window!.dispatchEvent(e)
+        return e
+      })
+    } finally { off(); g.window = before }
+    return fired
+  }
+
+  it('a layer that takes a key by returning true keeps it from the app (no preventDefault needed)', () => {
+    let took = 0
+    addKeyLayer('scotus', (e) => { if (e.key === ' ') { took++; return true } })
+    const fired = withWindow((fire) => { fire(' ', 'Space') })
+    assert.equal(took, 1)
+    assert.deepEqual(fired, [], 'Space must not also toggle the music')
+  })
+
+  it('with no layer, Space reaches play/pause once', () => {
+    const fired = withWindow((fire) => { fire(' ', 'Space') })
+    assert.deepEqual(fired, ['play-pause'])
   })
 })

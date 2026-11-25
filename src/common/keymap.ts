@@ -9,12 +9,18 @@
  *
  *   • Each shortcut has exactly ONE wiring (`wiring` below):
  *       menu    a registered menu accelerator. The menu sends a menu-action
- *               and the renderer never looks at the key itself. Used for keys
- *               that mean the same thing everywhere, even in a text field.
+ *               and the renderer never looks at the key itself. Only for keys
+ *               that are safe in a text field: on macOS a menu accelerator
+ *               fires even while typing.
  *       keymap  the renderer's keyboard host (renderer/keyboard.ts) handles
- *               it. The menu still SHOWS it, with registerAccelerator: false,
- *               so one press is one action. Used for keys that depend on
- *               focus: Space, ⌘←/⌘→, ⌘↑/⌘↓, Escape, ⌘Z outside a field…
+ *               it, and the menu never carries it as an accelerator (on macOS
+ *               Electron registers a menu accelerator even with
+ *               registerAccelerator: false, so a menu "Space" would toggle
+ *               the music while typing a space). Used for keys that depend
+ *               on focus: Space, ⌘←/⌘→, ⌘↑/⌘↓, ⌘[ ⌘], Escape, ⌘Z outside a
+ *               field. A keymap shortcut may name one `menuAccelerator`, a
+ *               key that is safe anywhere (F7/F8/F9): that one is the
+ *               menu's, and the host leaves it alone.
  *       role    a native menu role (copy, paste, hide, minimize…).
  *       page    a key a page or list owns while it's on screen (↑/↓ on a song
  *               list). Listed so the Keyboard Shortcuts sheet can show it;
@@ -48,6 +54,8 @@ export interface Shortcut {
   role?: string
   /** keymap wiring: also fires while a text field has focus. */
   whileTyping?: boolean
+  /** keymap wiring: the one key (of `keys`) the menu registers instead, because it is safe in a text field. */
+  menuAccelerator?: string
   /** Shown in the sheet under the label. */
   note?: string
   /** Kept out of the sheet (developer keys). */
@@ -56,9 +64,9 @@ export interface Shortcut {
 
 export const SHORTCUTS: readonly Shortcut[] = [
   // ── Playback ──
-  { id: 'play-pause', label: 'Play / Pause', section: 'Playback', keys: ['Space', 'F8'], wiring: 'keymap', note: 'Not while typing, or on a page that uses Space itself' },
-  { id: 'previous', label: 'Previous Song', section: 'Playback', keys: ['CmdOrCtrl+Left', 'F7'], wiring: 'keymap' },
-  { id: 'next', label: 'Next Song', section: 'Playback', keys: ['CmdOrCtrl+Right', 'F9'], wiring: 'keymap' },
+  { id: 'play-pause', label: 'Play / Pause', section: 'Playback', keys: ['Space', 'F8'], menuAccelerator: 'F8', wiring: 'keymap', note: 'Not while typing, or on a page that uses Space itself' },
+  { id: 'previous', label: 'Previous Song', section: 'Playback', keys: ['CmdOrCtrl+Left', 'F7'], menuAccelerator: 'F7', wiring: 'keymap' },
+  { id: 'next', label: 'Next Song', section: 'Playback', keys: ['CmdOrCtrl+Right', 'F9'], menuAccelerator: 'F9', wiring: 'keymap' },
   { id: 'volume-up', label: 'Volume Up', section: 'Playback', keys: ['CmdOrCtrl+Up'], wiring: 'keymap', note: '5% a press' },
   { id: 'volume-down', label: 'Volume Down', section: 'Playback', keys: ['CmdOrCtrl+Down'], wiring: 'keymap', note: '5% a press' },
   { id: 'show-now-playing', label: 'Go to Current Song', section: 'Playback', keys: ['CmdOrCtrl+L'], wiring: 'menu', action: 'show-now-playing' },
@@ -68,15 +76,15 @@ export const SHORTCUTS: readonly Shortcut[] = [
 
   // ── Go ──
   { id: 'go-anywhere', label: 'Go Anywhere…', section: 'Go', keys: ['CmdOrCtrl+K'], wiring: 'menu', action: 'go-anywhere', note: 'Return opens it, ⌘Return plays it' },
-  { id: 'back', label: 'Back', section: 'Go', keys: ['CmdOrCtrl+['], wiring: 'menu', action: 'history-back' },
-  { id: 'forward', label: 'Forward', section: 'Go', keys: ['CmdOrCtrl+]'], wiring: 'menu', action: 'history-forward' },
+  { id: 'back', label: 'Back', section: 'Go', keys: ['CmdOrCtrl+['], wiring: 'keymap' },
+  { id: 'forward', label: 'Forward', section: 'Go', keys: ['CmdOrCtrl+]'], wiring: 'keymap' },
   { id: 'go-home', label: 'Home', section: 'Go', keys: ['CmdOrCtrl+1'], wiring: 'menu', action: 'view-home' },
   { id: 'go-songs', label: 'Songs', section: 'Go', keys: ['CmdOrCtrl+2'], wiring: 'menu', action: 'view-songs' },
   { id: 'go-albums', label: 'Albums', section: 'Go', keys: ['CmdOrCtrl+3'], wiring: 'menu', action: 'view-albums' },
   { id: 'go-artists', label: 'Artists', section: 'Go', keys: ['CmdOrCtrl+4'], wiring: 'menu', action: 'view-artists' },
-  { id: 'go-concerts', label: 'Live Concerts', section: 'Go', keys: ['CmdOrCtrl+5'], wiring: 'menu', action: 'view-concerts' },
+  { id: 'go-concerts', label: 'Live Albums', section: 'Go', keys: ['CmdOrCtrl+5'], wiring: 'menu', action: 'view-concerts' },
   { id: 'go-record-shop', label: 'Record Shop', section: 'Go', keys: ['CmdOrCtrl+6'], wiring: 'menu', action: 'view-record-shop' },
-  { id: 'find', label: 'Find', section: 'Go', keys: ['CmdOrCtrl+F'], wiring: 'keymap', whileTyping: true, note: 'The page’s own find bar, or Search' },
+  { id: 'find', label: 'Find', section: 'Go', keys: ['CmdOrCtrl+F'], wiring: 'menu', action: 'find', note: 'The page’s own find bar, or Search' },
   { id: 'search', label: 'Search', section: 'Go', keys: ['/'], wiring: 'keymap' },
 
   // ── Panels ──
@@ -84,7 +92,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: 'music-man', label: 'The Music Man', section: 'Panels', keys: ['Shift+CmdOrCtrl+M'], wiring: 'menu', action: 'toggle-music-man' },
   { id: 'lyrics', label: 'Lyrics', section: 'Panels', keys: ['Shift+CmdOrCtrl+L'], wiring: 'menu', action: 'toggle-lyrics' },
   { id: 'downloads', label: 'Downloads', section: 'Panels', keys: ['Alt+CmdOrCtrl+L'], wiring: 'menu', action: 'toggle-downloads' },
-  { id: 'visualizer', label: 'Visualizer', section: 'Panels', keys: ['CmdOrCtrl+T'], wiring: 'keymap' },
+  { id: 'visualizer', label: 'Visualizer', section: 'Panels', keys: ['CmdOrCtrl+T'], wiring: 'menu', action: 'toggle-visualizer' },
   { id: 'close-top', label: 'Close', section: 'Panels', keys: ['Escape'], wiring: 'keymap', whileTyping: true, note: 'The top-most panel, sheet or dialog. In a text field it lets go of the field first' },
   { id: 'keyboard-shortcuts', label: 'Keyboard Shortcuts', section: 'Panels', keys: ['CmdOrCtrl+/'], wiring: 'menu', action: 'keyboard-shortcuts' },
   { id: 'preferences', label: 'Preferences…', section: 'Panels', keys: ['CmdOrCtrl+,'], wiring: 'menu', action: 'open-preferences' },
@@ -209,7 +217,8 @@ export function eventMatches(e: KeyEventLike, accel: string): boolean {
 export function keymapShortcutFor(e: KeyEventLike): Shortcut | null {
   for (const s of SHORTCUTS) {
     if (s.wiring !== 'keymap' && s.id !== 'undo') continue
-    if (s.keys.some((k) => eventMatches(e, k))) return s
+    // The menu's own key (F8 …) fires from the menu; answering it here too would be twice.
+    if (s.keys.some((k) => k !== s.menuAccelerator && eventMatches(e, k))) return s
   }
   return null
 }
@@ -226,7 +235,7 @@ export type FocusState = 'none' | 'field' | 'field-in-overlay'
 
 export interface RouteContext {
   focus: FocusState
-  /** A page holds a static claim on this key code (claimKeys). */
+  /** A page holds a static claim on this key code (claimKeys). Covers the unmodified key only. */
   claimed: (code: string) => boolean
   /** Open panels / sheets / dialogs that Escape can close, oldest first. */
   escape: readonly { id: string }[]
@@ -272,7 +281,9 @@ export function routeKey(e: KeyEventLike, ctx: RouteContext): Route {
     return top ? { to: 'undo', id: top.id } : { to: 'native' }
   }
   if (typing && !s.whileTyping) return { to: 'native' }
-  if (e.code && ctx.claimed(e.code)) return { to: 'native' }
+  // A claim holds the plain key (Space, ←): ⌘→ still skips in the Supreme Court room.
+  const plain = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
+  if (plain && e.code && ctx.claimed(e.code)) return { to: 'native' }
   return { to: 'shortcut', id: s.id }
 }
 
@@ -334,13 +345,16 @@ export function shortcutSheet(): SheetSection[] {
 }
 
 /**
- * How a menu item carries a shortcut. A menu-wired one registers its
- * accelerator (the menu is its only wiring); a keymap-wired one is shown and
- * NOT registered (the renderer is its only wiring, and a registered
- * accelerator would fire as well: one press, two actions).
+ * How a menu item carries a shortcut. A menu-wired or role one registers its
+ * accelerator (the menu is its only wiring). A keymap-wired one carries no
+ * accelerator at all, or only its `menuAccelerator` (F7/F8/F9): on macOS
+ * Electron registers every accelerator a menu item shows, whatever
+ * registerAccelerator says, and a registered Space or ⌘← would fire while
+ * typing. The sheet (⌘/) shows those keys instead.
  */
-export function menuKeys(id: string): { accelerator: string; registerAccelerator?: false } {
+export function menuKeys(id: string): { accelerator?: string } {
   const s = shortcut(id)
   if (s.wiring === 'page') throw new Error(`keymap: "${id}" belongs to a page, not the menu`)
-  return s.wiring === 'keymap' ? { accelerator: s.keys[0], registerAccelerator: false } : { accelerator: s.keys[0] }
+  if (s.wiring === 'keymap') return s.menuAccelerator ? { accelerator: s.menuAccelerator } : {}
+  return { accelerator: s.keys[0] }
 }

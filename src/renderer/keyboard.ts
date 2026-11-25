@@ -83,8 +83,8 @@ export function addUndo(id: string, undo: () => void): () => void {
 
 /**
  * A static claim: while it's held the app's global shortcuts leave these key
- * codes alone (any modifiers), and the page's own layer handles them. The
- * generalised claimTransportKeys (input-mode.ts).
+ * codes alone when pressed with no modifier (⌘→ still skips), and the page's
+ * own layer handles them. The generalised claimTransportKeys (input-mode.ts).
  */
 export function claimKeys(id: string, codes: readonly string[]): () => void {
   const c: Claim = { id, seq: seqFor(id), codes: new Set(codes) }
@@ -184,12 +184,15 @@ export function applyRoute(route: Route, e: KeyboardEvent, actions: KeyboardActi
 
 /** Mount once (App). Installs the app's only window keyboard listeners. */
 export function installKeyboard(actions: KeyboardActions): () => void {
+  // A layer that took the key early by returning true (without preventDefault)
+  // has it: the late phase must not hand it on to the app as well.
+  const taken = new WeakSet<KeyboardEvent>()
   const early = (e: KeyboardEvent): void => {
     if (e.isComposing) return
-    offerToLayers(e, 'early')
+    if (offerToLayers(e, 'early')) taken.add(e)
   }
   const late = (e: KeyboardEvent): void => {
-    if (e.isComposing) return
+    if (e.isComposing || taken.has(e)) return
     if (offerToLayers(e, 'late')) return
     // An on-screen Cover Flow owns plain ←/→/Return (utils/arrowKeyOwner.ts).
     if (!e.defaultPrevented && handleOwnedArrowKey(e)) return

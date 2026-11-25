@@ -111,7 +111,7 @@ function focusSearchPill(): void {
 
 function AppInner() {
   const { state: libState, dispatch } = useLibrary()
-  const { beginHistory } = useNavigation()
+  const { beginHistory, goBack, goForward } = useNavigation()
   // Brief 033c: App is the single "primary" useAudio consumer — it owns
   // the heartbeat diagnostic/recovery interval. App never unmounts, so
   // exactly one interval runs regardless of how many other components
@@ -698,10 +698,10 @@ function AppInner() {
     'next': () => nextTrack(),
     'volume-up': () => setVolume(stepVolume(pbStateRef.current.volume, 1)),
     'volume-down': () => setVolume(stepVolume(pbStateRef.current.volume, -1)),
-    // No page find bar took ⌘F (they're layers, offered first): Search.
-    'find': () => focusSearchPill(),
+    // ⌘[ ⌘] are the renderer's, so they never fire while typing.
+    'back': () => goBack(),
+    'forward': () => goForward(),
     'search': () => focusSearchPill(),
-    'visualizer': () => window.dispatchEvent(new CustomEvent('toggle-visualizer')),
   }
   useEffect(() => installKeyboard({
     shortcut: (id) => keyActionsRef.current[id]?.(),
@@ -1588,9 +1588,13 @@ function AppInner() {
         case 'view-concerts': dispatch({ type: 'SET_VIEW', view: 'concerts' }); break
         case 'view-record-shop': dispatch({ type: 'SET_VIEW', view: 'discovery' }); break
         case 'view-genres': dispatch({ type: 'SET_VIEW', view: 'genres' }); break
-        // Edit → Find… picked with the mouse: the same key, through the host, so
-        // a page's own find bar still answers first.
-        case 'find': window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', code: 'KeyF', metaKey: true, bubbles: true, cancelable: true })); break
+        // Edit → Find… (⌘F, the menu's key): offered to the page's own find bar
+        // first, as a key through the host; if none takes it, Search.
+        case 'find': {
+          const asked = new KeyboardEvent('keydown', { key: 'f', code: 'KeyF', metaKey: true, bubbles: true, cancelable: true })
+          if (window.dispatchEvent(asked)) focusSearchPill()
+          break
+        }
         case 'go-anywhere': setShortcutsOpen(false); setGoAnywhereOpen((o) => !o); break
         case 'keyboard-shortcuts': setGoAnywhereOpen(false); setShortcutsOpen((o) => !o); break
         case 'toggle-up-next': toggleQueueRef.current(); break

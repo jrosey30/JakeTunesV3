@@ -226,6 +226,8 @@ export default function ListenToTheListView() {
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return
       // An album's songs are open over the list: its keys are the sheet's (Esc closes it).
       if (songsOf) return
+      // ⌘↑/⌘↓ are volume, ⌘←/⌘→ skip, ⌘A and friends are the app's.
+      if (e.metaKey || e.ctrlKey || e.altKey) return
       if (inboxFlat.length === 0) return
       const cur = inboxFlat[Math.min(sel, inboxFlat.length - 1)]
       switch (e.key) {

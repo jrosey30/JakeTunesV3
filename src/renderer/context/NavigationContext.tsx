@@ -143,8 +143,9 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     restore(navRef.current.history[navRef.current.index])
   }, [restore, repaint])
 
-  // ⌘[ / ⌘] are Go → Back / Forward in the menu (common/keymap.ts), which
-  // sends the same 'history-back' / 'history-forward' as the swipe below.
+  // ⌘[ / ⌘] are the keyboard host's (common/keymap.ts; never while typing),
+  // and App runs goBack / goForward for them. Go → Back / Forward picked with
+  // the mouse sends 'history-back' / 'history-forward', as the swipe below does.
 
   // 2026-10-21 — parity with the phone's swipe-back. Every input below runs
   // the same goBack/goForward as the back pill and ⌘[ ⌘] (so the same smooth return).

@@ -122,7 +122,7 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
   }
 
   return (
-    <div className="ipod-setup">
+    <div className="ipod-setup" role="dialog" aria-label="Set up this iPod">
       {stops.length > 0 && <Checks checks={stops} />}
       {look.sameIpod && (
         <form

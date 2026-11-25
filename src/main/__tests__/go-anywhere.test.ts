@@ -34,9 +34,11 @@ describe('Go anywhere', () => {
     assert.equal(first('beck')!.title, 'Beck')
     assert.equal(first('road')!.title, 'Road Trip')
   })
-  it('the sidebar\'s own words open the page (Record Shop, Live Concerts) and the ⌘1–⌘6 pages are all here', () => {
+  it('the pages open by name (Record Shop, Live Albums) and the ⌘1–⌘6 pages are all here', () => {
     assert.deepEqual(first('record shop')!.target, { kind: 'page', view: 'discovery' })
     assert.deepEqual(first('live albums')!.target, { kind: 'page', view: 'concerts' })
+    assert.deepEqual(first('live concerts')!.target, { kind: 'page', view: 'concerts' })
+    assert.ok(!searchGo(items, 'shows').some((i) => i.target.kind === 'page' && i.target.view === 'concerts'), '"shows" is the tickets page, not Live Albums')
     for (const v of ['home', 'songs', 'albums', 'artists', 'concerts', 'discovery']) assert.ok(GO_PAGES.some((p) => p.view === v), v)
   })
   it('⌘Return plays what can play; a page or a setting only opens', () => {

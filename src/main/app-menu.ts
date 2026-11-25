@@ -3,9 +3,11 @@
  * the keymap (../common/keymap.ts) through menuKeys(), which is also where
  * each shortcut's ONE wiring is decided: a menu-wired key registers its
  * accelerator here and the renderer never listens for it; a keymap-wired key
- * is shown here and not registered, and the renderer's keyboard host is its
- * only wiring. app-menu.test (keymap.test.ts) builds this with stubs and
- * checks that no key is wired twice.
+ * (Space, ⌘←/⌘→, ⌘↑/⌘↓, ⌘[ ⌘]) is NOT on the menu as an accelerator at all,
+ * because on macOS Electron registers whatever accelerator an item shows,
+ * registerAccelerator: false or not, and it would fire while typing. Those
+ * items still work with the mouse, and the ⌘/ sheet shows their keys.
+ * keymap.test.ts builds this with stubs and checks that no key is wired twice.
  *
  * Built from deps so it can be tested without Electron: index.ts passes the
  * About item (it writes its window from main's own state), the menu-action
@@ -25,7 +27,7 @@ function item(id: string, send: (action: string) => void, label?: string): MenuI
   const s = shortcut(id)
   const base: MenuItemConstructorOptions = { label: label ?? s.label, ...menuKeys(id) }
   if (s.wiring === 'role') return { ...base, role: s.role as MenuItemConstructorOptions['role'] }
-  // keymap-wired: the click is the menu's own (a mouse pick), the key is the renderer's.
+  // keymap-wired: the click is the menu's own (a mouse pick, or its F-key), the key is the renderer's.
   const action = s.action ?? KEYMAP_MENU_ACTIONS[id]
   if (!action) throw new Error(`app-menu: "${id}" has no menu action`)
   return { ...base, click: () => send(action) }
@@ -38,8 +40,8 @@ const KEYMAP_MENU_ACTIONS: Record<string, string> = {
   next: 'next-track',
   'volume-up': 'volume-up',
   'volume-down': 'volume-down',
-  visualizer: 'toggle-visualizer',
-  find: 'find',
+  back: 'history-back',
+  forward: 'history-forward',
 }
 
 const sep: MenuItemConstructorOptions = { type: 'separator' }
@@ -82,7 +84,7 @@ export function buildAppMenu(d: AppMenuDeps): MenuItemConstructorOptions[] {
             // masters. master-never-reencoded.test.ts keeps it gone.)
             // 4.1: ALAC play-cache management. Replaces the launch-time
             // prewarm scanner with explicit user actions.
-            { label: 'Prepare ALAC Tracks for Instant Play…', click: () => d.send('prepare-alac-cache') },
+            { label: 'Prepare ALAC Songs for Instant Play…', click: () => d.send('prepare-alac-cache') },
             { label: 'Prune Play-Cache…', click: () => d.send('prune-alac-cache') },
             { label: 'Clean Orphan Files…', click: () => d.send('clean-orphan-files') },
             // Surface library entries that share artist+title+album so the
@@ -98,8 +100,8 @@ export function buildAppMenu(d: AppMenuDeps): MenuItemConstructorOptions[] {
             // fileSize values. Audio files themselves are NOT modified.
             { label: 'Refresh File Sizes…', click: () => d.send('refresh-file-sizes') },
             sep,
-            { label: 'Offload Audio to Homemini — Dry Run', click: () => d.hubOffload('dry-run') },
-            { label: 'Offload Audio to Homemini — Start', click: () => d.hubOffload('start') },
+            { label: 'Offload Audio — Dry Run', click: () => d.hubOffload('dry-run') },
+            { label: 'Offload Audio — Start', click: () => d.hubOffload('start') },
             { label: 'Undo Offload (pull audio back)', click: () => d.hubOffload('rehydrate') },
           ],
         },

@@ -31,15 +31,15 @@ const to = (e: KeyEventLike, c: RouteContext = ctx()): string => {
 }
 
 describe('who gets each key — nothing open, nothing focused', () => {
-  it('Space plays / pauses; F8 too', () => {
+  it('Space plays / pauses; F8 is the menu\'s (registered there, so the host leaves it)', () => {
     assert.equal(to(key(' ')), 'shortcut:play-pause')
-    assert.equal(to(key('F8')), 'shortcut:play-pause')
+    assert.equal(to(key('F8')), 'native')
   })
-  it('skip is ⌘← / ⌘→ (and F7 / F9); a plain ← / → no longer skips', () => {
+  it('skip is ⌘← / ⌘→ (F7 / F9 are the menu\'s); a plain ← / → no longer skips', () => {
     assert.equal(to(cmd('ArrowLeft')), 'shortcut:previous')
     assert.equal(to(cmd('ArrowRight')), 'shortcut:next')
-    assert.equal(to(key('F7')), 'shortcut:previous')
-    assert.equal(to(key('F9')), 'shortcut:next')
+    assert.equal(to(key('F7')), 'native')
+    assert.equal(to(key('F9')), 'native')
     assert.equal(to(key('ArrowLeft')), 'native')
     assert.equal(to(key('ArrowRight')), 'native')
   })
@@ -57,13 +57,13 @@ describe('who gets each key — nothing open, nothing focused', () => {
     assert.equal(to(cmd('ArrowRight', { shiftKey: true })), 'native')
     assert.equal(to(key(' ', { metaKey: true })), 'native')
   })
-  it('/ and ⌘F go to Search, ⌘T to the Visualizer', () => {
+  it('/ goes to Search; ⌘[ / ⌘] go back and forward', () => {
     assert.equal(to(key('/')), 'shortcut:search')
-    assert.equal(to(cmd('f')), 'shortcut:find')
-    assert.equal(to(cmd('t')), 'shortcut:visualizer')
+    assert.equal(to(cmd('[')), 'shortcut:back')
+    assert.equal(to(cmd(']')), 'shortcut:forward')
   })
-  it('menu-wired keys are never the renderer\'s: ⌘I, ⌘L, ⌘K, ⌘1, ⌘[, ⌥⌘L, ⌘/ fall through', () => {
-    for (const e of [cmd('i'), cmd('l'), cmd('k'), cmd('1'), cmd('['), cmd(']'), cmd('/'), key('¬', { code: 'KeyL', metaKey: true, altKey: true }), cmd('s', { shiftKey: true })]) {
+  it('menu-wired keys are never the renderer\'s: ⌘I, ⌘L, ⌘K, ⌘1, ⌘F, ⌘T, ⌥⌘L, ⌘/ fall through', () => {
+    for (const e of [cmd('i'), cmd('l'), cmd('k'), cmd('1'), cmd('f'), cmd('t'), cmd('/'), key('¬', { code: 'KeyL', metaKey: true, altKey: true }), cmd('s', { shiftKey: true })]) {
       assert.equal(to(e), 'native', `${e.code}`)
     }
   })
@@ -75,13 +75,10 @@ describe('who gets each key — nothing open, nothing focused', () => {
 
 describe('who gets each key — a text field has focus', () => {
   const field = ctx({ focus: 'field' })
-  it('Space, ⌘←/⌘→, ⌘↑/⌘↓, / and ⌘T are the field\'s', () => {
-    for (const e of [key(' '), cmd('ArrowLeft'), cmd('ArrowRight'), cmd('ArrowUp'), cmd('ArrowDown'), key('/'), cmd('t'), key('F8')]) {
+  it('Space, ⌘←/⌘→, ⌘↑/⌘↓, ⌘[ ⌘] and / are the field\'s', () => {
+    for (const e of [key(' '), cmd('ArrowLeft'), cmd('ArrowRight'), cmd('ArrowUp'), cmd('ArrowDown'), cmd('['), cmd(']'), key('/')]) {
       assert.equal(to(e, field), 'native', e.key)
     }
-  })
-  it('⌘F still reaches Find', () => {
-    assert.equal(to(cmd('f'), field), 'shortcut:find')
   })
 })
 
@@ -91,9 +88,10 @@ describe('who gets each key — a page holds a claim', () => {
     assert.equal(to(key(' '), claimSpace), 'native')
     assert.equal(to(cmd('ArrowRight'), claimSpace), 'shortcut:next')
   })
-  it('a claim holds its key with any modifiers (Supreme Court ←/→ also holds ⌘←/⌘→)', () => {
-    const arrows = ctx({ claimed: (c) => c === 'ArrowLeft' || c === 'ArrowRight' })
-    assert.equal(to(cmd('ArrowLeft'), arrows), 'native')
+  it('a claim holds the plain key only: ⌘←/⌘→ still skip in the Supreme Court room', () => {
+    const arrows = ctx({ claimed: (c) => c === 'ArrowLeft' || c === 'ArrowRight' || c === 'Space' })
+    assert.equal(to(cmd('ArrowLeft'), arrows), 'shortcut:previous')
+    assert.equal(to(cmd('ArrowRight'), arrows), 'shortcut:next')
   })
   it('a claim never withholds Escape', () => {
     assert.equal(to(key('Escape'), ctx({ claimed: () => true, escape: [{ id: 'up-next' }] })), 'escape:up-next')
@@ -225,14 +223,30 @@ describe('the Mac menu bar — one wiring per shortcut', () => {
     const accels = all.map((x) => x.item.accelerator).filter(Boolean) as string[]
     assert.equal(new Set(accels).size, accels.length, accels.join(', '))
   })
-  it('a keymap-wired key is shown and NOT registered; a menu-wired key is registered', () => {
+  it('macOS: no key the keyboard host answers is a menu accelerator (Electron registers every accelerator shown there, even with registerAccelerator: false)', () => {
+    assert.ok(all.every((x) => x.item.registerAccelerator === undefined), 'registerAccelerator: false is a no-op on darwin; never lean on it')
+    const accels = all.map((x) => x.item.accelerator).filter(Boolean) as string[]
+    for (const s of SHORTCUTS.filter((x) => x.wiring === 'keymap')) {
+      for (const k of s.keys) {
+        if (k === s.menuAccelerator) continue
+        assert.ok(!accels.includes(k), `${s.id}: ${k} on the menu would fire while typing`)
+      }
+    }
+    // The ones that matter most, by name: typing a space, or ⌘← in a field.
+    for (const bad of ['Space', 'CmdOrCtrl+Left', 'CmdOrCtrl+Right', 'CmdOrCtrl+Up', 'CmdOrCtrl+Down', 'CmdOrCtrl+[', 'CmdOrCtrl+]', 'Escape', '/']) {
+      assert.ok(!accels.includes(bad), `${bad} is on the menu`)
+    }
+  })
+  it('every menu-wired and role shortcut is on the menu once with its key; keymap ones by their menu key (F7/F8/F9) or by name', () => {
     for (const s of SHORTCUTS) {
       if (s.wiring === 'page' || s.id === 'close-top' || s.id === 'search') continue
-      const hits = all.filter((x) => x.item.accelerator === s.keys[0])
-      assert.equal(hits.length, 1, `${s.id} (${s.keys[0]}) is on the menu once`)
-      const it = hits[0].item
-      if (s.wiring === 'keymap') assert.equal(it.registerAccelerator, false, `${s.id} must not also fire from the menu`)
-      else assert.notEqual(it.registerAccelerator, false, `${s.id}: the menu is its only wiring`)
+      if (s.wiring === 'keymap') {
+        const it = all.find((x) => x.item.label === s.label)
+        assert.ok(it, `${s.id} is on the menu`)
+        assert.equal(it!.item.accelerator, s.menuAccelerator, s.id)
+        continue
+      }
+      assert.equal(all.filter((x) => x.item.accelerator === s.keys[0]).length, 1, `${s.id} (${s.keys[0]}) is on the menu once`)
     }
     assert.throws(() => menuKeys('list-move'), /belongs to a page/)
   })
@@ -259,11 +273,14 @@ describe('the Mac menu bar — one wiring per shortcut', () => {
     assert.equal(help.role, 'help')
     assert.ok((help.submenu as MenuItemConstructorOptions[]).some((x) => x.label === 'Keyboard Shortcuts' && x.accelerator === 'CmdOrCtrl+/'))
   })
-  it('a Go menu: Back ⌘[, Forward ⌘], then ⌘1–⌘6 in order, then Go Anywhere ⌘K', () => {
-    const go = (menuNamed('Go')!.submenu as MenuItemConstructorOptions[]).filter((x) => x.accelerator)
-    assert.deepEqual(go.map((x) => `${x.label} ${x.accelerator}`), [
-      'Back CmdOrCtrl+[', 'Forward CmdOrCtrl+]',
-      'Home CmdOrCtrl+1', 'Songs CmdOrCtrl+2', 'Albums CmdOrCtrl+3', 'Artists CmdOrCtrl+4', 'Live Concerts CmdOrCtrl+5', 'Record Shop CmdOrCtrl+6',
+  it('a Go menu: Back, Forward (⌘[ ⌘] are the host\'s, so typing never goes back), then ⌘1–⌘6 in order, then Go Anywhere ⌘K', () => {
+    const items = menuNamed('Go')!.submenu as MenuItemConstructorOptions[]
+    assert.deepEqual(items.slice(0, 2).map((x) => [x.label, x.accelerator]), [['Back', undefined], ['Forward', undefined]])
+    sent.length = 0
+    ;(items[0].click as () => void)(); (items[1].click as () => void)()
+    assert.deepEqual(sent, ['history-back', 'history-forward'])
+    assert.deepEqual(items.filter((x) => x.accelerator).map((x) => `${x.label} ${x.accelerator}`), [
+      'Home CmdOrCtrl+1', 'Songs CmdOrCtrl+2', 'Albums CmdOrCtrl+3', 'Artists CmdOrCtrl+4', 'Live Albums CmdOrCtrl+5', 'Record Shop CmdOrCtrl+6',
       'Go Anywhere… CmdOrCtrl+K',
     ])
   })

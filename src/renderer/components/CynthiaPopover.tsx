@@ -335,6 +335,8 @@ export default function CynthiaPopover({ x, y, scope, onClose }: Props) {
   return (
     <div
       ref={containerRef}
+      role="dialog"
+      aria-label="Cynthia"
       className="cynthia-popover"
       style={{ left: pos.left, top: pos.top, width: POPOVER_WIDTH }}
       onMouseDown={(e) => e.stopPropagation()}
