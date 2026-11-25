@@ -182,7 +182,9 @@ export async function applyFileStamps<T extends Record<string, unknown>>(
  *   • the transferred local source is the same size as the card's file (the copy is byte for
  *     byte; confirmWriteOnCard checked the size): a converted mirror in the sync-convert
  *     cache is probed there, locally; the library master itself is NOT probed, because the
- *     row already describes it (so an ALAC Mini's sync probes nothing and stamps as before);
+ *     row already describes it (an ALAC Mini's songs stamp as before; a master staged from
+ *     homemini for the sync has a temp path of the same size, so its card file is probed
+ *     once and remembered);
  *   • otherwise (no source, or a different size) → the card's own file.
  */
 export async function fileToStamp(cardPath: string | undefined, localSource: string | undefined, convertCacheDir: string): Promise<string | undefined> {

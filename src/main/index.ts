@@ -52,7 +52,7 @@ import { computeDeletedPaths } from './library-deletions'; import { createPhoneI
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createPlayCache } from './play-cache.ts'
 import { atBackgroundPriority } from './background-priority.ts'
-import { AacEncoderMissingError, aacMirrorCacheName, afconvertAacArgs, pcmDecodeArgs, probeAfconvert } from './aac-mirror-recipe.ts'
+import { AacEncoderMissingError, aacMirrorCacheName, afconvertAacArgs, createAfconvertCheck, pcmDecodeArgs } from './aac-mirror-recipe.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
 import { mergeQueuedDuringPass, runConvertPass, type ConvertOutcome, type QueueTrack, type StreamConvertItem } from './stream-convert-pass.ts'; import { confirmHomeminiHoldsFile, keptLocalMessage, USER_PENDING_RETRIES, type RefusalMemo } from './offload-confirm.ts'
@@ -3373,22 +3373,15 @@ const SYNC_CONVERT_CACHE_SUBDIR = 'sync-convert-cache'
 const LOSSLESS_EXTS = new Set(['.alac', '.flac', '.wav', '.wave', '.aiff', '.aif'])
 const LOSSLESS_CODECS = new Set(['alac', 'flac', 'pcm_s16le', 'pcm_s24le', 'pcm_s32le', 'pcm_s16be', 'pcm_s24be'])
 
-// Is Apple's afconvert (the CoreAudio AAC encoder) here? Memoized. iPod AAC is
-// Apple's or none: with no afconvert the conversion is refused, never made with
-// ffmpeg's own encoder (aac-mirror-recipe.ts; Brief 265: the old `--help` check
-// exited 2, said "missing" on every Mac, and every mirror was ffmpeg's).
-let _afconvertOk: Promise<boolean> | null = null
-async function afconvertAvailable(): Promise<boolean> {
-  if (_afconvertOk) return _afconvertOk
-  _afconvertOk = (async () => {
-    const { execFile } = await import('child_process')
-    const { promisify } = await import('util')
-    const ok = await probeAfconvert(() => promisify(execFile)('afconvert', ['-hf'], { timeout: 4000 }))
-    if (!ok) console.error('[sync-convert] Apple\'s AAC encoder (afconvert) is not available: iPod AAC conversions will be refused')
-    return ok
-  })()
-  return _afconvertOk
-}
+// Is Apple's afconvert (the CoreAudio AAC encoder) here? A yes is kept; a no or a check
+// that timed out is asked again after 30 s (aac-mirror-recipe.ts). iPod AAC is Apple's or
+// none: the old `--help` check exited 2, said "missing" on every Mac, and every mirror was
+// ffmpeg's (Brief 265).
+const afconvertCheck = createAfconvertCheck(async () => {
+  const { execFile } = await import('child_process')
+  const { promisify } = await import('util')
+  return promisify(execFile)('afconvert', ['-hf'], { timeout: 8000 })
+})
 
 async function buildAacMirror(srcPath: string, targetKbps: number, format: 'aac' | 'mp3' = 'aac'): Promise<string | null> {
   // Gen 1 (a 2001 iPod) plays MP3 only: every song that isn't one goes on as a 320k MP3
@@ -3444,7 +3437,11 @@ async function buildAacMirror(srcPath: string, targetKbps: number, format: 'aac'
 
   // Apple's encoder or nothing: a refusal is thrown, so the sync never quietly copies the
   // lossless master or an ffmpeg AAC in its place (the callers name it and skip the song).
-  if (!(await afconvertAvailable())) throw new AacEncoderMissingError(srcPath)
+  const encoder = await afconvertCheck()
+  if (encoder !== 'yes') {
+    console.error(`[sync-convert] Apple's AAC encoder (afconvert) ${encoder === 'no' ? 'is not available' : "didn't answer in time"}: ${srcPath} not converted`)
+    throw new AacEncoderMissingError(srcPath, encoder === 'no' ? 'missing' : 'unknown')
+  }
   // Transcode. ~5-30s per track depending on length + CPU.
   const tmp = cached + '.partial.m4a'
   const { rename: renameFS } = await import('fs/promises')

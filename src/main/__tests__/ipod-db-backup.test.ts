@@ -68,13 +68,29 @@ describe('backing up before a DB write', () => {
   })
 
   it('both engines back up before writing the catalog, and refuse without one', async () => {
-    for (const f of ['../sync-engine/index.ts', '../ipod-activity-engine.ts']) {
-      const src = await readFile(new URL(f, import.meta.url), 'utf-8')
-      const backup = src.indexOf('await backupItunesDb(')
-      const write = src.indexOf("'--write'")
-      assert.ok(backup > 0 && write > backup, `${f}: backup before the catalog write`)
-      assert.match(src.slice(backup, backup + 500), /if \(!(dbBackup|backup)\.ok\)[\s\S]{0,200}backupRefusal/)
-    }
+    const sync = await readFile(new URL('../sync-engine/index.ts', import.meta.url), 'utf-8')
+    const sb = sync.indexOf('await backupItunesDb(')
+    assert.ok(sb > 0 && sync.indexOf("'--write'") > sb, 'sync-engine: backup before the catalog write')
+    assert.match(sync.slice(sb, sb + 500), /if \(!dbBackup\.ok\)[\s\S]{0,200}backupRefusal/)
+    // The activity engine backs up through backupOnMac (once per run) in putCatalog, before --write.
+    const act = await readFile(new URL('../ipod-activity-engine.ts', import.meta.url), 'utf-8')
+    assert.match(act, /const backupOnMac = async \(\)[\s\S]{0,300}await backupItunesDb\(/)
+    const inCatalog = act.indexOf('const backup = await backupOnMac()')
+    assert.ok(inCatalog > 0 && act.indexOf("'--write'") > inCatalog, 'activity engine: backup before the catalog write')
+    assert.match(act.slice(inCatalog, inCatalog + 200), /if \(!backup\.ok\) return stop\(false, \{[^}]*error: backupRefusal/)
+  })
+})
+
+describe('the activity sync backs up before anything leaves the card', () => {
+  it('the Mac backup comes before the remove/wipe loop, and a failed backup stops it', async () => {
+    const src = await readFile(new URL('../ipod-activity-engine.ts', import.meta.url), 'utf-8')
+    const section = src.indexOf('// ── 3. Remove (swap) or wipe (full) ──')
+    const backup = src.indexOf('const backup = await backupOnMac()', section)
+    const firstUnlink = src.indexOf('await unlink(p)', section)
+    const interim = src.indexOf("await putCatalog(stayTracks, stayPlaylists, 'interim'", section)
+    assert.ok(section > 0 && backup > section, 'backed up in section 3')
+    assert.ok(backup < firstUnlink && backup < interim, 'before the first deletion and the interim catalog')
+    assert.match(src.slice(backup, backup + 250), /if \(!backup\.ok\) \{[\s\S]{0,120}return fail\(\{ copied: 0, target, error: backupRefusal/)
   })
 })
 

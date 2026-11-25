@@ -11,8 +11,9 @@ import { promisify } from 'node:util'
 import { readFile } from 'node:fs/promises'
 import {
   AAC_MIRROR_TOKEN, AacEncoderMissingError, aacMirrorCacheName, afconvertAacArgs,
-  afconvertListsAacInM4af, isAacEncoderMissing, pcmDecodeArgs, probeAfconvert,
+  afconvertListsAacInM4af, createAfconvertCheck, isAacEncoderMissing, pcmDecodeArgs, probeAfconvert,
 } from '../aac-mirror-recipe.ts'
+import { NO_AAC_ENCODER } from '../ipod-activity-engine.ts'
 
 const HELP = `Audio file and data formats:
     '3gpp' = 3GP Audio (.3gp, .3gpp)
@@ -25,26 +26,63 @@ const HELP = `Audio file and data formats:
 `
 
 describe('the afconvert check', () => {
-  it('reads the listing, not the exit code: `afconvert -hf` exits 1 and still counts', async () => {
-    const run = async () => { throw Object.assign(new Error('Command failed: afconvert -hf'), { code: 1, stdout: '', stderr: HELP }) }
-    assert.equal(await probeAfconvert(run), true)
+  it('reads the listing, not the exit code: `afconvert -hf` exits 2 and still counts', async () => {
+    const run = async () => { throw Object.assign(new Error('Command failed: afconvert -hf'), { code: 2, stdout: '', stderr: HELP }) }
+    assert.equal(await probeAfconvert(run), 'yes')
   })
   it('a listing on stdout counts too', async () => {
-    assert.equal(await probeAfconvert(async () => ({ stdout: HELP, stderr: '' })), true)
+    assert.equal(await probeAfconvert(async () => ({ stdout: HELP, stderr: '' })), 'yes')
   })
-  it('no program (ENOENT) is not available', async () => {
+  it('no program (ENOENT) is no', async () => {
     const run = async () => { throw Object.assign(new Error('spawn afconvert ENOENT'), { code: 'ENOENT' }) }
-    assert.equal(await probeAfconvert(run), false)
+    assert.equal(await probeAfconvert(run), 'no')
   })
-  it('an afconvert that lists no AAC in m4af is not available', async () => {
+  it('a check killed by its timeout is unknown, never no', async () => {
+    const run = async () => { throw Object.assign(new Error('Command failed'), { killed: true, signal: 'SIGTERM', stdout: '', stderr: '' }) }
+    assert.equal(await probeAfconvert(run), 'unknown')
+  })
+  it('an afconvert that lists no AAC in m4af is no', () => {
     assert.equal(afconvertListsAacInM4af(`    'm4af' = Apple MPEG-4 Audio (.m4a)\n               data_formats: 'alac'\n    'WAVE' = WAVE\n               data_formats: 'aac '\n`), false)
     assert.equal(afconvertListsAacInM4af(''), false)
     assert.equal(afconvertListsAacInM4af(HELP), true)
   })
+  it('a yes is kept; a timeout is asked again after 30 s and then succeeds', async () => {
+    let t = 0
+    let calls = 0
+    const answers: Array<() => Promise<{ stdout: string; stderr: string }>> = [
+      async () => { throw Object.assign(new Error('timeout'), { killed: true, signal: 'SIGTERM' }) },
+      async () => ({ stdout: HELP, stderr: '' }),
+    ]
+    const check = createAfconvertCheck(() => answers[Math.min(calls++, answers.length - 1)](), () => t)
+    assert.equal(await check(), 'unknown')
+    t += 10_000
+    assert.equal(await check(), 'unknown', 'within 30 s the last answer stands')
+    assert.equal(calls, 1)
+    t += 25_000
+    assert.equal(await check(), 'yes', 'asked again after 30 s')
+    assert.equal(calls, 2)
+    t += 10 * 60_000
+    assert.equal(await check(), 'yes')
+    assert.equal(calls, 2, 'a yes is never asked again')
+  })
+  it('a no is asked again too (afconvert can come back)', async () => {
+    let t = 0
+    let calls = 0
+    const check = createAfconvertCheck(async () => { calls++; return calls === 1 ? { stdout: '', stderr: 'nothing' } : { stdout: HELP, stderr: '' } }, () => t)
+    assert.equal(await check(), 'no')
+    t += 31_000
+    assert.equal(await check(), 'yes')
+  })
+  it('callers at the same moment share one check', async () => {
+    let calls = 0
+    const check = createAfconvertCheck(async () => { calls++; await new Promise((r) => setTimeout(r, 10)); return { stdout: HELP, stderr: '' } })
+    assert.deepEqual(await Promise.all([check(), check(), check()]), ['yes', 'yes', 'yes'])
+    assert.equal(calls, 1)
+  })
   it('on this Mac the real afconvert is found (the old --help check said it was missing)', { skip: process.platform !== 'darwin' }, async () => {
     const execP = promisify(execFile)
-    assert.equal(await probeAfconvert(() => execP('afconvert', ['-hf'], { timeout: 4000 })), true)
-    await assert.rejects(execP('afconvert', ['--help'], { timeout: 4000 }), 'afconvert --help exits non-zero: the old check could never pass')
+    assert.equal(await probeAfconvert(() => execP('afconvert', ['-hf'], { timeout: 8000 })), 'yes')
+    await assert.rejects(execP('afconvert', ['--help'], { timeout: 8000 }), 'afconvert --help exits non-zero: the old check could never pass')
   })
 })
 
@@ -54,6 +92,9 @@ describe('the refusal', () => {
     assert.equal(isAacEncoderMissing(e), true)
     assert.match(e.message, /afconvert/)
     assert.match(e.message, /imported_14677\.m4a/)
+    const slow = new AacEncoderMissingError('/Music/a.m4a', 'unknown')
+    assert.equal(isAacEncoderMissing(slow), true)
+    assert.match(slow.message, /didn't answer in time/)
     assert.equal(isAacEncoderMissing(new Error('ffmpeg failed')), false)
     assert.equal(isAacEncoderMissing(null), false)
   })
@@ -61,19 +102,32 @@ describe('the refusal', () => {
   it('buildAacMirror refuses with no afconvert and has no ffmpeg AAC encoder at all', async () => {
     const src = await readFile(new URL('../index.ts', import.meta.url), 'utf-8')
     const body = src.slice(src.indexOf('async function buildAacMirror('), src.indexOf('async function buildMp3Mirror('))
-    assert.match(body, /if \(!\(await afconvertAvailable\(\)\)\) throw new AacEncoderMissingError\(srcPath\)/)
+    assert.match(body, /const encoder = await afconvertCheck\(\)\s*\n\s*if \(encoder !== 'yes'\) \{[\s\S]{0,300}throw new AacEncoderMissingError\(srcPath/)
     assert.doesNotMatch(body, /'-c:a', 'aac'/, 'no ffmpeg AAC encoder path')
     assert.doesNotMatch(body, /'aac'\s*,\s*'-b:a'/)
-    const probe = src.slice(src.indexOf('async function afconvertAvailable('), src.indexOf('async function buildAacMirror('))
-    assert.doesNotMatch(probe, /--help/)
-    assert.match(probe, /probeAfconvert\(/)
+    const probe = src.slice(src.indexOf('const afconvertCheck = createAfconvertCheck('), src.indexOf('async function buildAacMirror('))
+    assert.ok(probe.length > 0)
+    assert.doesNotMatch(probe, /'--help'/)
+    assert.match(probe, /'-hf'/)
   })
 
   it('both engines skip and name a refused song instead of copying the master', async () => {
     const sync = await readFile(new URL('../sync-engine/index.ts', import.meta.url), 'utf-8')
     const act = await readFile(new URL('../ipod-activity-engine.ts', import.meta.url), 'utf-8')
     assert.match(sync, /if \(isAacEncoderMissing\(err\)\) \{[\s\S]{0,300}copyErrors\+\+[\s\S]{0,200}continue/)
-    assert.match(act, /if \(isAacEncoderMissing\(err\)\) \{[\s\S]{0,200}kind: 'unconvertible'/)
+    assert.match(act, /if \(isAacEncoderMissing\(err\)\) \{[\s\S]{0,200}kind: 'no-encoder', why: NO_AAC_ENCODER/)
+    assert.match(sync, /notConverted\.push\(/)
+    assert.match(sync, /\.\.\.\(notConverted\.length > 0 \? \{ notConverted \} : \{\}\)/)
+  })
+
+  it('in the activity sync it is its own reason, not a damaged file: the sync stops before the card is touched, no reserve fill', async () => {
+    const act = await readFile(new URL('../ipod-activity-engine.ts', import.meta.url), 'utf-8')
+    assert.equal(NO_AAC_ENCODER, "Apple's AAC encoder isn't available on this Mac")
+    const stopAt = act.indexOf("if (out.kind === 'no-encoder') {")
+    const reserveAt = act.indexOf('skipUnconvertible(title, String(track.artist')
+    assert.ok(stopAt > 0 && reserveAt > stopAt, 'the no-encoder stop comes before the damaged-file reserve path')
+    assert.match(act.slice(stopAt, stopAt + 300), /return fail\(\{ copied: 0, target, error: `\$\{NO_AAC_ENCODER\}/)
+    assert.match(act, /if \(out\.kind === 'no-encoder'\) lateWhy\.set\(e\.id, NO_AAC_ENCODER\)/)
   })
 })
 

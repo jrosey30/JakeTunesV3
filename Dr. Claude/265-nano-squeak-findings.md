@@ -98,7 +98,7 @@ Before every change the iPod's song list and the original files were backed up o
 
 `afconvertAvailable()` (src/main/index.ts) ran
 `promisify(execFile)('afconvert', ['--help'])`. execFile rejects on a non-zero exit;
-`afconvert --help` exits 2 and `afconvert -hf` exits 1 on macOS 26.6. The catch returned
+`afconvert --help` and `afconvert -hf` both exit 2 on macOS 26.6, while printing their help. The catch returned
 false, `buildAacMirror` took its "non-macOS / afconvert missing" branch:
 `ffmpeg -c:a aac -b:a 256k -ar 44100 -ac 2 -map_metadata 0 -movflags +faststart`, and wrote the
 result under `sha1(src|256|afenc-cbr-44100-2-v3)`.

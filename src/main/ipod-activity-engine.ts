@@ -65,6 +65,9 @@ import {
   retireIpodFirmwareScratch,
 } from './ipod-sync-card.ts'
 import { isAacEncoderMissing } from './aac-mirror-recipe.ts'
+
+/** The plain reason a song wasn't converted when afconvert can't be used (Brief 265). */
+export const NO_AAC_ENCODER = "Apple's AAC encoder isn't available on this Mac"
 import { applyFileStamps, createFileStampCache, fileToStamp } from './ipod-file-stamps.ts'
 import { backupItunesDb, backupRefusal } from './ipod-db-backup.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
@@ -716,6 +719,7 @@ async function runActivitySyncHolding(
     | { ok: true; srcToCopy: string; dstToCopy: string; restage?: { colon: string; id: number }; knownSourceSize?: number }
     | { ok: false; kind: 'stage'; msg: string }
     | { ok: false; kind: 'unconvertible'; why: string }
+    | { ok: false; kind: 'no-encoder'; why: string }
   // The card's copy of one song: the master as it is, or a mirror (AAC with
   // the convert toggle, ALAC for FLAC / over the Mini's ceiling). A song not on
   // this Mac that needs a mirror is staged from homemini first, one file, and
@@ -774,7 +778,7 @@ async function runActivitySyncHolding(
           // master in its place (aac-mirror-recipe.ts, Brief 265).
           if (isAacEncoderMissing(err)) {
             console.error(`activity-sync: ${err instanceof Error ? err.message : String(err)}`)
-            return { ok: false, kind: 'unconvertible', why: 'no Apple AAC encoder (afconvert)' }
+            return { ok: false, kind: 'no-encoder', why: NO_AAC_ENCODER }
           }
           console.warn(`activity-sync: AAC mirror failed for ${title}, copying original:`, err)
         }
@@ -903,6 +907,12 @@ async function runActivitySyncHolding(
     }
     const out = await prepareForCard({ i, id, title, dstToCopy, needsPull, ...later })
     if (!out.ok) {
+      // Not a damaged song: no song can be converted, so the sync stops here, before the
+      // card is touched, instead of filling reserves with songs that hit the same wall.
+      if (out.kind === 'no-encoder') {
+        await host.writeJournal(null)
+        return fail({ copied: 0, target, error: `${NO_AAC_ENCODER}, so this iPod's songs couldn't be converted. Nothing on the iPod was changed.` })
+      }
       if (out.kind === 'stage') {
         console.error(`activity-sync: ${out.msg}`)
         if (i >= reserveFrom) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
@@ -1132,6 +1142,7 @@ async function runActivitySyncHolding(
     console.error(`activity-sync: "${e.title}" (id ${e.id}) must move and couldn't be prepared (${why}); the card is untouched`)
     fetchFailedIds.add(e.id)
     if (out.kind === 'unconvertible') lateWhy.set(e.id, "its audio couldn't be converted for the iPod (damaged file)")
+    if (out.kind === 'no-encoder') lateWhy.set(e.id, NO_AAC_ENCODER)
   }
   if (swap) {
     const toFetch = plan.filter((e) => e.restage && e.i < reserveFrom && !keepIds.has(e.id) && !fetchFailedIds.has(e.id))
@@ -1199,6 +1210,17 @@ async function runActivitySyncHolding(
   let interimTouched = false
   let finalTouched = false
   let catalogBakDone = false
+  // The iTunesDB backed up on this Mac once per run, before the first file on the card is
+  // removed or the first catalog is written (Brief 265 Part 3; ipod-db-backup.ts).
+  let macBackup: { ok: true } | { ok: false; reason: string } | null = null
+  const backupOnMac = async (): Promise<{ ok: true } | { ok: false; reason: string }> => {
+    if (macBackup) return macBackup
+    const b = await backupItunesDb({ mount: IPOD_MOUNT, root: host.dbBackupRoot ?? join(host.stateDir, 'itunesdb-backups') })
+    if (b.ok && b.dir) console.log(`activity-sync: iTunesDB backed up to ${b.dir}`)
+    if (!b.ok) console.error(`activity-sync: ${backupRefusal(b.reason)}`)
+    macBackup = b.ok ? { ok: true } : { ok: false, reason: b.reason }
+    return macBackup
+  }
 
   const writtenById = new Map<number, { srcPath: string; dstPath: string; expectedSize: number }>()
   let copied = 0
@@ -1399,12 +1421,8 @@ async function runActivitySyncHolding(
     // catalog write must not spend another write on a copy of its interim.
     if (!catalogBakDone) {
       // On this Mac first: no backup, no catalog write (Brief 265 Part 3; ipod-db-backup.ts).
-      const backup = await backupItunesDb({ mount: IPOD_MOUNT, root: host.dbBackupRoot ?? join(host.stateDir, 'itunesdb-backups') })
-      if (!backup.ok) {
-        console.error(`activity-sync: ${backupRefusal(backup.reason)}`)
-        return stop(false, { copied, copyErrors, target, error: backupRefusal(backup.reason) })
-      }
-      if (backup.dir) console.log(`activity-sync: iTunesDB backed up to ${backup.dir}`)
+      const backup = await backupOnMac()
+      if (!backup.ok) return stop(false, { copied, copyErrors, target, error: backupRefusal(backup.reason) })
       catalogBakDone = true
       try { await copyFile(ipodDb, ipodDb + '.bak') } catch { /* non-fatal */ }
     }
@@ -1665,6 +1683,15 @@ async function runActivitySyncHolding(
   }
 
   // ── 3. Remove (swap) or wipe (full) ──
+  // The catalog is backed up on this Mac before the first file leaves the card
+  // (Brief 265 Part 3): no backup, nothing removed, nothing wiped.
+  if (!swap || swap.leave.length > 0) {
+    const backup = await backupOnMac()
+    if (!backup.ok) {
+      await host.writeJournal(null)
+      return fail({ copied: 0, target, error: backupRefusal(backup.reason) })
+    }
+  }
   if (swap && swap.leave.length > 0) {
     // First the card gets a catalog of only the songs that stay. From then
     // on, deleting a leaving song can't leave the iPod pointing at nothing.

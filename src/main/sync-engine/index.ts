@@ -941,6 +941,9 @@ export function createSyncEngine(host: SyncEngineHost) {
     }
 
     const toCopy: Array<{ local: string; ipod: string; title: string; trackId: number }> = []
+    // Songs not converted because Apple's AAC encoder couldn't be used (Brief 265): named in
+    // the end-of-sync result, never copied as the lossless master or an ffmpeg AAC instead.
+    const notConverted: Array<{ id: number; title: string; artist: string }> = []
     const pathRewrites: Array<{ id: number; oldPath: string; newPath: string }> = []
     // Exact bytes that landed (or were confirmed already present) per track.
     // Verify/recopy MUST use these — never the library master — or a convert
@@ -1190,6 +1193,8 @@ export function createSyncEngine(host: SyncEngineHost) {
           // lossless master or as an ffmpeg AAC (aac-mirror-recipe.ts, Brief 265).
           if (isAacEncoderMissing(err)) {
             console.error(`sync-to-ipod: ${err instanceof Error ? err.message : String(err)}`)
+            const tr = trackByLocal.get(local)
+            notConverted.push({ id: Number(tr?.id), title: String(tr?.title ?? title), artist: String(tr?.artist ?? '') })
             copyErrors++
             sendToRenderer('sync-progress', {
               phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
@@ -2397,6 +2402,7 @@ export function createSyncEngine(host: SyncEngineHost) {
                 : `${verifiedLanded} files looked present but did not hold across two remounts — that is the N/N → 33 roulette. Not calling this a success. Sync again without unplugging.`)
               : undefined,
             ipodOrphansDeleted,
+            ...(notConverted.length > 0 ? { notConverted } : {}),
             // Return ONLY the smart-match re-links so the renderer can update
             // library.json; converted / playable card names stay on the card.
             pathRewrites: libraryPathRewrites,

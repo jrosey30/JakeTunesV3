@@ -20,7 +20,7 @@ first; the proven solution then extends across the collection.**
 |---|---|---|---|
 | Original | iPod Mini | 128 GB | ALAC |
 | PunkPod | iPod Mini | 256 GB | ALAC |
-| iBandcamp | iPod Video | 256 GB | AAC 256 kbps |
+| iBandcamp | iPod Video | 256 GB | **ALAC** (amended: Jake, 2026-11-24, "lets keep it"; it holds ~4,000 lossless files, nothing re-copied) |
 | Y2KPod | iPod 3rd Gen | 40 GB | **ALAC** |
 | IndieSleaze | iPod Nano | 8 GB | AAC 256 kbps |
 | TBD | iPod 1st Gen | 10 GB | MP3 320 kbps |
@@ -106,7 +106,7 @@ stored per-device profiles:
   lossy targets (128/192/256/320), enabled flag. The Device page edits these
   per device; changing one never requires a code change or a new brief.
 - **Seed defaults** (used only when a device has no stored profile yet) are
-  Jake's table above: both Minis ALAC, iBandcamp AAC 256, Y2KPod ALAC,
+  Jake's table above: both Minis ALAC, iBandcamp ALAC (amended), Y2KPod ALAC,
   IndieSleaze AAC 256, Gen 1 MP3 320. Devices with no profile and no seed
   follow the existing global Device-page behavior, exactly as today.
 - `convertOptionsForIpod` keeps its contract (a device's own format wins over
