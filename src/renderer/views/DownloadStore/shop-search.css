@@ -111,3 +111,21 @@
 .dl-song-name { flex: 0 1 auto; min-width: 5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dl-song-title .shop-dot { flex-shrink: 0; }
 .dl-song-title .shop-mark--inline { flex: 0 0 auto; max-width: calc(100% - 5em); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Phase 4, the approved picture: the banner when the exact edition isn't
+   there. #fff4ec on a #f3c7a8 edge, 13px words, one orange-edged button. */
+.shop-banner {
+  display: flex; align-items: center; gap: 12px;
+  max-width: 640px; margin: 0 0 4px; padding: 10px 14px;
+  background: #fff4ec; border: 1px solid #f3c7a8; border-radius: 10px;
+  font-size: 13px; color: #1d1a1b;
+}
+.shop-banner-line { flex: 1; min-width: 0; }
+.shop-banner-btn {
+  flex-shrink: 0; border: 1px solid #FD5601; background: #fff; color: #C14201;
+  border-radius: 14px; padding: 4px 12px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.shop-banner-btn:hover:not(:disabled) { background: #fff0e6; }
+.shop-banner-btn:disabled { opacity: 0.5; cursor: default; }
+.shop-banner-close { flex-shrink: 0; border: 0; background: none; color: #8a8378; font-size: 11px; cursor: pointer; padding: 2px 4px; }
+.shop-banner-close:hover { color: #C14201; }

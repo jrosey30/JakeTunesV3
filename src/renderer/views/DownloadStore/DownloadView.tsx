@@ -16,6 +16,7 @@ import { useShopMarks } from './useShopMarks'
 import ShopArtistPage from './ShopArtistPage'
 import ShopAlbumPage, { type ShopAlbumRef } from './ShopAlbumPage'
 import AlbumCardFoot, { editionsKeyName } from './AlbumCardFoot'
+import ShopBanner from './ShopBanner'
 import { askEditions } from './EditionMenu'
 import type { CardRecord } from '../../../common/shop-card-edition'
 import { albumKeyOf } from '../../utils/albumKey'
@@ -860,6 +861,8 @@ export default function DownloadView() {
       {searchErr && !searching && <div className="download-result download-result--err dl-inline-err">{searchErr}</div>}
 
       <div className="dl-body">
+        {/* Phase 4: an album saved here that can't be had as asked says so at once, with one button. */}
+        <ShopBanner />
         {page?.kind === 'artist' && (
           <ShopArtistPage
             artist={page.artist}
