@@ -8,7 +8,7 @@ import { evaluateSmartPlaylist, SMART_PLAYLIST_TITLES as TITLES } from '../utils
 import { smartPlaylistCover } from '../utils/playlistCovers'
 import { useListenMoreWeekly } from '../listenMoreWeekly'
 import { useTop1000List, useTop1000Movement, useTop1000Ranks } from '../top1000List'
-import { compactMovement, isRankedPlaylist, rankMovement, rotateRankSnap, top1000Movement, TOP_1000_RANK_COLUMN_WIDTH, weekKeyOf, RANK_SNAPSHOT_KEYS, type RankSnap } from '../../common/rank-movement'
+import { compactMovement, isRankedPlaylist, rankMovement, rotateRankSnap, TOP_1000_RANK_COLUMN_WIDTH, weekKeyOf, RANK_SNAPSHOT_KEYS, type RankSnap } from '../../common/rank-movement'
 import { useIpodLists, entryColor, renameIpodList, setIpodListHeadline, useIpodListsRole } from '../ipodLists'
 import { useTop1000Name, renameTop1000 } from '../top1000Name'
 import ListRenameField from '../components/ListRenameField'
@@ -528,11 +528,13 @@ export default function SmartPlaylistView() {
       showsPlaying: true,
       render: (track, _idx, playing) => {
         const rank = top1000Ranks?.[String(track.id)] ?? ownRank.get(track.id) ?? 0
-        const mark = compactMovement(top1000Movement(rank, top1000Moves.movement?.[String(track.id)], top1000Moves.comparedTo))
+        const mark = compactMovement(rank, top1000Moves.movement?.[String(track.id)], top1000Moves.comparedTo)
         return (
           <>
             <span className="rank-mark">
-              {playing ? <SpeakerPlayingIcon /> : mark && <span className={mark.className} title={mark.title}>{mark.glyph}</span>}
+              {playing
+                ? <span role="img" aria-label="Now playing"><SpeakerPlayingIcon /></span>
+                : mark && <span className={mark.className} title={mark.title} role="img" aria-label={mark.title}>{mark.glyph}</span>}
             </span>
             <span className="rank-num">{rank}</span>
           </>

@@ -123,13 +123,20 @@ export const TOP_1000_RANK_COLUMN_WIDTH = 48
 
 export interface CompactMovement { glyph: '▲' | '▼' | '●'; className: string; title: string }
 
-export function compactMovement(mv: RankMovement | null): CompactMovement | null {
-  if (!mv || mv.direction === 'same') return null
-  if (mv.direction === 'new') return { glyph: '●', className: `${mv.arrowClass} rank-mark-glyph`, title: 'New this week' }
-  const places = Number(mv.arrow.slice(1)) || 0
-  const lw = mv.lwLabel.slice(1, -1)
+export function compactMovement(
+  rank: number,
+  m: { lastWeekRank?: number | null; isNew?: boolean } | undefined,
+  comparedTo: string | null | undefined,
+): CompactMovement | null {
+  const mv = top1000Movement(rank, m, comparedTo)
+  if (!mv) return null
+  const className = `${mv.arrowClass} rank-mark-glyph`
+  if (mv.direction === 'new') return { glyph: '●', className, title: 'New this week' }
+  // The places come from the ranks themselves, never from the arrow's text.
+  const lw = m!.lastWeekRank as number
+  const places = Math.abs(lw - rank)
   const word = places === 1 ? 'place' : 'places'
   return mv.direction === 'up'
-    ? { glyph: '▲', className: `${mv.arrowClass} rank-mark-glyph`, title: `Up ${places} ${word} (last week ${lw})` }
-    : { glyph: '▼', className: `${mv.arrowClass} rank-mark-glyph`, title: `Down ${places} ${word} (last week ${lw})` }
+    ? { glyph: '▲', className, title: `Up ${places} ${word} (last week ${lw})` }
+    : { glyph: '▼', className, title: `Down ${places} ${word} (last week ${lw})` }
 }
