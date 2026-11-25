@@ -25,6 +25,8 @@ const home = src('views', 'HomeView.tsx')
 const shelves = src('components', 'HomeShelves.tsx')
 const g = src('components', 'TonightOnJakeTunes.tsx')
 const mixes = src('components', 'MadeForYou.tsx')
+const hero = src('components', 'HomeHero.tsx')
+const mfy = src('views', 'MadeForYouView.tsx')
 
 describe('one song menu, one album menu', () => {
   it('libraryMenus builds both', () => {
@@ -47,7 +49,7 @@ describe('one song menu, one album menu', () => {
     assert.match(host, /useGetInfoHandlers\(\)/)
   })
   it('no Home component draws a ContextMenu of its own', () => {
-    for (const [name, text] of [['HomeView', home], ['HomeShelves', shelves], ['TonightOnJakeTunes', g], ['MadeForYou', mixes]] as const) {
+    for (const [name, text] of [['HomeView', home], ['HomeShelves', shelves], ['TonightOnJakeTunes', g], ['MadeForYou', mixes], ['HomeHero', hero], ['MadeForYouView', mfy]] as const) {
       assert.doesNotMatch(text, /<ContextMenu\b/, `${name} must go through HomeItemMenus`)
     }
   })
@@ -59,16 +61,20 @@ describe('the Home\'s items right-click and drag like library items', () => {
     assert.match(shelves, /onDragStart=\{\(e\) => setTrackDragPayload\(e, c\.track\.id\)\}/)
     assert.match(shelves, /title="Recently Added" scrollKey="home-row-recent"/)
   })
-  it('G: the hero and island covers are albums; Now Digging drags as the artist, like an Artists tile', () => {
-    assert.equal((g.match(/menus\?\.openAlbumMenu\(/g) ?? []).length, 2)
-    assert.equal((g.match(/setAlbumDragPayload\(e, sortAlbumTracks\(/g) ?? []).length, 2)
+  it('the hero cover is an album; the island covers are albums; Now Digging drags as the artist, like an Artists tile', () => {
+    // V7: the hero is HomeHero; the island Cover Flow + Now Digging moved to Made for You.
+    assert.match(hero, /menus\?\.openAlbumMenu\(e, album\.tracks\)/)
+    assert.match(hero, /setAlbumDragPayload\(e, ordered\.map/)
+    assert.equal((g.match(/menus\?\.openAlbumMenu\(/g) ?? []).length, 1)
+    assert.equal((g.match(/setAlbumDragPayload\(e, sortAlbumTracks\(/g) ?? []).length, 1)
     assert.match(g, /tracksForArtist\(tracks, d\.artist\)/)
   })
-  it("Today's pick is an album; Rediscover an artist; a daily mix drags as its songs in order", () => {
-    assert.match(home, /homeMenus\.api\.openAlbumMenu\(e, featuredAlbum\.tracks\)/)
-    assert.match(home, /setAlbumDragPayload\(e, sortAlbumTracks\(featuredAlbum\.tracks\)/)
-    assert.match(home, /tracksForArtist\(regularTracks, pick\.artist\)/)
+  it("a daily mix drags as its songs in order (Rediscover and Today's pick were cut in V7)", () => {
     assert.match(mixes, /onDragStart=\{\(e\) => setAlbumDragPayload\(e, m\.tracks\.map/)
+  })
+  it('Made for You is its own menu host, like the Home', () => {
+    assert.match(mfy, /<HomeItemMenusProvider value=\{menus\.api\}>/)
+    assert.match(mfy, /\{menus\.overlays\}/)
   })
   it('the menus and sheets render beside .home-view, outside its stacking context', () => {
     assert.match(home, /<\/div>\n(?:\s*\{\/\*[\s\S]*?\*\/\}\n)?\s*<ScrollTopButton targetRef=\{rootRef\} \/>\n\s*\{homeMenus\.overlays\}\n\s*<\/HomeItemMenusProvider>/)

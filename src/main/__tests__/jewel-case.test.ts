@@ -11,7 +11,7 @@ import {
   JEWEL_CASE, JEWEL_CASE_MOTION, DISC_HANDOFF_TIMING,
   cubicBezier, lidAngleOpening, lidAngleClosing, lidPointDepth, cssLidAngle, lidLook,
   lidOpeningFrames, lidClosingFrames, lidOpenLook, jewelCaseGeometry,
-  discHandoffKind, keepOpenedAfter, sameHandoffLoc,
+  discHandoffKind, keepOpenedAfter, sameHandoffLoc, DISC_HANDOFF_PAGE,
 } from '../../common/jewel-case.ts'
 
 const near = (a: number, b: number, eps: number, msg?: string): void =>
@@ -206,7 +206,8 @@ describe('jewelCaseGeometry', () => {
 })
 
 describe('discHandoffKind — when the album page comes out of / goes back into the disc', () => {
-  const home = { view: 'home', albumKey: null }
+  // V7: the Cover Flow (and so the handoff) lives on Made for You, not the Home.
+  const home = { view: DISC_HANDOFF_PAGE, albumKey: null }
   const page = (k: string) => ({ view: 'album-detail', albumKey: k })
   const songs = { view: 'songs', albumKey: null }
   test('open: Home → the armed album only', () => {
@@ -236,7 +237,7 @@ describe('discHandoffKind — when the album page comes out of / goes back into 
     assert.equal(keepOpenedAfter(page('a'), null), false)
   })
   test('sameHandoffLoc: album pages compare by key, other views by name', () => {
-    assert.ok(sameHandoffLoc(home, { view: 'home', albumKey: 'stale' }))
+    assert.ok(sameHandoffLoc(home, { view: DISC_HANDOFF_PAGE, albumKey: 'stale' }))
     assert.ok(sameHandoffLoc(page('a'), page('a')))
     assert.ok(!sameHandoffLoc(page('a'), page('b')))
     assert.ok(!sameHandoffLoc(home, songs))

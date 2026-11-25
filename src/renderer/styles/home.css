@@ -2013,3 +2013,52 @@
   /* Reduce Motion: the stamp is simply shown for its 1.3 s (motion.css, timed displays). */
   .home-concert-stamp { transform: translate(-50%, -50%) rotate(-11deg); }
 }
+
+/* V7 (2026-11-24): the pages that took what left the Home. Made for You opens
+   on launch page G's island band, under the shell's back strip — so its top
+   is the 24px every page starts at, not the 72px G kept clear for the Home's
+   own back pill. News sits under the Record Shop's tabs. */
+.mfy-view .tn-inner { padding-top: 24px; }
+.news-view { padding-top: 24px; }
+.news-view-empty {
+  margin: 24px var(--home-gutter, 28px);
+  color: var(--text-secondary, #6d6669);
+  font-size: 13px;
+}
+/* The shop's For You tab opens on New This Week and On the Horizon (V7):
+   the Home's bands inside the shop's own 28px padding, so no gutter of
+   their own. */
+.shop-new-releases { --home-gutter: 0px; --home-section-gap: 32px; }
+/* The news page: a title, then every headline as a card in a grid. */
+.news-view-title { margin: 0 var(--home-gutter, 28px) 8px; font-size: 22px; font-weight: 700; }
+.news-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin: 12px var(--home-gutter, 28px) 0;
+}
+.news-list .news-list-item { width: auto; }
+/* The Home's one news line under Shows (the phone's Tonight news line). */
+.home-news-line {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 var(--home-gutter, 28px) var(--home-section-gap, 44px);
+}
+.home-news-line-label { font-size: 11px; letter-spacing: 0.08em; color: var(--text-secondary, #6d6669); }
+.home-news-line-title {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.home-news-line-title:hover { text-decoration: underline; }

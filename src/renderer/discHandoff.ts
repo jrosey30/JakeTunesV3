@@ -1,8 +1,9 @@
 /**
  * The disc ↔ album page handoff (Island Albums jewel case, 2026-10-21): ONE
- * View Transition between the Home's jewel-case disc and the album page's
+ * View Transition between the island Cover Flow's jewel-case disc (on Made
+ * for You since V7, DISC_HANDOFF_PAGE; it was the Home's) and the album page's
  * cover. Open: the disc grows into the album page's cover while the page
- * fades up around it. Back: the cover shrinks into the disc, then the Home's
+ * fades up around it. Back: the cover shrinks into the disc, then the page's
  * case drops the disc onto its hub and snaps the lid shut
  * (components/JewelCase.tsx; numbers in common/jewel-case.ts).
  *
@@ -12,12 +13,12 @@
  * Who does what:
  *   TonightOnJakeTunes  opens the case; when the disc is up it ARMS the
  *                       handoff (armDiscOpen) and dispatches the album page.
- *   MainContent         (useDiscHandoffView) sees every navigation. Home →
+ *   MainContent         (useDiscHandoffView) sees every navigation. Flow page →
  *                       the armed album, or that album page → straight back
- *                       to Home, holds the OLD view on screen for the frame
+ *                       to it, holds the OLD view on screen for the frame
  *                       the browser needs to capture it, then swaps views
  *                       inside document.startViewTransition. Any other
- *                       navigation forgets the case (no reverse unless Home
+ *                       navigation forgets the case (no reverse unless the flow's page
  *                       is where you came from).
  *   CSS                 (styles/disc-handoff.css) names the disc and the
  *                       album page's cover `jt-disc` only while the
@@ -28,7 +29,7 @@
 import { useLayoutEffect, useReducer, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import {
-  discHandoffKind, keepOpenedAfter, sameHandoffLoc, DISC_HANDOFF_TIMING, JEWEL_CASE_MOTION,
+  discHandoffKind, keepOpenedAfter, sameHandoffLoc, DISC_HANDOFF_TIMING, JEWEL_CASE_MOTION, DISC_HANDOFF_PAGE,
   type DiscHandoffKind, type HandoffLoc,
 } from '../common/jewel-case'
 import './styles/disc-handoff.css'
@@ -39,7 +40,7 @@ interface CaseRef { albumKey: string; flowKey: string }
 let armed: CaseRef | null = null
 /** The album page on screen came out of this case. */
 let opened: CaseRef | null = null
-/** Back on Home: this case is open with the disc up; `finished` = the page has shrunk into it. */
+/** Back on the flow's page: this case is open with the disc up; `finished` = the page has shrunk into it. */
 export interface ReturningCase { flowKey: string; finished: Promise<void> }
 let returning: ReturningCase | null = null
 
@@ -59,12 +60,12 @@ export function armDiscOpen(albumKey: string, flowKey: string): void {
   armed = { albumKey, flowKey }
 }
 
-/** Home mounting: is a case coming back open (the reverse)? A pure read. */
+/** The flow's page mounting: is a case coming back open (the reverse)? A pure read. */
 export function peekReturningCase(): ReturningCase | null {
   return returning
 }
 
-/** The lid is shut again (or the Home gave up on it). */
+/** The lid is shut again (or the page gave up on it). */
 export function endReturningCase(r: ReturningCase | null): void {
   if (r && returning === r) returning = null
 }
@@ -73,7 +74,7 @@ export function endReturningCase(r: ReturningCase | null): void {
 function note(next: HandoffLoc): void {
   armed = null
   if (!keepOpenedAfter(next, opened)) opened = null
-  if (next.view !== 'home') returning = null
+  if (next.view !== DISC_HANDOFF_PAGE) returning = null
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -136,7 +137,7 @@ function runDiscHandoff(kind: DiscHandoffKind, release: () => void): void {
     vt = document.startViewTransition(async () => {
       doRelease()
       // The case didn't come back (the island changed under it): no disc to
-      // shrink into — straight to the Home, the plain way.
+      // shrink into — straight to the page, the plain way.
       if (kind === 'close' && !document.querySelector('.tn-case-disc')) {
         returning = null
         vt.skipTransition()

@@ -18,7 +18,9 @@
  */
 
 /** Browse grids whose identity doesn't depend on a selected item.
- *  Not Home: its Island jewel case reverses the disc handoff on MOUNT
+ *  Not Home, and not Made for You, where the island Cover Flow moved in V7
+ *  (2026-11-24) — the reasons below were written for the Home and now hold
+ *  for that page: its Island jewel case reverses the disc handoff on MOUNT
  *  (discHandoff.ts peekReturningCase) and its Cover Flow owns ←/→ while on
  *  screen (arrowKeyOwner.ts) — a hidden-but-mounted Home would break the one
  *  and muddle the other. Home's back gets the return path (no entrance

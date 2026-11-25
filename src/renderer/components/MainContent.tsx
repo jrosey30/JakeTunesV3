@@ -22,6 +22,8 @@ import CDImportView from '../views/CDImportView'
 import ScotusView from '../views/ScotusView'
 import RockDnaView from '../views/RockDnaView'
 import YearInReviewView from '../views/YearInReviewView'
+import MadeForYouView from '../views/MadeForYouView'
+import NewsView from '../views/NewsView'
 import Top1000QuizView from '../views/Top1000QuizView'
 import ViewModeToggle from './ViewModeToggle'
 import { useDiscHandoffView } from '../discHandoff'
@@ -159,6 +161,8 @@ export default function MainContent() {
     case 'album-detail': viewElement = <AlbumDetailView />; break
     case 'concerts': viewElement = <ConcertsView />; break
     case 'year-in-review': viewElement = <YearInReviewView />; break
+    case 'made-for-you': viewElement = <MadeForYouView />; break
+    case 'music-news': viewElement = <NewsView />; break
     case 'top1000': viewElement = <Top1000QuizView />; break
     case 'concert-detail': viewElement = <ConcertDetailView />; break
     case 'mixtape-detail': viewElement = <MixtapeView />; break

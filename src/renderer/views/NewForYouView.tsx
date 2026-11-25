@@ -48,6 +48,7 @@ import { showDownload } from '../components/DownloadsPanel'
 import { LIST_MARK } from '../../common/shop-names'
 import AlbumSaveButton from './DownloadStore/AlbumSaveButton'
 import '../styles/discover-feed.css'
+import ShopNewReleases from '../components/ShopNewReleases'
 
 interface FeedCard {
   lane: string
@@ -586,6 +587,10 @@ export default function NewForYouView() {
           </button>
         </div>
       </div>
+
+      {/* V7 (2026-11-24): New This Week and On the Horizon, which left the
+          Home, open the For You tab (common/home-layout.ts MOVED_OFF_HOME). */}
+      <ShopNewReleases />
 
       {loading && lanes.length === 0 && (
         <PageGate note="Reading your taste…" layout="grid" />
