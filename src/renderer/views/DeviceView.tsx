@@ -14,6 +14,7 @@ import { checkIpodName, macShowsLine } from '../../common/ipod-name'
 // before copying anything.
 import { buildSmartPlaylistsForSync } from '../utils/smartPlaylists'
 import ConfirmDialog from '../components/ConfirmDialog'
+import IpodFormatOptions from '../components/IpodFormatOptions'
 import IpodLibraryModal from '../components/IpodLibraryModal'
 import SyncHistorySheet, { SyncHistoryRows, type SyncHistoryEntryLike } from '../components/SyncHistorySheet'
 import { subscribeSyncTimeline, getSyncTimeline, startSyncTimeline, finishSyncTimeline, clearSyncTimeline, deviceFixtureRequested, subscribeEjectFailure, getEjectFailure, showEjectFailure } from '../syncTimeline'
@@ -815,6 +816,8 @@ export default function DeviceView() {
         )}
         {optionsOpen && (
           <div className="device-itunes-options device-itunes-options--disclosure">
+            {/* Brief 265: this iPod's own format and the convert cache (IpodFormatOptions). */}
+            <IpodFormatOptions />
             <label className="device-itunes-option">
               <input
                 type="checkbox"

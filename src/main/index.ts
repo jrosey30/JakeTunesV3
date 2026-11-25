@@ -54,8 +54,10 @@ import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './p
 import { createPlayCache } from './play-cache.ts'
 import { atBackgroundPriority } from './background-priority.ts'
 import { startSyncConvertCache } from './ipc/sync-cache-ipc.ts'
+import { registerIpodProfileIpc } from './ipc/ipod-profile-ipc.ts'
 import { touchUsed } from './sync-convert-cache.ts'
-import { AacEncoderMissingError, IPOD_ALAC_MIRROR_TOKEN, MP3_MIRROR_TOKEN, aacMirrorCacheName, afconvertAacArgs, createAfconvertCheck, pcmDecodeArgs } from './aac-mirror-recipe.ts'
+import { protectedMirrorNames } from './sync-convert-cache-protect.ts'
+import { AacEncoderMissingError, aacMirrorCacheName, ipodAlacMirrorCacheName, mp3MirrorCacheName, afconvertAacArgs, createAfconvertCheck, pcmDecodeArgs } from './aac-mirror-recipe.ts'
 import { startSelfCare } from './self-care.ts'; import { analysisCandidates, pruneBrake } from './self-care-core.ts'; import { removeAppTempFiles } from './self-care-files.ts'
 import { createHeldForJake } from './jake-edits-guard.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
@@ -3375,7 +3377,6 @@ async function buildMp3Mirror(srcPath: string, targetKbps: number): Promise<stri
   const { promisify } = await import('util')
   const execP = promisify(execFile)
   const bgExec = (cmd: string, args: string[], o: { timeout: number }) => { const [f, a] = atBackgroundPriority(cmd, args); return execP(f, a, o) }
-  const { createHash } = await import('crypto')
   const srcStat = await stat(srcPath).catch(() => null)
   if (!srcStat) return null
   // Ask the file itself, never the library's codec label: 27 real MP3s are labelled 'alac'
@@ -3395,8 +3396,7 @@ async function buildMp3Mirror(srcPath: string, targetKbps: number): Promise<stri
   const kbps = Math.min(320, Math.max(128, Math.round(Number(targetKbps) || 320)))
   const cacheDir = join(app.getPath('userData'), SYNC_CONVERT_CACHE_SUBDIR)
   await mkdir(cacheDir, { recursive: true }).catch((err) => console.warn('[sync-convert] cache folder:', err instanceof Error ? err.message : err))
-  const hash = createHash('sha1').update(`${srcPath}|${kbps}|${MP3_MIRROR_TOKEN}`).digest('hex').slice(0, 16)
-  const cached = join(cacheDir, `${hash}.mp3`)
+  const cached = join(cacheDir, mp3MirrorCacheName(srcPath, kbps))
   try {
     const cStat = await stat(cached)
     if (cStat.mtimeMs >= srcStat.mtimeMs && cStat.size > 0) { await touchUsed(cached); return cached }
@@ -3438,9 +3438,7 @@ async function buildIpodSafeAlacMirror(srcPath: string): Promise<string | null> 
   if (!srcStat) return null
   const cacheDir = join(app.getPath('userData'), SYNC_CONVERT_CACHE_SUBDIR)
   await mkdir(cacheDir, { recursive: true }).catch(() => {})
-  const { createHash } = await import('crypto')
-  const hash = createHash('sha1').update(`${srcPath}|${IPOD_ALAC_MIRROR_TOKEN}`).digest('hex').slice(0, 16)
-  const cached = join(cacheDir, `${hash}.m4a`)
+  const cached = join(cacheDir, ipodAlacMirrorCacheName(srcPath))
   try {
     const cStat = await stat(cached)
     if (cStat.mtimeMs >= srcStat.mtimeMs && cStat.size > 0) { await touchUsed(cached); return cached }
@@ -5274,7 +5272,17 @@ const syncEngine = createSyncEngine({
   devicePlaylists: (input) => createDevicePlaylists({ baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), warn: (m) => console.warn(m) }).forSync(input),
 })
 // The convert cache's upkeep: leftover partials swept, a size cap (off until Jake sets one), clear (Brief 265 Part 5).
-startSyncConvertCache(ipc, { userData: app.getPath('userData'), syncInFlight: () => syncEngine.isSyncInFlight() })
+startSyncConvertCache(ipc, {
+  userData: app.getPath('userData'),
+  syncInFlight: () => syncEngine.isSyncInFlight(),
+  // A size limit never takes a copy a song on an iPod was made from (sync-convert-cache-protect.ts).
+  protectedNames: async () => protectedMirrorNames({
+    stateDir: STATE_DIR,
+    libraryRoot: MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''),
+    tracks: (((await libraryCache.get()) as CachedLibrary).tracks || []) as ReadonlyArray<{ id?: unknown; path?: unknown }>,
+  }),
+})
+registerIpodProfileIpc(ipc, { stateDir: STATE_DIR, getMount: () => detectedIpodMount, syncInFlight: () => syncEngine.isSyncInFlight() })  // the Device page's iPod format (Brief 265)
 const { handleSyncToIpod, handleSyncIpodFromDevice } = syncEngine
 analysisSyncBusy = () => syncEngine.isSyncInFlight()   // tempo/key analysis waits out an iPod sync
 
