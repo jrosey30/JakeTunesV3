@@ -93,6 +93,7 @@ import {
   type SwapManifestRow,
   type SwapPlan,
 } from './ipod-swap-sync.ts'
+import { NEW_TAG, ORIG_TAG, catalogSizesByPath, nextWave, noRoomForReplacement, recoverInterruptedWaves, sideName, type WaveItem } from './ipod-replace-waves.ts'
 import { startRoundTripGeneration } from './sync-engine/roundtrip.ts'
 import { orderForIpodCatalog, conformCatalogIdOrder } from './ipod-catalog-order.ts'
 import { REWIPED_NOTE, dropKeptNote, swapKeptNote } from '../common/sync-failure-copy.ts'
@@ -184,6 +185,8 @@ export interface ActivitySyncHost {
   remountVolume?: typeof platformRemountVolume
   /** Tests only: force the contiguity step to fail. Production leaves it unset. */
   ensureContiguousDb?: typeof platformEnsureContiguousDb
+  /** Tests only: the card's free bytes (replacement waves). Production reads it with statfs. */
+  cardFreeBytes?: (mount: string) => Promise<number | null>
   /** Tests only: the card's size in bytes. Production reads it with statfs. */
   cardCapacityBytes?: (mount: string) => Promise<number | null>
   /** Tests only: one song onto the card (a fake card fails it with EIO). Production: copyFile. */
@@ -1041,7 +1044,21 @@ async function runActivitySyncHolding(
     await host.writeJournal(null)
     return fail({ copied: 0, error: tooSmall, target })
   }
+  // A replacement wave a cut-off sync left half-done is put right first, by the catalog on the
+  // card (Brief 265; ipod-replace-waves.ts): never-committed originals go back, committed ones' go.
+  {
+    const dbBuf = await readFile(join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')).catch(() => null)
+    const fixed = await recoverInterruptedWaves(join(IPOD_MOUNT, 'iPod_Control', 'Music'), dbBuf ? catalogSizesByPath(dbBuf) : null,
+      (abs) => tsaNormalizeColonPath(abs.startsWith(IPOD_MOUNT) ? abs.slice(IPOD_MOUNT.length + 1) : abs))
+    if (fixed.restored.length + fixed.released.length + fixed.staleNew.length + fixed.kept.length > 0) {
+      console.log(`activity-sync: an interrupted replacement was put right — ${fixed.restored.length} original(s) restored, ${fixed.released.length} released, ${fixed.staleNew.length} unfinished copy(ies) removed, ${fixed.kept.length} left as found`)
+    }
+  }
   const proof = proveCardForSwap(priorManifestRaw, priorSealRaw, await readCardState(IPOD_MOUNT))
+  /** Songs whose card file changes at the same card path: replaced in waves, originals kept until committed. */
+  let replaceIds = new Set<number>()
+  /** The ones a wave actually replaced (counted as one out and one in, like any changed song). */
+  const replacedIds = new Set<number>()
   let swap: SwapPlan | null = null
   let fullReason: string | null = null
   const stayRows = new Map<number, SwapManifestRow>()
@@ -1049,7 +1066,10 @@ async function runActivitySyncHolding(
     fullReason = proof.why
   } else {
     const candidate = planSwap(candidates, proof.rows)
-    fullReason = swapTooBig(candidate, target)
+    // A replaced song isn't counted as changing the card: it goes on in waves beside its
+    // original, so a format change never turns into a full wipe-and-copy (Brief 265).
+    replaceIds = new Set(candidates.filter((c) => stayVerdict(c, proof.rows.get(c.id)) === 'file-changed').map((c) => c.id))
+    fullReason = swapTooBig({ ...candidate, arrive: candidate.arrive.filter((id) => !replaceIds.has(id)) }, target)
     if (!fullReason) {
       // The fragmentation backstop: enough holes since the last full copy
       // and the card gets a fresh one.
@@ -1381,7 +1401,7 @@ async function runActivitySyncHolding(
   const stopAfterTouch = (why: ActivitySyncResult): Promise<ActivitySyncResult> =>
     swap ? swapStop(why) : rewipeAndStop(why)
   const swapCounts = () => swap
-    ? { out: swap.leave.length, in: copied, stayed: kept, changed: swap.changed.length }
+    ? { out: swap.leave.length + replacedIds.size, in: copied, stayed: kept, changed: swap.changed.length }
     : undefined
 
   // ── The catalog, written, put on the card and proven (interim or final) ──
@@ -1756,6 +1776,123 @@ async function runActivitySyncHolding(
       return fail({ copied: 0, target, error: `Couldn’t clear this iPod’s record of converted songs on this Mac (${dropped.error}). Nothing on the iPod was changed.` })
     }
   }
+  // ── 2d. Replace in waves (Brief 265 Parts 2-3; ipod-replace-waves.ts) ──
+  // A song whose card file changes at the same card path (a new format, a re-ripped master, a
+  // new recipe) is replaced beside its original, in waves sized to the card's free space: stage
+  // `.name.jtnew`, confirm it, swap names (the original kept as `.name.jtorig`), commit a catalog
+  // naming the replacements, and only then delete the wave's originals. Never delete first.
+  if (swap && replaceIds.size > 0) {
+    const backup = await backupOnMac()
+    if (!backup.ok) {
+      await host.writeJournal(null)
+      return fail({ copied: 0, target, error: backupRefusal(backup.reason) })
+    }
+    const byId = new Map(plan.map((e) => [e.id, e]))
+    const pending: Array<WaveItem & { e: CopyPlanEntry; row: SwapManifestRow }> = []
+    for (const id of replaceIds) {
+      const e = byId.get(id)
+      const row = proof.ok ? proof.rows.get(id) : undefined
+      if (!e || !row || fetchFailedIds.has(id) || e.later) continue
+      const newSize = e.knownSourceSize ?? (await stat(e.srcToCopy).catch(() => null))?.size ?? 0
+      if (newSize > 0) pending.push({ id, newSize, e, row })
+    }
+    const sourceFor = async (e: CopyPlanEntry): Promise<{ abs: string; cleanup: () => Promise<void> }> => {
+      const held = preStaged.get(e.id)
+      if (held) return { abs: held.abs, cleanup: async () => {} }
+      if (e.restage) {
+        const staged = await host.stageTrack(e.restage.colon, e.restage.id)
+        if (!staged.ok) throw new Error(staged.error)
+        return { abs: staged.abs, cleanup: staged.cleanup }
+      }
+      return { abs: e.srcToCopy, cleanup: async () => {} }
+    }
+    let replaced = 0
+    while (pending.length > 0) {
+      if (host.isCancelled()) {
+        return swapStop(fail({ copied: 0, cancelled: true, error: `Sync cancelled by user — ${replaced} song(s) were replaced; the rest are as they were.`, target }))
+      }
+      const free = host.cardFreeBytes
+        ? (await host.cardFreeBytes(IPOD_MOUNT).catch(() => null)) ?? 0
+        : await statfs(IPOD_MOUNT).then((f) => Number(f.bavail) * Number(f.bsize), () => 0)
+      const wave = nextWave(pending, free).map((w) => pending.find((p) => p.id === w.id)!)
+      if (wave.length === 0) {
+        const first = pending[0]
+        const msg = noRoomForReplacement(first.e.title, first.newSize, free)
+        console.error(`activity-sync: ${msg}`)
+        return swapStop(fail({ copied: 0, target, error: msg }))
+      }
+      host.sendProgress({ phase: 'copy', current: replaced, total: replaceIds.size, mode, title: `Replacing ${wave.length} song${wave.length === 1 ? '' : 's'} beside the old copies…` })
+      const staged: string[] = []
+      const swapped: Array<{ dst: string; orig: string }> = []
+      const undo = async (): Promise<void> => {
+        for (const sw of swapped.reverse()) {
+          await unlink(sw.dst).catch((err) => console.warn('activity-sync: undo replacement:', err instanceof Error ? err.message : err))
+          await rename(sw.orig, sw.dst).catch((err) => console.error(`activity-sync: could not put back ${sw.dst} (its original is ${sw.orig}):`, err instanceof Error ? err.message : err))
+        }
+        for (const n of staged) await unlink(n).catch(() => undefined)
+      }
+      try {
+        // 1. Stage every replacement of the wave beside its original, confirmed on the card.
+        for (const w of wave) {
+          const src = await sourceFor(w.e)
+          try {
+            const tmp = sideName(w.e.dstToCopy, NEW_TAG)
+            await copyFile(src.abs, tmp)
+            staged.push(tmp)
+            const conf = await confirmWriteOnCard(src.abs, tmp)
+            if (!conf.ok) throw new Error(`the new copy of "${w.e.title}" didn't land on the card (${conf.reason})`)
+          } finally { await src.cleanup() }
+        }
+        // 2. Swap names: the original stays on the card, hidden, until the catalog is committed.
+        for (const w of wave) {
+          const orig = sideName(w.e.dstToCopy, ORIG_TAG)
+          await rename(w.e.dstToCopy, orig)
+          swapped.push({ dst: w.e.dstToCopy, orig })
+          await rename(sideName(w.e.dstToCopy, NEW_TAG), w.e.dstToCopy)
+        }
+        staged.length = 0
+      } catch (err) {
+        await undo()
+        const msg = `Couldn't put the new copies on the iPod (${err instanceof Error ? err.message : String(err)}). Every song is as it was.`
+        console.error(`activity-sync: ${msg}`)
+        return swapStop(fail({ copied: 0, target, error: msg }))
+      }
+      // 3. Commit: a catalog of the songs that stay, the replaced ones at their new sizes and the
+      //    ones still to replace at their old sizes.
+      const done = new Set(wave.map((w) => w.id))
+      for (const w of wave) {
+        keepIds.add(w.id)
+        stayRows.set(w.id, { ...w.row, size: w.newSize, sourceSize: masterSizeById.get(w.id) || w.row.sourceSize })
+      }
+      const inCatalog = new Set<number>([...keepIds, ...pending.map((p) => p.id)])
+      const sizes = new Map<number, number>()
+      for (const id of inCatalog) {
+        const r = stayRows.get(id) ?? (proof.ok ? proof.rows.get(id) : undefined)
+        if (r) sizes.set(id, r.size)
+      }
+      const committed = await putCatalog(
+        tracks.filter((t) => inCatalog.has(Number(t.id))),
+        playlists.map((p) => ({ ...p, trackIds: (Array.isArray(p.trackIds) ? p.trackIds : []).filter((id) => inCatalog.has(Number(id))) })).filter((p) => p.trackIds.length > 0),
+        'interim', sizes)
+      if (!committed.ok) {
+        for (const w of wave) { keepIds.delete(w.id); stayRows.delete(w.id) }
+        await undo()
+        return swapStop(committed.result)
+      }
+      // 4. Release: the wave's originals go now that the catalog names the replacements.
+      for (const sw of swapped) await unlink(sw.orig).catch((err) => console.warn(`activity-sync: original ${sw.orig} left behind (the next sync removes it):`, err instanceof Error ? err.message : err))
+      for (const w of wave) { keepAbs.add(w.e.dstToCopy); replacedIds.add(w.id) }
+      // The card's catalog now names exactly these files: a stop from here leaves them alone.
+      cataloguedAbs = new Set(plan.filter((e) => inCatalog.has(e.id)).map((e) => e.dstToCopy))
+      replaced += wave.length
+      for (let k = pending.length - 1; k >= 0; k--) if (done.has(pending[k].id)) pending.splice(k, 1)
+      console.log(`activity-sync: replaced ${wave.length} song(s) in a wave (${replaced}/${replaceIds.size}); originals released after the catalog was committed`)
+    }
+    // Replaced songs now stay where they are: nothing below removes or copies them again.
+    swap.arrive = swap.arrive.filter((id) => !keepIds.has(id))
+    swap.leave = swap.leave.filter((r) => !keepIds.has(r.id))
+  }
+
   // ── 3. Remove (swap) or wipe (full) ──
   // The catalog is backed up on this Mac before the first file leaves the card
   // (Brief 265 Part 3): no backup, nothing removed, nothing wiped.
@@ -2057,7 +2194,9 @@ async function runActivitySyncHolding(
       writtenById.set(e.id, { srcPath: e.srcToCopy, dstPath: e.dstToCopy, expectedSize: stayRows.get(e.id)?.size ?? 0 })
       const facts = await cardFileFacts(e.dstToCopy)
       if (facts) cardMtime.set(e.id, facts.mtimeMs)
-      kept++
+      // A song replaced in a wave was copied (beside its original), not kept as it was.
+      if (replacedIds.has(e.id)) copied++
+      else kept++
       settled.add(e.id)
       continue
     }
