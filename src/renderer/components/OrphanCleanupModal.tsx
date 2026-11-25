@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import ConfirmDialog from './ConfirmDialog'
 import '../styles/import-convert.css'
 import CloseButton from './CloseButton'
+import { refusalWords } from '../deadTrackWords'
 
 interface OrphanSample {
   basename: string
@@ -80,7 +81,7 @@ export default function OrphanCleanupModal({ onClose, onLibraryChanged }: Props)
     try {
       const r = await window.electronAPI.purgeLibraryOrphans()
       if (!r.ok) {
-        setError('Couldn’t delete them. Nothing was changed.')
+        setError(refusalWords(r.reason))
         setRunning(false)
         return
       }
@@ -104,7 +105,7 @@ export default function OrphanCleanupModal({ onClose, onLibraryChanged }: Props)
     try {
       const r = await window.electronAPI.removeDeadTracks()
       if (!r.ok) {
-        setError('Couldn’t remove them.')
+        setError(refusalWords(r.reason))   // the guard's reason, in plain words
         setRunning(false)
         return
       }

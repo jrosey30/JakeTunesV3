@@ -1171,14 +1171,14 @@ declare global {
         samples?: Array<{ basename: string; mtimeMs: number; size: number }>
         error?: string
       }>
-      purgeLibraryOrphans: () => Promise<{ ok: boolean; deleted?: number; bytesFreed?: number; error?: string }>
+      purgeLibraryOrphans: () => Promise<{ ok: boolean; deleted?: number; bytesFreed?: number; error?: string; reason?: string }>
       scanDeadTracks: () => Promise<{
         ok: boolean
         count?: number
         tracks?: Array<{ id: number; title: string; artist: string; path: string }>
         error?: string
       }>
-      removeDeadTracks: () => Promise<{ ok: boolean; removed?: number; error?: string }>
+      removeDeadTracks: () => Promise<{ ok: boolean; removed?: number; error?: string; reason?: string }>
       brainStatus?: () => Promise<{ ok: boolean; tracks?: number; subgenred?: number; starred?: number; descriptors?: number; themed?: number; descriptorsMtime?: number; lyrics?: number; embeddingsMtime?: number; embeddingsBytes?: number; syncs?: number; syncEdits?: number; lastSync?: string | null }>
       getIpodDbTracks: () => Promise<{ ok: boolean; tracks: Track[]; playlists: { name: string; trackIds: number[] }[]; total: number; error?: string }>
       onLibraryExternalChange: (callback: () => void) => () => void

@@ -206,7 +206,7 @@ export default function SettingsModal({ initial, onClose, onSaved, onApplied, in
   >([])
   // Storage › Advanced: covers Jake set by hand (one small read).
   const [artworkLockCount, setArtworkLockCount] = useState<number | null>(null)
-  // Storage › Advanced: Music Man's song index. The nightly check keeps it
+  // Storage › Advanced: the Music Man's song index. The nightly check keeps it
   // current; "Update now" is the same run.
   const [embedStatus, setEmbedStatus] = useState<{ configured: boolean; count: number; total: number; stale: number } | null>(null)
   const [embedRunning, setEmbedRunning] = useState(false)
@@ -852,7 +852,12 @@ export default function SettingsModal({ initial, onClose, onSaved, onApplied, in
                       const off: AppSettings = { ...initial, library: { ...initial.library, offloadAudioToHomemini: false } }
                       setDraft((d) => ({ ...d, library: { ...d.library, offloadAudioToHomemini: false } }))
                       void window.electronAPI.saveAppSettings(off as unknown as Record<string, unknown>)
-                        .then(() => { onApplied?.(off); return window.electronAPI.offloadBringBack() }).then((r) => {
+                        .then((saved) => {
+                          // Only once the switch-off is saved: otherwise the next pass would move them out again.
+                          if (!saved.ok) throw new Error('switch-off not saved')
+                          onApplied?.(off)
+                          return window.electronAPI.offloadBringBack()
+                        }).then((r) => {
                         const n = r.restored ?? 0
                         const songs = n === 1 ? 'one song' : `${n.toLocaleString()} songs`
                         setBringBackMsg(r.ok ? `Brought back ${songs}.` : n > 0 ? `Brought back ${songs}, then stopped. Try again later.` : 'Nothing to bring back.')

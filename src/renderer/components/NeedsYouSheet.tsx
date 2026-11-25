@@ -1,7 +1,7 @@
 /**
  * Needs You (V7, File › Library › Needs You…): the only things the library
  * can't decide by itself. Everything else (leftover files, file sizes, tags,
- * the play cache, Music Man's index, tempo and key) the nightly check does on
+ * the play cache, the Music Man's index, tempo and key) the nightly check does on
  * its own (main/self-care.ts).
  *
  *   - Songs that may be in the library twice: Jake picks which copy goes.

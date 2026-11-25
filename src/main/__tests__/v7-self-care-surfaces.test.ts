@@ -89,7 +89,7 @@ describe('Settings in plain words', () => {
     ['auto-repair', /auto-repair/i],
     ['an error code', /\berror code\b/i],
   ]
-  const FILES = ['renderer/components/SettingsModal.tsx', 'renderer/components/NeedsYouSheet.tsx', 'renderer/components/CloseButton.tsx', 'renderer/views/MusicManView.tsx']
+  const FILES = ['renderer/components/SettingsModal.tsx', 'renderer/components/NeedsYouSheet.tsx', 'renderer/components/CloseButton.tsx', 'renderer/views/MusicManView.tsx', 'renderer/components/OrphanCleanupModal.tsx', 'renderer/deadTrackWords.ts']
 
   for (const file of FILES) {
     test(`${file} says none of the internal names`, () => {
@@ -168,6 +168,24 @@ describe('offload keeps its rules', () => {
     const flow = settings.slice(at, settings.indexOf('offloadBringBack()', at) + 20)
     assert.match(flow, /offloadAudioToHomemini: false/)
     assert.ok(flow.indexOf('saveAppSettings(off') < flow.indexOf('offloadBringBack()'), 'saved off first')
+    assert.match(flow, /if \(!saved\.ok\) throw new Error\('switch-off not saved'\)/, 'nothing comes back unless the switch-off saved')
+  })
+  test('deleting files not in the library refuses on a music folder that is not this Mac\'s own (Needs You points here)', () => {
+    const index = read('main/index.ts')
+    const at = index.indexOf('async function purgeLibraryOrphans(')
+    const fn = index.slice(at, index.indexOf('\n}\n', at))
+    assert.match(fn, /const refused = await localAudioDropRefused\(MUSIC_DIR\)\n\s*if \(refused\) return \{ deleted: 0, bytesFreed: 0, refused \}/)
+    assert.ok(fn.indexOf('walkAudioFilesUnder') > 0 && fn.indexOf('localAudioDropRefused') < fn.indexOf('walkAudioFilesUnder'), 'asked before anything is listed or deleted')
+    assert.match(read('main/ipc/library-ipc.ts'), /if \(refused\) return \{ ok: false, error: 'refused', reason: 'not-this-macs-folder' \}/)
+  })
+  test('the review sheet says why a removal was refused, in plain words', async () => {
+    const sheet = read('renderer/components/OrphanCleanupModal.tsx')
+    assert.equal((sheet.match(/setError\(refusalWords\(r\.reason\)\)/g) || []).length, 2)
+    const { refusalWords } = await import('../../renderer/deadTrackWords.ts')
+    assert.match(refusalWords('music-root-incomplete'), /isn’t all there/)
+    assert.match(refusalWords('over-cap'), /too many songs at once/)
+    assert.match(refusalWords('not-this-macs-folder'), /nothing was deleted/)
+    assert.match(refusalWords(undefined), /Nothing was changed/)
   })
   test('the Settings switch starts through runStart, which still refuses a replica or a switch that is off', () => {
     assert.match(ipc, /ipc\.handle\('offload-audio-start', async \(_e, opts\?: \{ settingJustSaved\?: boolean \}\) => \{[\s\S]*?return runStart\(false\)/)

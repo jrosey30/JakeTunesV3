@@ -5747,7 +5747,10 @@ async function scanLibraryOrphans(): Promise<OrphanScanResult> {
   }
 }
 
-async function purgeLibraryOrphans(): Promise<{ deleted: number; bytesFreed: number }> {
+async function purgeLibraryOrphans(): Promise<{ deleted: number; bytesFreed: number; refused?: string }> {
+  // Needs You points here (V7): never delete under a music folder that isn't this Mac's own (homemini, a mount).
+  const refused = await localAudioDropRefused(MUSIC_DIR)
+  if (refused) return { deleted: 0, bytesFreed: 0, refused }
   let lib: { tracks?: Array<{ path?: string }> }
   try {
     lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))

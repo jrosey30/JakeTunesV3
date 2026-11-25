@@ -967,7 +967,7 @@ const electronAPI = {
     samples?: Array<{ basename: string; mtimeMs: number; size: number }>
     error?: string
   }> => ipcRenderer.invoke('scan-library-orphans'),
-  purgeLibraryOrphans: (): Promise<{ ok: boolean; deleted?: number; bytesFreed?: number; error?: string }> =>
+  purgeLibraryOrphans: (): Promise<{ ok: boolean; deleted?: number; bytesFreed?: number; error?: string; reason?: string }> =>
     ipcRenderer.invoke('purge-library-orphans'),
   scanDeadTracks: (): Promise<{
     ok: boolean
@@ -975,7 +975,7 @@ const electronAPI = {
     tracks?: Array<{ id: number; title: string; artist: string; path: string }>
     error?: string
   }> => ipcRenderer.invoke('scan-dead-tracks'),
-  removeDeadTracks: (): Promise<{ ok: boolean; removed?: number; error?: string }> =>
+  removeDeadTracks: (): Promise<{ ok: boolean; removed?: number; error?: string; reason?: string }> =>
     ipcRenderer.invoke('remove-dead-tracks'),
   // Read the iPod's actual iTunesDB so the UI can show the real
   // device state (the "On This iPod" view from classic iTunes).
