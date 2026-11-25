@@ -430,7 +430,8 @@ export default function ListenToTheListView() {
         disabled: r.kind !== 'concert' && busy,
         onClick: () => { if (r.kind === 'concert') openDownloadForReco(r); else getReco(r) },
       }] : []),
-      { label: 'Find in Search', onClick: () => openDownloadForReco(r) },
+      // A concert row's save line already says Search; no second Search line.
+      ...(r.kind === 'concert' ? [] : [{ label: 'Find in Search', onClick: () => openDownloadForReco(r) }]),
       { separator: true as const },
       { label: 'Toss', onClick: () => tossReco(r) },
     ]

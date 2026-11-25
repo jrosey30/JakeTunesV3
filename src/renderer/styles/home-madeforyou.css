@@ -90,24 +90,6 @@
   overflow-wrap: anywhere;
 }
 
-/* 16px PlayIcon in a 44px orange disc (~0.36, the TransportIcons ratio);
-   the icon is optically centred itself, so no padding nudge. Centred on
-   the art (the cell is exactly the card, which is exactly the art) and
-   lifted the same 3px as the art on hover. */
-.home-mix-play {
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.8);
-  width: 44px; height: 44px; border-radius: 50%; border: none; padding: 0; cursor: pointer;
-  background: rgb(var(--brand-orange-rgb)); color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  opacity: 0; transition: opacity var(--motion-instant) var(--motion-ease), transform var(--motion-instant) var(--motion-ease);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
-}
-.home-mix-cell:hover .home-mix-play,
-.home-mix-play:focus-visible { opacity: 1; transform: translate(-50%, calc(-50% - 3px)) scale(1); }
-.home-mix-play:hover { filter: brightness(1.06); }
-.home-mix-play:active { transform: translate(-50%, calc(-50% - 3px)) scale(0.94); }
-.home-mix-play:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-
 /* ── "Make me a vibe" sheet ── */
 .home-vibe-backdrop {
   position: fixed; inset: 0; z-index: 1000;

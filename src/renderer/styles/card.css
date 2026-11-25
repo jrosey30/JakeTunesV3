@@ -1,6 +1,6 @@
 /* V7 cards (components/Card.tsx, PlayButton.tsx): click opens, the ▶ on
    hover plays. The card keeps its page's own classes; this file only adds the
-   ▶ and the cursor. The disc is the Artists tile's (artists-grid.css .ag-play,
+   ▶ and the cursor. The disc is the one the Artists tile had (its own .ag-play until V7,
    Jake's pick 2026-10-21): white, orange triangle, centred on the art. */
 
 .jt-card { cursor: pointer; }
@@ -21,7 +21,7 @@
   border-radius: 50%; border: 0; padding: 0;
   background: #fff; color: var(--brand-orange, #FC5501);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
-  opacity: 0; transition: opacity var(--motion-fast) var(--ease-settle), transform var(--motion-fast) var(--ease-settle);
+  opacity: 0; transition: opacity var(--motion-instant) var(--motion-ease), transform var(--motion-instant) var(--motion-ease);
 }
 .jt-card:hover .jt-play--overlay,
 .jt-card:focus-within .jt-play--overlay,

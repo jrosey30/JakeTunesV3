@@ -29,6 +29,7 @@ import {
   type AnyPicksState, type IslandAlbum, type IslandSlot,
 } from '../../common/synced-picks'
 import PlayButton from './PlayButton'
+import { isCompleteRecord } from '../utils/liveSetCompleteness'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import { setAlbumDragPayload } from '../utils/trackDrag'
 import type { Track } from '../types'
@@ -194,7 +195,7 @@ export default function IslandAlbumsShelf({ albums, findArtHash, lookupArt, requ
           >
             <span className="isl-cover">
               {s.hash ? <AlbumArtImage hash={s.hash} alt="" className="isl-cover-img" size={240} /> : <DiscGlyph />}
-              {s.album && onPlayAlbum && <PlayButton variant="overlay" className="jt-card-play" name={s.album.name} onPlay={() => onPlayAlbum(sortAlbumTracks(s.album!.tracks))} />}
+              {s.album && onPlayAlbum && isCompleteRecord(s.album.tracks) && <PlayButton variant="overlay" className="jt-card-play" name={s.album.name} onPlay={() => onPlayAlbum(sortAlbumTracks(s.album!.tracks))} />}
             </span>
             <span className="isl-rank">{i + 1}</span>
           </div>
