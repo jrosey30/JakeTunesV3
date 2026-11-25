@@ -7,7 +7,7 @@ import { qobuzNoticeFor } from '../../../common/qobuz-notice'
 import { nearEditionOf } from '../../../common/near-edition-detect'
 import { toggleDownloadsPanel, showDownload } from '../../components/DownloadsPanel'
 import { useLibrary } from '../../context/LibraryContext'
-import { scoreField, scoreResult, releaseKind, displayAlbumTitle, artistArtwork, isArtistQuery, ownedAlbum, ownsArtist, listedAlbum, listedArtist, listedSong, markLine, pickLibraryHits, type ShopAlbum, type ShopArtist } from '../../../common/shop-search'
+import { scoreField, scoreResult, releaseKind, displayAlbumTitle, artistArtwork, isArtistQuery, ownedAlbum, listedAlbum, listedSong, markLine, artistLine, albumFactsLine, pickLibraryHits, type ShopAlbum, type ShopArtist } from '../../../common/shop-search'
 import { losslessOf, losslessTitle } from '../../../common/shop-lossless'
 import { LIST_MARK, SHOP_WORDS } from '../../../common/shop-names'
 import { askLossless, losslessFor, losslessVersion, notePlanRow, subscribeLossless } from './shopLossless'
@@ -673,22 +673,18 @@ export default function DownloadView() {
     const item = itemFor(qres)
     const pid = `dl|${qres.id}`
     const listed = !s.owned && listedSong(marks.list, s.artist, s.title)
+    // Phase 3, the approved picture: the song — its artist, its length, Save.
+    // The record and year stay, quiet: Apple lists the original, a remaster,
+    // a live cut and a compilation as separate rows, and this is how to tell
+    // which one you're about to save.
+    const from = [s.album ? displayAlbumTitle(s.album) : '', s.releaseYear ? String(s.releaseYear) : ''].filter(Boolean).join(' · ')
     return (
-      <li key={qres.id} className={`dl-song${item ? ` is-${item.status}` : ''}`} style={{ '--i': i } as CSSProperties}>
-        <span className="dl-song-lead">
-          <span className="dl-song-idx">{i + 1}</span>
-          {s.previewUrl && previewBtn(pid, s.previewUrl, s.title, s.artist, 'dl-song-play')}
-        </span>
-        {artOr(s.artworkUrl, 'dl-song-art')}
-        <span className="dl-song-title" title={s.title}>{dotFor('song', s.artist, s.title, searchScope, qres)}<span className="dl-song-name">{s.title}</span>{listed ? <span className="shop-mark shop-mark--list shop-mark--inline">{LIST_MARK}</span> : null}</span>
-        <span className="dl-song-artist" title={s.artist}>{s.artist}</span>
-        <span className="dl-song-album" title={s.album || ''}>{s.album ? displayAlbumTitle(s.album) : ''}</span>
-        {/* Year on songs too: iTunes returns original, remaster, live and comp
-            as separate rows, and this is the fastest way to see which one
-            you're about to pull. */}
-        <span className="dl-song-year">{s.releaseYear || ''}</span>
+      <li key={qres.id} className={`dl-song dl-song--plain${item ? ` is-${item.status}` : ''}`} style={{ '--i': i } as CSSProperties}>
+        <span className="dl-song-lead">{s.previewUrl && previewBtn(pid, s.previewUrl, s.title, s.artist, 'dl-song-play')}</span>
+        <span className="dl-song-title" title={`${s.title} — ${s.artist}`}>{dotFor('song', s.artist, s.title, searchScope, qres)}<span className="dl-song-name">{s.title} <span className="dl-song-by">— {s.artist}</span></span>{listed ? <span className="shop-mark shop-mark--list shop-mark--inline">{LIST_MARK}</span> : null}</span>
+        <span className="dl-song-album" title={from}>{from}</span>
         <span className="dl-song-dur">{s.durationSecs ? mmss(s.durationSecs) : ''}</span>
-        <span className="dl-song-act">{s.owned && !item ? <span className="dl-inlib">In library</span> : renderAction(qres, item)}</span>
+        <span className="dl-song-act">{s.owned && !item ? <span className="shop-own">In your library</span> : renderAction(qres, item)}</span>
       </li>
     )
   }
@@ -730,6 +726,7 @@ export default function DownloadView() {
     const mark = markLine({ owned: ownsAll ? null : owned, listed: listedAlbum(marks.list, a.artist, a.album) })
     const card: CardRecord = { collectionId: a.collectionId, name: a.album, trackCount: a.trackCount, releaseYear: a.releaseYear, explicitness: a.explicitness }
     const askAlbum = (): void => askEditions(a.artist, editionsKeyName(a.album))
+    const byNamedArtist = isArtistQuery(query, a.artist) || (page?.kind === 'artist' && page.artist.name === a.artist)
     return (
       <div
         key={qres.id}
@@ -745,16 +742,13 @@ export default function DownloadView() {
         <span className="dl-rel-frame">
           {artOr(a.artworkUrl, 'dl-rel-art')}
           {clean && <span className="dl-rel-clean" title="Censored edition — iTunes has no explicit version of this release">CLEAN</span>}
-          {ownsAll && <span className="dl-rel-owned" title="In your library">✓</span>}
+          {/* The lossless dot sits on the cover's corner (Phase 3, the approved picture). */}
+          {dotFor('album', a.artist, a.album, scope, qres)}
         </span>
-        <span className="dl-rel-title" title={a.album}>{dotFor('album', a.artist, a.album, scope, qres)}{displayAlbumTitle(a.album)}</span>
-        <span className="dl-rel-facts">
-          <span className={`download-result-badge download-result-badge--${kind.toLowerCase()}`}>{kind}</span>
-          {year ? <span className="download-result-year">{year}</span> : null}
-          {clean && <span className="dl-clean" title="Censored edition — iTunes has no explicit version of this release">CLEAN</span>}
-          {count ? <span className="dl-rel-count">{count} track{count === 1 ? '' : 's'}</span> : null}
-        </span>
-        <span className="dl-rel-sub" title={a.artist}>{a.artist}{genre ? ` · ${genre}` : ''}</span>
+        <span className="dl-rel-title" title={a.album}>{displayAlbumTitle(a.album)}</span>
+        <span className="dl-rel-facts">{albumFactsLine({ year, count, kind })}</span>
+        {/* The artist only when it isn't the one the search named: on Pink Floyd's results every card is theirs. */}
+        {byNamedArtist ? null : <span className="dl-rel-sub" title={a.artist}>{a.artist}{genre ? ` · ${genre}` : ''}</span>}
         {mark ? <span className={`shop-mark${mark === LIST_MARK ? ' shop-mark--list' : ''}`}>{mark}</span> : null}
         {ownsAll && !item
           ? <span className="dl-rel-foot"><span className="shop-own">In your library</span></span>
@@ -764,16 +758,23 @@ export default function DownloadView() {
   }
 
   /** An artist hit: their picture (an album cover; Apple gives none), name and marks. Opens their page. */
+  /** An artist hit, as a row (Phase 3, the approved picture): their picture,
+   *  name, "You own 6 albums" (or the genre), and Open ›, which opens their
+   *  page in the shop. */
   const renderArtist = (a: ShopArtist, i: number) => {
     const art = artistArtwork(a, groups.albums)
-    const mark = markLine({ owned: ownsArtist(marks.lib, a.name), listed: listedArtist(marks.list, a.name) })
+    const line = artistLine(marks.lib, marks.list, a.name)
     const named = isArtistQuery(query, a.name)
     return (
-      <button key={a.artistId} type="button" className={`shop-artist${named ? ' is-named' : ''}`} style={{ '--i': i } as CSSProperties} onClick={() => openPage({ kind: 'artist', artist: a, artworkUrl: art })}>
-        {art ? <img className="shop-artist-art" src={art} alt="" loading="lazy" /> : <span className="shop-artist-art shop-artist-art--ph" aria-hidden="true">{a.name.slice(0, 1).toUpperCase()}</span>}
-        <span className="shop-artist-name" title={a.name}>{a.name}</span>
-        <span className="shop-artist-sub">{a.genre ?? 'Artist'}</span>
-        {mark ? <span className={`shop-mark${mark === LIST_MARK ? ' shop-mark--list' : ''}`}>{mark}</span> : null}
+      <button key={a.artistId} type="button" className={`shop-artist-row${named ? ' is-named' : ''}`} style={{ '--i': i } as CSSProperties} onClick={() => openPage({ kind: 'artist', artist: a, artworkUrl: art })}>
+        {art ? <img className="shop-artist-row-art" src={art} alt="" loading="lazy" /> : <span className="shop-artist-row-art shop-artist-row-art--ph" aria-hidden="true">{a.name.slice(0, 1).toUpperCase()}</span>}
+        <span className="shop-artist-row-text">
+          <span className="shop-artist-row-name" title={a.name}>{a.name}</span>
+          {line
+            ? <span className={line === LIST_MARK ? 'shop-mark shop-mark--list' : 'shop-own'}>{line}</span>
+            : <span className="shop-artist-row-sub">{a.genre ?? 'Artist'}</span>}
+        </span>
+        <span className="shop-artist-row-open">Open ›</span>
       </button>
     )
   }
@@ -902,7 +903,7 @@ export default function DownloadView() {
               <span className="dl-sec-count">{ranked.artists.length}</span>
               <span className="dl-rule" />
             </div>
-            <div className="shop-artists">{ranked.artists.map((a, i) => renderArtist(a, i))}</div>
+            <div className="shop-artist-rows">{ranked.artists.map((a, i) => renderArtist(a, i))}</div>
           </section>
         )}
 

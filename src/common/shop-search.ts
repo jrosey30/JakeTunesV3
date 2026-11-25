@@ -327,6 +327,8 @@ export interface LibraryMarks {
   /** album|artist (full name and base title) → songs Jake has from it */
   albums: Map<string, number>
   artists: Set<string>
+  /** artist (or album artist) → the records Jake has by them, by plain title (Phase 3: "You own 6 albums"). */
+  artistAlbums: Map<string, Set<string>>
 }
 
 /** The library, keyed the way results are marked. ⚠️ TWIN: DownloadView libIndex (same keys). */
@@ -334,7 +336,13 @@ export function libraryMarks(tracks: ReadonlyArray<{ title?: string; artist?: st
   const songs = new Set<string>()
   const albums = new Map<string, number>()
   const artists = new Set<string>()
+  const artistAlbums = new Map<string, Set<string>>()
   const bump = (k: string) => albums.set(k, (albums.get(k) ?? 0) + 1)
+  const record = (artist: string, album: string) => {
+    let set = artistAlbums.get(artist)
+    if (!set) artistAlbums.set(artist, (set = new Set()))
+    set.add(album)
+  }
   for (const t of tracks) {
     const a = key(t.artist || '')
     if (a) artists.add(a)
@@ -347,9 +355,11 @@ export function libraryMarks(tracks: ReadonlyArray<{ title?: string; artist?: st
       bump(full)
       bump(base)
       if (aa && aa !== a) { bump(`${key(t.album)}|${aa}`); bump(`${baseKey(t.album)}|${aa}`) }
+      const plain = baseKey(t.album)
+      if (plain) { if (a) record(a, plain); if (aa && aa !== a) record(aa, plain) }
     }
   }
-  return { songs, albums, artists }
+  return { songs, albums, artists, artistAlbums }
 }
 
 export type OwnedAlbum = { state: 'all' | 'some'; have: number } | null
@@ -369,6 +379,29 @@ export function ownedAlbum(m: LibraryMarks, artist: string, name: string, trackC
 
 export const ownsSong = (m: LibraryMarks, artist: string, title: string): boolean => m.songs.has(`${key(title)}|${key(artist)}`)
 export const ownsArtist = (m: LibraryMarks, name: string): boolean => m.artists.has(key(name))
+
+/** How many records Jake has by an artist, each counted once however many editions of it he has. */
+export const ownedAlbumCount = (m: LibraryMarks, name: string): number => m.artistAlbums?.get(key(name))?.size ?? 0
+
+/**
+ * The line under an artist in the shop's search (Phase 3, the approved
+ * picture): "You own 6 albums" first, then the list, then nothing.
+ */
+export function artistLine(m: LibraryMarks, list: ListMarks, name: string): string | null {
+  const n = ownedAlbumCount(m, name)
+  if (n > 0) return `You own ${n} album${n === 1 ? '' : 's'}`
+  if (ownsArtist(m, name)) return 'In your library'
+  if (listedArtist(list, name)) return LIST_MARK
+  return null
+}
+
+/**
+ * The facts under an album card (Phase 3, the approved picture): "1973 · 10
+ * songs", with "EP" or "Single" said when it is one. Only what Apple stated.
+ */
+export function albumFactsLine(o: { year?: number; count?: number; kind?: ShopReleaseKind }): string {
+  return [o.year ? String(o.year) : null, o.kind && o.kind !== 'ALBUM' ? (o.kind === 'EP' ? 'EP' : 'Single') : null, o.count ? `${o.count} song${o.count === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ')
+}
 
 export interface ListMarks { songs: Set<string>; albums: Set<string>; artists: Set<string> }
 
