@@ -65,3 +65,17 @@ export function createHeldForJake(edits: { lookup: () => Promise<JakeEditLookup>
     return !mayWriteField({ writer: { by: 'auto' }, edit: look(trackId, field, fp), value, durationMs })
   }
 }
+
+/**
+ * The titles and artists Jake set for one id (journal + phone), for the override
+ * merge's evidence (override-merge.ts isAnotherSong). His records unreadable →
+ * no evidence: a changed fingerprint then starts the entry fresh, as it always did.
+ */
+export function createJakeNames(edits: { lookup: () => Promise<JakeEditLookup> }) {
+  return async (trackId: number | string): Promise<{ title: string[]; artist: string[] }> => {
+    let look: JakeEditLookup
+    try { look = await edits.lookup() } catch { return { title: [], artist: [] } }
+    const id = Number(trackId)
+    return { title: look(id, 'title', undefined).map((e) => e.v), artist: look(id, 'artist', undefined).map((e) => e.v) }
+  }
+}

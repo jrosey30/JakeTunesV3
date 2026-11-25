@@ -59,7 +59,7 @@ import { touchUsed } from './sync-convert-cache.ts'
 import { protectedMirrorNames } from './sync-convert-cache-protect.ts'
 import { AacEncoderMissingError, aacMirrorCacheName, ipodAlacMirrorCacheName, mp3MirrorCacheName, afconvertAacArgs, createAfconvertCheck, pcmDecodeArgs } from './aac-mirror-recipe.ts'
 import { startSelfCare } from './self-care.ts'; import { analysisCandidates, pruneBrake } from './self-care-core.ts'; import { removeAppTempFiles } from './self-care-files.ts'
-import { createHeldForJake, createJakeEdits, readJournalStrict } from './jake-edits-guard.ts'
+import { createHeldForJake, createJakeEdits, createJakeNames, readJournalStrict } from './jake-edits-guard.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
 import { mergeQueuedDuringPass, runConvertPass, type ConvertOutcome, type QueueTrack, type StreamConvertItem } from './stream-convert-pass.ts'; import { confirmHomeminiHoldsFile, keptLocalMessage, USER_PENDING_RETRIES, type RefusalMemo } from './offload-confirm.ts'
@@ -910,10 +910,21 @@ async function persistOverrideFields(
   // The one merge rule (override-merge.ts): it used to replace the whole entry
   // whenever the fingerprints weren't identical, wiping Jake's other fields
   // after a title or artist correction (review of #501).
+  const jake = await jakeNamesFor(trackId)
   await writeOverridesSerialized((overrides) => {
-    for (const [field, value] of Object.entries(fields)) mergeOverrideField(overrides, trackId, field, value, fingerprint)
+    for (const [field, value] of Object.entries(fields)) mergeOverrideField(overrides, trackId, field, value, fingerprint, jake)
     return overrides
   })
+}
+// The titles and artists Jake set for an id (journal + phone): the only evidence that
+// lets an entry keep its fields across a fingerprint change (override-merge.ts isAnotherSong).
+const jakeNamesRead = createJakeNames(createJakeEdits({ readJournal: () => readJournalStrict(app.getPath('userData')), readPhone: () => mobileMetadataOverridesCache.get(), ttlMs: 5_000 }))
+// In call order, so two quick saves of one field still reach the serialized writer in the order they were made.
+let jakeNamesChain: Promise<unknown> = Promise.resolve()
+function jakeNamesFor(trackId: number): Promise<{ title: string[]; artist: string[] }> {
+  const next = jakeNamesChain.then(() => jakeNamesRead(trackId))
+  jakeNamesChain = next.catch(() => undefined)
+  return next
 }
 
 // Brief 014a: per-track payload propagated up to the worker so the
@@ -9188,7 +9199,8 @@ ipc.handle('load-metadata-overrides', async () => {
 // The rules themselves live in override-merge.ts (one writer for the
 // replica-edit absorb too).
 async function applyMetadataOverrideInternal(trackId: number, field: string, value: string, fingerprint?: string): Promise<void> {
-  await writeOverridesSerialized((overrides) => mergeOverrideField(overrides, trackId, field, value, fingerprint))
+  const jake = await jakeNamesFor(trackId)
+  await writeOverridesSerialized((overrides) => mergeOverrideField(overrides, trackId, field, value, fingerprint, jake))
 }
 
 // Brief 020's tag write-back, behind a queue (tag-writeback-queue.ts): one edit
