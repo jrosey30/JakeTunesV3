@@ -222,7 +222,7 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
 
   ipc.handle('restore-xml-pick-file', async () => {
     const result = await dialog.showOpenDialog({
-      title: 'Choose your iTunes Library XML export',
+      title: 'Choose Your iTunes Library XML Export',
       properties: ['openFile'],
       filters: [{ name: 'iTunes XML', extensions: ['xml'] }],
       defaultPath: join(process.env.HOME || '', 'Desktop'),

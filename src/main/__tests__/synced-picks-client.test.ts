@@ -321,7 +321,7 @@ describe('first run, ETag polling, the single-writer fence', () => {
     hub.calls.length = 0
     const r = await client.save(islands([0, 'Would', 'Wipe']))
     assert.equal(r.ok, false)
-    if (!r.ok) assert.match(r.error, /Not synced with homemini yet/)
+    if (!r.ok) assert.match(r.error, /Offline — editing unlocks after the first sync/)
     assert.equal(hub.calls.length, 0)
     assert.equal(await exists(join(dir, OUTBOX)), false)
   })

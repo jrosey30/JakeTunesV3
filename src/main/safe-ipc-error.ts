@@ -22,7 +22,7 @@ const SAFE_CODES = new Set([
 /** Short user-facing phrases already used by AI / TTS handlers. */
 const SAFE_PHRASES = [
   'ANTHROPIC_API_KEY missing — Cynthia is on break.',
-  'Cynthia needs a prompt and at least one track in scope.',
+  'Cynthia needs a prompt and at least one song in scope.',
   'Cynthia needs a scope and at least one message.',
   'Empty report',
   'TTS rate limit — try again in a moment.',

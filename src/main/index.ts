@@ -2815,8 +2815,8 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
     label: 'File',
     submenu: [
       { label: 'New Playlist', accelerator: 'CmdOrCtrl+N', click: () => sendMenuAction('new-playlist') },
-      { label: 'Import...', accelerator: 'CmdOrCtrl+O', click: () => sendMenuAction('import-files') },
-      { label: 'Import and Convert...', accelerator: 'Shift+CmdOrCtrl+O', click: () => sendMenuAction('open-import-convert') },
+      { label: 'Import…', accelerator: 'CmdOrCtrl+O', click: () => sendMenuAction('import-files') },
+      { label: 'Import and Convert…', accelerator: 'Shift+CmdOrCtrl+O', click: () => sendMenuAction('open-import-convert') },
       { type: 'separator' },
       { label: 'Get Info', accelerator: 'CmdOrCtrl+I', click: () => sendMenuAction('get-info') },
       { type: 'separator' },
@@ -2830,7 +2830,7 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
           // masters. master-never-reencoded.test.ts keeps it gone.)
           // 4.1: ALAC play-cache management. Replaces the launch-time
           // prewarm scanner with explicit user actions.
-          { label: 'Prepare ALAC Tracks for Instant Play…', click: () => sendMenuAction('prepare-alac-cache') },
+          { label: 'Prepare ALAC Songs for Instant Play…', click: () => sendMenuAction('prepare-alac-cache') },
           { label: 'Prune Play-Cache…', click: () => sendMenuAction('prune-alac-cache') },
           { label: 'Clean Orphan Files…', click: () => sendMenuAction('clean-orphan-files') },
           // Surface library entries that share artist+title+album so the
@@ -2856,8 +2856,8 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
           // files themselves are NOT modified.
           { label: 'Refresh File Sizes…',         click: () => sendMenuAction('refresh-file-sizes') },
           { type: 'separator' },
-          { label: 'Offload Audio to Homemini — Dry Run', click: () => menuHubOffload('dry-run') },
-          { label: 'Offload Audio to Homemini — Start', click: () => menuHubOffload('start') },
+          { label: 'Offload Audio — Dry Run', click: () => menuHubOffload('dry-run') },
+          { label: 'Offload Audio — Start', click: () => menuHubOffload('start') },
           { label: 'Undo Offload (pull audio back)', click: () => menuHubOffload('rehydrate') },
         ],
       },

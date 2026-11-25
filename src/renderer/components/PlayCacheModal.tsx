@@ -86,7 +86,7 @@ export default function PlayCacheModal({ mode, onClose }: Props) {
     }
   }
 
-  const title = mode === 'prepare' ? 'Prepare ALAC Tracks for Instant Play' : 'Prune Play-Cache'
+  const title = mode === 'prepare' ? 'Prepare ALAC Songs for Instant Play' : 'Prune Play-Cache'
   const description = mode === 'prepare' ? (
     <>JakeTunes converts ALAC files to AAC the first time you play them so Chromium can decode them. Without a cached AAC mirror, first-play takes ~5 seconds while ffmpeg runs. This action transcodes every ALAC track in your library now so first-play is instant going forward. AAC tracks (the majority of your library) are skipped — they play raw and need no cache.</>
   ) : (

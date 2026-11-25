@@ -716,10 +716,10 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                     library: { ...draft.library, offloadAudioToHomemini: e.target.checked },
                   })}
                 />
-                <span>Offload audio to homemini</span>
+                <span>Offload Audio</span>
               </label>
               <p className="imp-help" style={{ marginTop: 8 }}>
-                This Mac stays the hub and keeps publishing the library. New imports stream once homemini has the same bytes, and a symlink plays from homemini. Files already on this Mac stay put until File → Library → Offload Audio to Homemini — Dry Run, then Start. Do not set the stream source to homemini.
+                This Mac stays the hub and keeps publishing the library. New imports stream once homemini has the same bytes, and a symlink plays from homemini. Files already on this Mac stay put until File → Library → Offload Audio — Dry Run, then Start. Do not set the stream source to homemini.
               </p>
 
               <GenreCheckList />

@@ -157,7 +157,7 @@ export async function connectSpotify(
         resolve({ ok: true })
       })()
     })
-    server.on('error', (e) => resolve({ ok: false, error: `Loopback listener failed: ${e.message}` }))
+    server.on('error', (e) => { console.warn('[spotify] loopback listener failed:', e); resolve({ ok: false, error: 'Couldn’t connect to Spotify. Try again.' }) })
     server.listen(port, '127.0.0.1', () => {
       const addr = server.address()
       if (addr && typeof addr === 'object') redirectUri = `http://127.0.0.1:${addr.port}/callback`

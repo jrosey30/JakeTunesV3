@@ -82,5 +82,5 @@ export async function backToIpodDrawing(playlistId: string, name: string): Promi
   await ask(key)
   if (!r) return { ok: false, line: 'Photos need a newer JakeTunes.' }
   if (!r.ok) return { ok: false, line: r.error }
-  return { ok: true, line: r.homemini === 'saved' ? `${name} wears its drawing again.` : `${name} wears its drawing again.` }
+  return { ok: true, line: `${name} wears its drawing again.` }
 }

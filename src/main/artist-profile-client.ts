@@ -342,7 +342,7 @@ export function createArtistProfileClient(opts: ArtistProfileClientOptions): Art
     if (!res.ok || (reply && reply.ok === false)) {
       warn('put', `[artist-profile] member photo for ${member} (${n}) refused: HTTP ${res.status}${why ? ` (${why})` : ''}`)
       if (res.status === 404 && !why) return { ok: false, error: 'homemini does not take member photos yet. Nothing was changed.' }
-      if (res.status === 413) return { ok: false, error: 'That picture is too big for homemini. Try a smaller one.' }
+      if (res.status === 413) return { ok: false, error: 'That picture is too big. Try a smaller one.' }
       return { ok: false, error: `homemini could not save the photo (${why || `HTTP ${res.status}`}). Nothing was changed.` }
     }
     return { ok: true, state: await refresh(n, { force: true, waitPhotos: true }) }

@@ -132,7 +132,7 @@ describe('top1000 client', () => {
     const b = await gone.answer({ kind: 'pick', ids: ['1', '2'], choice: '1' })
     assert.ok(!b.ok && /no longer in the quiz/.test(b.error))
     const n = await offline.next()
-    assert.ok(!n.ok && /homemini/.test(n.error))
+    assert.ok(!n.ok && /Offline/.test(n.error))
   })
 
   it('undo posts and returns the undone question; a 404 means not deployed yet', async () => {
@@ -147,7 +147,7 @@ describe('top1000 client', () => {
     assert.ok(!n.ok && n.error === 'Undo isn’t available yet.')
     const offline = createTop1000Client({ baseUrl: 'http://x', warn: () => {}, fetchImpl: fake({}) })
     const o = await offline.undo()
-    assert.ok(!o.ok && /homemini/.test(o.error))
+    assert.ok(!o.ok && /Offline/.test(o.error))
   })
 
   it('ties → the open count; a 404 means an older homemini (the quiz as it was); offline or junk is an error', async () => {
@@ -159,7 +159,7 @@ describe('top1000 client', () => {
     assert.deepEqual(await old.ties(), { ok: true, value: null })
     const offline = createTop1000Client({ baseUrl: 'http://x', warn: () => {}, fetchImpl: fake({}) })
     const o = await offline.ties()
-    assert.ok(!o.ok && /homemini/.test(o.error))
+    assert.ok(!o.ok && /Offline/.test(o.error))
     const junk = createTop1000Client({ baseUrl: 'http://x', warn: () => {}, fetchImpl: fake({ '/ties': { status: 200, body: { ties: 'many' } } }) })
     assert.equal((await junk.ties()).ok, false)
   })

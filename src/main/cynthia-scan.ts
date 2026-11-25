@@ -366,13 +366,13 @@ function scanTrackNumberIntegrity(tracks: CynthiaScanTrack[], flags: CynthiaScan
     else byDisc.set(d, [n])
   }
   if (missing > 0) {
-    flags.push({ kind: 'missing-track-number', detail: `${missing} track${missing === 1 ? ' has' : 's have'} no track number` })
+    flags.push({ kind: 'missing-track-number', detail: `${missing} song${missing === 1 ? ' has' : 's have'} no track number` })
   }
   for (const [disc, nums] of byDisc) {
     const seen = new Set<number>()
     for (const n of nums) {
       if (seen.has(n)) {
-        flags.push({ kind: 'duplicate-track-number', detail: `two tracks claim #${n} on disc ${disc}` })
+        flags.push({ kind: 'duplicate-track-number', detail: `two songs claim #${n} on disc ${disc}` })
       }
       seen.add(n)
     }

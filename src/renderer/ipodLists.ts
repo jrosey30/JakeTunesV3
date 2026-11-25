@@ -114,12 +114,12 @@ export function useIpodListsRole(): IpodListsRole | null {
  */
 export async function setIpodListColor(deviceId: string, color: string): Promise<{ ok: true; homemini: 'saved' | 'later' } | { ok: false; error: string }> {
   const c = normalizeIpodColor(color)
-  if (!c) return { ok: false, error: 'That isn’t a colour JakeTunes knows.' }
+  if (!c) return { ok: false, error: 'That isn’t a color JakeTunes knows.' }
   const before = snap
   snap = snap.map((l) => (l.id === deviceId ? { ...l, color: c } : l))
   for (const l of listeners) l()
   const r = await (window.electronAPI.ipodListSetColor?.({ deviceId, color: c }) ?? Promise.resolve({ ok: false as const, error: 'not available' }))
-    .catch((err: unknown) => ({ ok: false as const, error: err instanceof Error ? err.message : 'couldn’t save the colour' }))
+    .catch((err: unknown) => ({ ok: false as const, error: err instanceof Error ? err.message : 'couldn’t save the color' }))
   if (!r.ok) {
     snap = before
     for (const l of listeners) l()

@@ -183,7 +183,7 @@ export function useFavoriteArtists(): PicksState<FavoriteSlot> {
 
 /** One line under a shelf's title — only when there is something to say. */
 export function picksStatusLine(s: AnyPicksState): { text: string; tone: 'dim' | 'warn' } | null {
-  if (s.rejected) return { text: `Couldn’t save the last change — ${s.rejected}`, tone: 'warn' }
+  if (s.rejected) return { text: s.rejected.startsWith('Couldn’t save') ? s.rejected : `Couldn’t save the last change — ${s.rejected}`, tone: 'warn' }
   if (s.pending && s.reachable === false) return { text: 'Saved on this Mac — sends to your phone when back online', tone: 'dim' }
   if (s.reachable === false && s.syncedAt) {
     const when = new Date(s.syncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
