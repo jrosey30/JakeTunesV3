@@ -129,7 +129,7 @@ export default function EventCoverPanel({ playlistId, name }: { playlistId: stri
         </div>
       )}
       <div className="event-cover-tools">
-        <button className="event-cover-link" onClick={() => void usePhoto()} title={`A photo of yours for ${name}'s cover, here and on the phone`}>Use a photo…</button>
+        <button className="event-cover-link" onClick={() => void usePhoto()}>Use a photo…</button>
         {hasPhoto && <button className="event-cover-link" onClick={() => void useDrawing()}>Use the drawing</button>}
         {(hasPhoto || (p?.status === 'approved' && p.photo)) && (
           <button className="event-cover-link" onClick={() => void flipTone()}>{tone === 'colour' ? 'Print it in the month’s ink' : 'Show it in full colour'}</button>

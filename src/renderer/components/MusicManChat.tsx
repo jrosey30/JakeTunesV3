@@ -378,7 +378,7 @@ export default function MusicManChat({ variant, contextLine, subject, nowPlaying
             ref={inputRef}
             className="musicman-chat-input"
             type="text"
-            placeholder={variant === 'drawer' ? 'Ask about this…' : 'Ask The Music Man anything...'}
+            placeholder={variant === 'drawer' ? 'Ask about this…' : 'Ask the Music Man anything…'}
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
             onKeyDown={handleChatKeyDown}

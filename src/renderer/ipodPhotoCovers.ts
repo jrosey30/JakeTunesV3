@@ -71,7 +71,7 @@ export async function chooseIpodPhoto(playlistId: string, name: string): Promise
   await ask(key)
   if (!r) return { ok: false, line: 'Photos need a newer JakeTunes.' }
   if (!r.ok) return { ok: false, line: r.cancelled ? null : (r.error ?? 'couldn’t use that photo') }
-  return { ok: true, line: r.homemini === 'saved' ? `${name} wears your photo, here and on the phone.` : `${name} wears your photo. The phone gets it when homemini answers.` }
+  return { ok: true, line: r.homemini === 'saved' ? `${name} wears your photo, here and on the phone.` : `${name} wears your photo.` }
 }
 
 /** "Use the drawing": the photo goes, the drawn iPod comes back. */
@@ -82,5 +82,5 @@ export async function backToIpodDrawing(playlistId: string, name: string): Promi
   await ask(key)
   if (!r) return { ok: false, line: 'Photos need a newer JakeTunes.' }
   if (!r.ok) return { ok: false, line: r.error }
-  return { ok: true, line: r.homemini === 'saved' ? `${name} wears its drawing again.` : `${name} wears its drawing again. The phone follows when homemini answers.` }
+  return { ok: true, line: r.homemini === 'saved' ? `${name} wears its drawing again.` : `${name} wears its drawing again.` }
 }

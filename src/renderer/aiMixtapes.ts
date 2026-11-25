@@ -138,7 +138,7 @@ export async function removeKeptAiTape(tape: AiMixtape): Promise<boolean> {
     flip(tape.id, false)
     setNotice(`“${tape.title}” is back in the dailies — it rolls over with the next batch`, { kind: 'success' })
   } else {
-    setNotice("Couldn't move that tape — the Mini didn't answer", { kind: 'error', durationMs: 6000 })
+    setNotice("Offline. Couldn't move that tape.", { kind: 'error', durationMs: 6000 })
   }
   return ok
 }

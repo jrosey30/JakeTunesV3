@@ -7524,7 +7524,7 @@ ipc.handle('musicman-playlist', async (_event, mood: string, tracks: { id: numbe
     if (candidateTracks.length < 5) {
       return {
         ok: false,
-        error: `Not enough ${moodDecade.label} tracks in the library (${candidateTracks.length}) to build a set — need at least 5 with a year in ${moodDecade.start}–${moodDecade.end}.`,
+        error: `Not enough ${moodDecade.label} songs in the library (${candidateTracks.length}) to build a set — need at least 5 with a year in ${moodDecade.start}–${moodDecade.end}.`,
       }
     }
   }

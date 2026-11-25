@@ -748,7 +748,7 @@ export default function HomeView() {
             )}
             {!libraryEmpty && (
               <span className="home-meta-count">
-                {lib.tracks.length.toLocaleString()} track{lib.tracks.length === 1 ? '' : 's'}
+                {lib.tracks.length.toLocaleString()} song{lib.tracks.length === 1 ? '' : 's'}
               </span>
             )}
           </div>
@@ -817,7 +817,7 @@ export default function HomeView() {
               <circle cx="20" cy="20" r="2" fill="currentColor" />
             </svg>
           </div>
-          <h2 className="home-welcome-empty-title">The shelves are empty</h2>
+          <h2 className="home-welcome-empty-title">The Shelves Are Empty</h2>
           <p className="home-welcome-empty-body">
             Drop a folder of music onto this window, or import files to start a library.
             JakeTunes will take it from there.
@@ -884,7 +884,7 @@ export default function HomeView() {
         <section className="home-section">
           <div className="home-section-header">
             <h2 className="home-section-title">Rediscover</h2>
-            <span className="home-section-source">Music Man</span>
+            <span className="home-section-source">The Music Man</span>
           </div>
           <div className="home-card-row" role="list" ref={rediscoverRowRef}>
             {rediscovery.map((pick) => {
@@ -976,7 +976,7 @@ export default function HomeView() {
             <h2 className="home-featured-title">{featuredAlbum.album}</h2>
             <div className="home-featured-artist">{featuredAlbum.artist}</div>
             <div className="home-featured-meta">
-              {featuredAlbum.tracks.length} track{featuredAlbum.tracks.length === 1 ? '' : 's'}
+              {featuredAlbum.tracks.length} song{featuredAlbum.tracks.length === 1 ? '' : 's'}
               {featuredAlbum.year && <> · {featuredAlbum.year}</>}
               {featuredAlbum.totalPlays > 0 && <> · {featuredAlbum.totalPlays.toLocaleString()} play{featuredAlbum.totalPlays === 1 ? '' : 's'}</>}
             </div>
@@ -1030,7 +1030,7 @@ export default function HomeView() {
                     requestDrillIn('artist', card.name)
                     dispatch({ type: 'SET_VIEW', view: 'artists' })
                   })}
-                  title={`${card.name}\n${card.totalPlays.toLocaleString()} plays across ${card.trackCount} track${card.trackCount === 1 ? '' : 's'}`}
+                  title={`${card.name}\n${card.totalPlays.toLocaleString()} plays across ${card.trackCount} song${card.trackCount === 1 ? '' : 's'}`}
                 >
                   <div className="home-artist-art">
                     {hash ? (

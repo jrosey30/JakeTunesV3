@@ -523,7 +523,7 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
         {flow.length > 0 && (
           <div className="tn-islands">
             <div className="tn-sec-head">
-              <h2 className="tn-h2">Island albums</h2>
+              <h2 className="tn-h2">Island Albums</h2>
               <span className="tn-sub">Your ten, desert-island ranked · click a cover</span>
             </div>
             <div
@@ -610,7 +610,7 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
         {digging.length > 0 && (
           <div className="tn-digging">
             <div className="tn-sec-head">
-              <h2 className="tn-h2">Now digging</h2>
+              <h2 className="tn-h2">Now Digging</h2>
               <span className="tn-sub">New bands you can't stop playing · last 30 days</span>
             </div>
             <div className="tn-dig-grid">

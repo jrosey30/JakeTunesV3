@@ -192,7 +192,7 @@ export default function RockDnaView(): JSX.Element {
           {error && <p className="dna-error">{error}</p>}
 
           <section className="dna-card">
-            <h2 className="dna-h2">Where your rock comes from</h2>
+            <h2 className="dna-h2">Where Your Rock Comes From</h2>
             {p.traditions.length ? (
               <>
                 <p className="dna-note">These threads sit side by side. JakeTunes never averages them into one.</p>
@@ -254,7 +254,7 @@ export default function RockDnaView(): JSX.Element {
 
           {p.exceptions.length > 0 && (
             <section className="dna-card">
-              <h2 className="dna-h2">Genre exceptions</h2>
+              <h2 className="dna-h2">Genre Exceptions</h2>
               {p.exceptions.map((e) => (
                 <p key={e.artist} className="dna-line"><strong>{e.artist}</strong> — loved despite {e.genre || 'the genre'}{e.why.length ? `. Why: ${e.why.join(', ').toLowerCase()}.` : '.'} It never opens the door to {e.genre || 'the genre'}.</p>
               ))}
@@ -269,7 +269,7 @@ export default function RockDnaView(): JSX.Element {
           )}
 
           <section className="dna-card">
-            <h2 className="dna-h2">Discovery philosophy</h2>
+            <h2 className="dna-h2">Discovery Philosophy</h2>
             {p.philosophy.map((l) => <p key={l} className="dna-line">{l}</p>)}
             {promptLine && (
               <details className="dna-details">
@@ -281,7 +281,7 @@ export default function RockDnaView(): JSX.Element {
 
           {answeredScreens.length > 0 && (
             <section className="dna-card">
-              <h2 className="dna-h2">Your answers</h2>
+              <h2 className="dna-h2">Your Answers</h2>
               {answeredScreens.map((s) => (
                 <div key={s.id} className="dna-answer">
                   <div className="dna-answer__q">{s.text}</div>

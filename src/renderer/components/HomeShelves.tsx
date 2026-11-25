@@ -133,7 +133,7 @@ function SongRow({ title, scrollKey, cards, artFor, playTrack, openAll, fullQueu
               onContextMenu={(e) => menus?.openSongMenu(e, c.track, play, queue, i)}
               draggable
               onDragStart={(e) => setTrackDragPayload(e, c.track.id)}
-              title={`${c.track.title} — ${c.track.artist}\nClick plays it, with the rest of this list after it.`}
+              title={`${c.track.title} — ${c.track.artist}`}
             >
               <div className="home-album-art">
                 {hash ? <AlbumArtImage hash={hash} alt={c.track.album || c.track.title} onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')} /> : <Placeholder />}

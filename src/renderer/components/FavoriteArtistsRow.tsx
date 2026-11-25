@@ -86,7 +86,7 @@ export default function FavoriteArtistsRow({ artists, onOpenArtist }: Props): JS
   const editable = picksEditable(picks)
   const choose = (slot: number): void => {
     if (editable) setPicking(slot)
-    else setNotice('Favorite artists sync through homemini — editing unlocks after the first sync.')
+    else setNotice('Offline — editing unlocks after the first sync.')
   }
 
   const menuItems = (slot: number): MenuEntry[] => {

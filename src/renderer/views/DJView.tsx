@@ -569,7 +569,7 @@ export default function DJView() {
 
       <section className="booth-crate">
         <div className="booth-crate-head">
-          <h2 className="booth-crate-title">Your crate</h2>
+          <h2 className="booth-crate-title">Your Crate</h2>
           <input
             className="booth-crate-search"
             placeholder="Search your library…"
@@ -996,7 +996,7 @@ function DeckPanel(props: {
 
       <div className="booth-wave-wrap">
         <canvas ref={canvasRef} className="booth-wave" />
-        {!track && <div className="booth-wave-empty">{props.dragOver ? 'drop to load' : 'drag a track here'}</div>}
+        {!track && <div className="booth-wave-empty">{props.dragOver ? 'drop to load' : 'drag a song here'}</div>}
       </div>
 
       <div className="booth-transport">

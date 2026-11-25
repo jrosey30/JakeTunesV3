@@ -231,7 +231,7 @@ export function gradePhase(driftBeats: number): MoveGrade {
 /** Plain summary of a finished run — what to work on, not just a number. */
 export function summarise(grades: MoveGrade[]): { score: number; headline: string; advice: string } {
   if (grades.length === 0) {
-    return { score: 0, headline: 'No moves recorded', advice: 'Start a run and mix one track into another.' }
+    return { score: 0, headline: 'No moves recorded', advice: 'Start a run and mix one song into another.' }
   }
   const score = grades.reduce((s, g) => s + g.points, 0)
   const best = POINTS.perfect * grades.length

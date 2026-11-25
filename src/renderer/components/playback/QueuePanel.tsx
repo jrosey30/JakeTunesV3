@@ -237,7 +237,7 @@ const QueuePanel = forwardRef<QueuePanelHandle, { onClose: () => void }>(functio
             <div className="queue-repeat-note">↻ Repeat One — “{state.nowPlaying.title}” keeps replaying until you skip.</div>
           )}
           {upcoming.length === 0 && dropIndex === null && state.repeat === 'off' && (
-            <div className="queue-empty">No upcoming tracks</div>
+            <div className="queue-empty">No upcoming songs</div>
           )}
           {dropIndex === 0 && <div className="queue-drop-indicator" />}
           {/* freshContext=false: this track is already IN the queue, so a
@@ -275,7 +275,7 @@ const QueuePanel = forwardRef<QueuePanelHandle, { onClose: () => void }>(functio
             <div className="queue-drop-indicator" />
           )}
           {repeatAll && state.queue.length > 0 && (
-            <div className="queue-repeat-note queue-repeat-note--loop">↻ Repeat All — loops back to the top after the last track.</div>
+            <div className="queue-repeat-note queue-repeat-note--loop">↻ Repeat All — loops back to the top after the last song.</div>
           )}
         </div>
       </div>

@@ -374,7 +374,7 @@ export function registerCynthiaIpc(ipc: IpcRegistrar, host: CynthiaIpcHost): voi
     }
     const { userPrompt, scope } = input
     if (!userPrompt?.trim() || !scope?.tracks?.length) {
-      return { ok: false, error: 'Cynthia needs a prompt and at least one track in scope.' }
+      return { ok: false, error: 'Cynthia needs a prompt and at least one song in scope.' }
     }
     return runCynthiaInvestigation(host, userPrompt, scope)
   }, { refuse: REFUSED_SENDER })

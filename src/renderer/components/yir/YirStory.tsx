@@ -450,7 +450,7 @@ export default function YirStory({ slides, ctx, onClose, onSeeAll }: { slides: S
   const last = i === slides.length - 1
   return (
     <div className="yir-stage" ref={stageRef} tabIndex={0} onKeyDown={onKeyDown} aria-label="Year in Review story">
-      <button type="button" className="yir-share" onClick={() => exportStory([i])} title="Save this card as an Instagram Story (1080 × 1920 video + image)">
+      <button type="button" className="yir-share" onClick={() => exportStory([i])}>
         <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v7M3 4l3-3 3 3M2 7v4h8V7" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
         Share
       </button>

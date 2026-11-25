@@ -28,7 +28,7 @@ export default function YearInReviewView(): JSX.Element {
   const slides = useMemo(() => (facts ? buildStory(facts, { now: new Date(), concerts }) : []), [facts, concerts])
 
   if (loading) return <div className="yir-wait">Loading your year…</div>
-  if (!facts) return <div className="yir-wait">Your Year in Review hasn't reached this Mac yet. homemini builds it every night at 4 AM.</div>
+  if (!facts) return <div className="yir-wait">Your Year in Review hasn't reached this Mac yet.</div>
   if (mode === 'story') {
     return <YirStory slides={slides} ctx={ctx} onClose={() => dispatch({ type: 'SET_VIEW', view: 'home' })} onSeeAll={() => setMode('page')} />
   }
