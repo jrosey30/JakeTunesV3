@@ -11,7 +11,9 @@ them over the words the app shows.
 |---|---|
 | `styles/ai-tells/` | 137 Vale rules from **vale-ai-tells v1.37.0**, vendored unchanged (MIT, Tony Burns; `styles/ai-tells/LICENSE`). Source: https://github.com/tbhb/vale-ai-tells, release v1.37.0. Release zip sha256 `f8d1e981abbfbac1aa092d1623a1ac9bc935f0b15e8071e7a072915abddf0570`. |
 | `.vale.ini` | The rules the build-time check runs (117 of 137). Same file in both repos. |
+| `styles/JakeTunes/` | The house style, written here (not vendored), same files in both repos: `Names.yml` (one name for each thing, any case: Songs, Listening List, Record Shop, Up Next, Live Albums, Download, the Music Man, Offline, color), `Concerts.yml` (a bare "concert": a person picks Shows for tickets or Live Albums for recordings), `Internals.yml` (homemini, Tailscale, NAS, streamrip, iTunesDB, error codes…), `Marks.yml` ("...", "(s)", "!", emoji). |
 | `slop-check.py` | Pulls the words a person reads out of the code, runs Vale, reports `file:line`. Byte-identical in JakeTunesMobile and JakeTunesV3. |
+| `allow.tsv` | Per repo: the few strings the check lets stand, each with why (a file another change owns, a Do-Not-Touch file, a word Jake still has to pick). |
 
 ## Vale itself is not in the repo
 
@@ -58,3 +60,30 @@ homemini's runtime gate on AI-written text (JakeTunesMobile `backend/src/util/sl
 Replace `styles/ai-tells/` with the new release (check its sha256 first), run
 `--calibrate` in both repos (and on homemini's text for the mobile runtime set), and update the `.ini` files
 and this README in the same change.
+
+## The house style (2026-11-24)
+
+Jake's rules from the slop sweep (`Dr. Claude/slop-sweep` in JakeTunesMobile), as Vale
+styles in `styles/JakeTunes/`: one name for each thing, no internals, no "...", "(s)", "!"
+or emoji. They read the same words the ai-tells rules read: never code, logs or ids.
+They fail the check here (`HOUSE_ENFORCED` in the script); in JakeTunesMobile they are
+counted and listed with `--house`, not enforced, until the phone's own sweep lands.
+
+What the check reads, beyond the first version: one-word strings ("Tracks", "Queue"),
+`set…Notice/Error/Status(…)` calls, `confirmLabel` / `cancelLabel`, the main process's menu
+items and the words inside `dialog.show…(…)` calls. It skips `console.*(…)` and the sync
+engines' progress titles and raw errors, which `sync-failure-copy.ts` and
+`sync-progress-model.ts` turn into the lines a person reads.
+
+A string that must keep a flagged word: `slop-ok` and why in a comment on its line, or, when
+that file can't be touched today, one line in `allow.tsv` (file, words as `--dump` prints
+them, why). An `allow.tsv` line that matches nothing any more is printed as a note.
+
+Before reading the tree the check runs over a planted file (`selftest` in the script): each
+house rule, a one-word string, and a string under two JSX closing tags at a known line (the
+line-number bug, fixed here, read `</` as a regex and lost a newline: 322 of 1,498 desktop
+strings pointed at the wrong line). If it can't see those, the check fails instead of
+passing blind. Mutation-tested 2026-11-24: the old lexer, single words off, each house
+style off, and eleven planted strings in the tree (a menu "...", a dialog naming homemini,
+a confirmLabel "!", a one-word "Tracks" heading, …) each fail it; the clean tree passes.
+

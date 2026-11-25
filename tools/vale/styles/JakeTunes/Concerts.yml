@@ -1,0 +1,11 @@
+---
+# "Concert" on its own names two things: tickets (Shows) and recordings (Live Albums).
+# Which one is a person's choice, so this rule only flags it. ("Live Concert(s)" is in
+# Names.yml: that is always a recording.) TWIN, the same file in JakeTunesMobile and JakeTunesV3.
+extends: existence
+message: "'%s': say Shows (tickets) or Live Albums (recordings); pick the one this means."
+level: error
+ignorecase: true
+nonword: true
+tokens:
+  - '(?<!\blive )\bconcerts?\b'
