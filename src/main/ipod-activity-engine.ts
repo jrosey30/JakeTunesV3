@@ -1058,6 +1058,11 @@ async function runActivitySyncHolding(
     const fixed = await recoverFromJournal(IPOD_MOUNT, priorJournal, async (dir) => { await restoreItunesDbBackup(dir, IPOD_MOUNT) })
     const r = fixed.report
     console.log(`activity-sync: a stopped replacement was settled from its journal — ${r.restored.length} original(s) back, ${r.released.length} released, ${r.removed.length} unfinished copy(ies) removed${r.dbRestored ? ', the last committed song list put back' : ''}${r.kept.length ? `, ${r.kept.length} left as found` : ''}`)
+    if (r.unreadable) {
+      // Can't tell what the card holds: the journal stays, nothing is touched, and the sync stops.
+      await host.writeJournal(null)
+      return fail({ copied: 0, target, error: 'Couldn’t read the song list on the iPod, so this sync couldn’t finish the songs a stopped sync was replacing. Nothing on the iPod was changed. Unplug the iPod, plug it back in, then sync again.' })
+    }
     if (r.stale) {
       // The card was changed elsewhere since this Mac's run stopped: the journal no longer
       // describes it. Nothing on the card was touched; the journal goes.

@@ -11,6 +11,9 @@
  *      song list over a card it no longer describes.
  *   E: the app dies right after a wave's song list is committed, before its originals are
  *      released: the next sync knows the wave committed (it replaces only the rest).
+ *   C2: as C, and copying the originals back fails too: the journal stays open (staged).
+ *   F: the song list can't be read while a wave is left staged: "can't tell", the journal is
+ *      kept and the sync stops; it is never taken as "changed elsewhere".
  */
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -32,6 +35,9 @@ const realUnlink = fsp.unlink
 /** Throws synchronously: a process that dies at this call, not a failed unlink a caller catches. */
 let unlinkHook: null | ((p: string) => void) = null
 fsp.unlink = (p: string) => { if (unlinkHook) unlinkHook(String(p)); return realUnlink(p) }
+const realCopyFile = fsp.copyFile
+let copyHook: null | ((a: string, b: string) => void) = null
+fsp.copyFile = async (a: string, b: string, mode?: number) => { if (copyHook) copyHook(String(a), String(b)); return realCopyFile(a, b, mode) }
 syncBuiltinESMExports()
 
 const REPO = join(import.meta.dirname, '..', '..', '..')
@@ -234,5 +240,65 @@ describe('E: the app dies after a wave is committed, before its originals are re
     assert.equal(r.swap?.out, 10 - committedWave, 'the committed wave is not replaced again')
     for (const [p, size] of await h.cardFiles()) assert.equal(size, 300_000, `${p} is the new copy`)
     assert.deepEqual(await h.catalogMissing(), [])
+  })
+})
+
+describe('C2: the card drops while a wave is put in place, and both renaming and copying the originals back fail', () => {
+  const h = harness('rv499-c2-')
+  before(() => h.before()); after(() => { renameHook = null; copyHook = null; return h.after() })
+  it('first sync', async () => { const r = await h.sync(); assert.equal(r.ok, true, r.error) })
+  it('the journal stays open (staged) for the next sync, and the message says not every song is back', async () => {
+    h.mirrorBytes = 300_000; await h.dropLanded()
+    const r3 = await h.roomFor(3, 300_000)
+    h.freeFn = async () => r3
+    let intoPlace = 0
+    let dropped = false
+    renameHook = (a) => {
+      if (a.endsWith('.jtnew') && ++intoPlace === 2) { dropped = true; throw Object.assign(new Error('EIO (test: card dropped)'), { code: 'EIO' }) }
+      if (dropped && a.endsWith('.jtorig')) throw Object.assign(new Error('ENOENT (test: card gone)'), { code: 'ENOENT' })
+    }
+    copyHook = (a) => { if (dropped && a.endsWith('.jtorig')) throw Object.assign(new Error('EIO (test: card gone)'), { code: 'EIO' }) }
+    const r1 = await h.sync()
+    renameHook = null; copyHook = null
+    assert.equal(r1.ok, false)
+    assert.doesNotMatch(String(r1.error), /Every song is as it was/)
+    const j = await readWavesJournal(h.paths().state)
+    assert.equal(j?.open?.state, 'staged', 'the journal is still open: nothing was put back')
+    h.events.length = 0
+    const r = await h.sync()
+    assert.equal(r.ok, true, r.error)
+    assert.equal(r.mode, 'swap', String(r.fullReason))
+    assert.deepEqual(await h.catalogMissing(), [])
+  })
+})
+
+describe('F: the song list can\'t be read for a moment while a wave is left staged', () => {
+  const h = harness('rv499-f-')
+  before(() => h.before()); after(() => h.after())
+  it('first sync', async () => { const r = await h.sync(); assert.equal(r.ok, true, r.error) })
+  it('an unreadable song list is "can\'t tell", not "changed elsewhere": the journal is kept and the sync stops', async () => {
+    h.mirrorBytes = 300_000; await h.dropLanded()
+    const r3 = await h.roomFor(3, 300_000)
+    h.freeFn = async () => r3
+    h.wavesSeen = 0
+    h.remountHook = () => { if (h.wavesSeen >= 1) { h.remountHook = null; throw new Error('process died (test)') } }
+    await assert.rejects(h.sync(), /process died/)
+    const { card, state } = h.paths()
+    const j = await readWavesJournal(state)
+    assert.equal(j?.open?.state, 'staged')
+    const db = join(card, 'iPod_Control', 'iTunes', 'iTunesDB')
+    const { rename: mv } = await import('node:fs/promises')
+    await mv(db, db + '.away')   // the read fails (a mount hiccup)
+    const out = await recoverFromJournal(card, j!, async () => {})
+    assert.equal(out.report.stale, false, 'never taken as changed elsewhere')
+    assert.equal(out.report.unreadable, true)
+    const r = await h.sync()
+    assert.equal(r.ok, false)
+    assert.match(String(r.error), /Couldn’t read the song list on the iPod/)
+    assert.equal((await readWavesJournal(state))?.open?.state, 'staged', 'the journal is kept')
+    await mv(db + '.away', db)
+    const r2 = await h.sync()
+    assert.equal(r2.ok, true, r2.error)
+    assert.equal(r2.mode, 'swap', String(r2.fullReason))
   })
 })
