@@ -77,22 +77,12 @@
   display: block;
   filter: blur(70px) saturate(1.35);
   transform: scale(1.35);
-  animation: tnDrift 28s ease-in-out infinite;
-  will-change: transform;
+  /* V7: the backdrop holds still (it drifted for ever, 28 s a cycle). */
 }
 .tn-veil {
   position: absolute;
   inset: 0;
   background: rgba(12, 22, 36, 0.42);
-}
-@keyframes tnDrift {
-  0%   { transform: scale(1.35) translate(0, 0); }
-  50%  { transform: scale(1.45) translate(-2%, 1.5%); }
-  100% { transform: scale(1.35) translate(0, 0); }
-}
-@keyframes tnPulse {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.3; }
 }
 
 /* ONE content column with every Home section: the same left and right
@@ -189,7 +179,7 @@
   margin-top: 7px;
   border-radius: 4px;
   background: var(--brand-orange, #FC5501);
-  animation: tnPulse 1.4s ease-in-out infinite;
+  /* V7: steady (it blinked for ever); the glow below is what "live" looks like. */
 }
 /* on air: steady and glowing while he speaks */
 .tn-mm-dot--live {
@@ -230,7 +220,7 @@
   cursor: pointer;
   appearance: none;
   -webkit-appearance: none;
-  transition: background-color 140ms ease, border-color 140ms ease;
+  transition: background-color var(--motion-instant) var(--motion-ease), border-color var(--motion-instant) var(--motion-ease);
 }
 .tn-mm--action:hover { background: rgba(255, 255, 255, 0.2); border-color: rgba(255, 255, 255, 0.32); }
 .tn-mm--on {
@@ -259,7 +249,7 @@
   cursor: pointer;
   appearance: none;
   -webkit-appearance: none;
-  transition: background-color 140ms ease, border-color 140ms ease, transform 120ms ease;
+  transition: background-color var(--motion-instant) var(--motion-ease), border-color var(--motion-instant) var(--motion-ease), transform var(--motion-instant) var(--motion-ease);
 }
 .tn-btn:active { transform: translateY(1px); }
 .tn-btn--play {
@@ -320,7 +310,7 @@
   background: transparent;
   cursor: pointer;
   transform-origin: 50% 50%;
-  transition: transform 0.55s ease;
+  transition: transform var(--motion-slow) var(--motion-ease);
 }
 .tn-flow-cover--front { cursor: pointer; }
 .tn-flow-cover--missing { opacity: 0.55; }
@@ -620,8 +610,8 @@
 }
 /* the plastic shows only on the front cover: it comes up over the end of a
    step and goes over its start (the art itself never fades) */
-.tn-case--arrive .tn-case-plastic { animation: tnCasePlasticIn 220ms ease-out 330ms both; }
-.tn-case--leave .tn-case-plastic { animation: tnCasePlasticOut 220ms ease-in both; }
+.tn-case--arrive .tn-case-plastic { animation: tnCasePlasticIn var(--motion-normal) var(--motion-ease) calc(var(--motion-stagger) * 11) both; }
+.tn-case--leave .tn-case-plastic { animation: tnCasePlasticOut var(--motion-normal) var(--motion-ease) both; }
 @keyframes tnCasePlasticIn { from { opacity: 0; } }
 @keyframes tnCasePlasticOut { to { opacity: 0; } }
 /* back on Home with the case open: the shut cover's reflection stays gone */
@@ -665,7 +655,7 @@
   border: 1px solid rgba(255, 255, 255, 0.2);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
   background: rgba(255, 255, 255, 0.08);
-  transition: transform 160ms ease, box-shadow 160ms ease;
+  transition: transform var(--motion-instant) var(--motion-ease), box-shadow var(--motion-instant) var(--motion-ease);
 }
 .tn-dig:hover .tn-poster { transform: translateY(-3px); box-shadow: 0 22px 48px rgba(0, 0, 0, 0.42); }
 .tn-poster img {
@@ -678,31 +668,11 @@
    "The animation for the concert area is very very cool. Try to mimic that throughout the home
    page wherever it makes the most sense. Like not album art. But other things."). Album art never
    moves; these are the app's artist photos. Three of the concert card's moves:
-   - the photo drifts ±14px as the Home scrolls (scroll-driven, no JS), as a concert photo drifts
-     with its rail (home.css .home-concert-photo-img);
-   - the rank flips down into place like the concert card's date stub, one poster after another;
-   - the poster of the act playing right now shows the concert card's equalizer (DigPlaying). */
-@supports (animation-timeline: view()) {
-  .tn-poster img {
-    height: calc(100% + 28px);
-    margin-top: -14px;
-    animation: tn-poster-drift linear both;
-    animation-timeline: view();
-  }
-}
-@keyframes tn-poster-drift {
-  from { transform: translateY(14px); }
-  to { transform: translateY(-14px); }
-}
-.tn-dig-rank {
-  transform-origin: top center;
-  animation: tn-rank-in 420ms cubic-bezier(0.3, 1.5, 0.5, 1) both;
-  animation-delay: calc(80ms + var(--i, 0) * 70ms);
-}
-@keyframes tn-rank-in {
-  from { transform: perspective(300px) rotateX(-88deg); opacity: 0; }
-  to { transform: none; opacity: 1; }
-}
+   - the poster of the act playing right now shows the concert card's equalizer (DigPlaying).
+   V7 cut the other two: the posters no longer drift as the Home scrolls, and the rank no
+   longer bounces into place. */
+/* V7: the rank no longer flips down with a bounce; it is simply there with
+   its poster ("cut the bouncing rank pop"). */
 /* The equalizer disc (home.css) sits bottom-right, clear of the rank at bottom-left. */
 .tn-poster .tn-dig-eq { right: 10px; bottom: 10px; }
 .tn-poster-ini {
@@ -760,8 +730,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tn-art-img, .tn-mm-dot, .tn-case-plastic { animation: none; }
+  .tn-case-plastic { animation: none; }
   .tn-flow-cover, .tn-poster, .tn-btn, .tn-mm--action { transition: none; }
-  .tn-poster img { animation: none; height: 100%; margin-top: 0; }
-  .tn-dig-rank { animation: none; }
 }

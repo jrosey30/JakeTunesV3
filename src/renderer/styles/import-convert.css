@@ -75,7 +75,7 @@
   align-items: center;
   justify-content: center;
   gap: 12px;
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color var(--motion-instant) var(--motion-ease), background var(--motion-instant) var(--motion-ease);
 }
 .imp-dropzone--active {
   border-color: #4a90d9;
@@ -182,7 +182,7 @@
 .imp-progress-fill {
   height: 100%;
   background: linear-gradient(90deg, #4a90d9, #6aade8);
-  transition: width 0.25s ease;
+  transition: width var(--motion-normal) var(--motion-ease);
 }
 .imp-progress-text {
   font-size: 11px;

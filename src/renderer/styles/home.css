@@ -160,10 +160,10 @@
   box-shadow: var(--shadow-1, 0 1px 2px rgba(70, 55, 40, 0.06));
   cursor: pointer;
   transition:
-    background-color 140ms ease,
-    border-color 140ms ease,
-    box-shadow 140ms ease,
-    transform 120ms ease;
+    background-color var(--motion-instant) var(--motion-ease),
+    border-color var(--motion-instant) var(--motion-ease),
+    box-shadow var(--motion-instant) var(--motion-ease),
+    transform var(--motion-instant) var(--motion-ease);
 }
 
 .home-shelf-icon {
@@ -219,7 +219,7 @@
   font-weight: 400;
   line-height: 1;
   color: rgba(85, 78, 64, 0.32);
-  transition: color 140ms ease, transform 140ms ease;
+  transition: color var(--motion-instant) var(--motion-ease), transform var(--motion-instant) var(--motion-ease);
 }
 
 .home-shelf:hover .home-shelf-go {
@@ -312,7 +312,7 @@
   border: 1px solid rgba(85, 78, 64, 0.12);
   border-radius: 12px;
   box-shadow: 0 1px 2px rgba(70, 55, 40, 0.05), 0 10px 30px rgba(70, 55, 40, 0.08);
-  animation: home-card-in 320ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+  animation: home-card-in var(--motion-normal) var(--motion-ease) both;
 }
 
 /* 4.5 polish: a soft, blurred bleed of the album's OWN art filling the hero's
@@ -366,7 +366,7 @@
   background: #e8e6e0;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
   cursor: pointer;
-  transition: transform 220ms cubic-bezier(0.2, 0.65, 0.3, 1), box-shadow 220ms ease;
+  transition: transform var(--motion-instant) var(--motion-ease), box-shadow var(--motion-instant) var(--motion-ease);
 }
 .home-featured-art:hover {
   transform: scale(1.015);
@@ -381,7 +381,7 @@
   object-fit: cover;
   display: block;
   opacity: 0;
-  transition: opacity 220ms ease-out;
+  transition: opacity var(--motion-normal) var(--motion-ease);
 }
 .home-featured-art img.home-album-art-loaded {
   opacity: 1;
@@ -397,7 +397,7 @@
   justify-content: center;
   background: rgba(0, 0, 0, 0.32);
   opacity: 0;
-  transition: opacity 180ms ease;
+  transition: opacity var(--motion-instant) var(--motion-ease);
   pointer-events: none;
 }
 
@@ -463,7 +463,7 @@
   border: 1px solid rgba(0, 0, 0, 0.10);
   border-radius: 5px;
   cursor: pointer;
-  transition: background-color 140ms ease, transform 140ms ease;
+  transition: background-color var(--motion-instant) var(--motion-ease), transform var(--motion-instant) var(--motion-ease);
 }
 .home-featured-btn:hover {
   background: rgba(0, 0, 0, 0.08);
@@ -507,7 +507,7 @@
   border-radius: 10px;
   box-shadow: inset 0 1px 3px rgba(70, 55, 40, 0.06), 0 1px 0 rgba(255, 255, 255, 0.55);
   overflow: hidden;
-  animation: home-card-in 360ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+  animation: home-card-in var(--motion-normal) var(--motion-ease) both;
 }
 .home-stat {
   padding: 14px 18px;
@@ -569,7 +569,7 @@
   margin-bottom: var(--home-section-gap, 44px);
   /* 2026-09-02 — bands ease in as their data lands (the page no longer waits
      behind a gate), so a late arrival reads as intentional, not as a pop. */
-  animation: home-section-in 260ms ease-out both;
+  animation: home-section-in var(--motion-normal) var(--motion-ease) both;
 }
 @keyframes home-section-in {
   from { opacity: 0; transform: translateY(6px); }
@@ -633,7 +633,7 @@
   cursor: pointer;
   padding: 2px 6px;
   border-radius: 3px;
-  transition: opacity 140ms ease;
+  transition: opacity var(--motion-instant) var(--motion-ease);
 }
 .home-section-more:hover {
   opacity: 0.75;
@@ -685,10 +685,10 @@
   /* 4.4.24: stagger-fade in on mount — each card animates a few ms
      after the previous one. Feels alive instead of "boom they're all
      here." See the nth-child rules below. */
-  animation: home-card-in 280ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+  animation: home-card-in var(--motion-normal) var(--motion-ease) both;
 }
 .home-album-card .home-album-art {
-  transition: box-shadow 180ms ease, transform 180ms ease;
+  transition: box-shadow var(--motion-instant) var(--motion-ease), transform var(--motion-instant) var(--motion-ease);
 }
 .home-album-card:hover .home-album-art {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
@@ -728,7 +728,7 @@
      album-art:// scheme handler is slow on first paint). Starts at 0,
      `onLoad` in JSX flips to 1. */
   opacity: 0;
-  transition: opacity 220ms ease-out;
+  transition: opacity var(--motion-normal) var(--motion-ease);
 }
 .home-album-art img.home-album-art-loaded {
   opacity: 1;
@@ -853,10 +853,10 @@
   cursor: pointer;
   box-sizing: border-box;
   /* 4.4.24: stagger-fade in on mount, same animation as album cards. */
-  animation: home-card-in 280ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+  animation: home-card-in var(--motion-normal) var(--motion-ease) both;
 }
 .home-artist-card .home-artist-art {
-  transition: box-shadow 180ms ease, transform 180ms ease;
+  transition: box-shadow var(--motion-instant) var(--motion-ease), transform var(--motion-instant) var(--motion-ease);
 }
 .home-artist-card:hover .home-artist-art {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
@@ -871,7 +871,7 @@
   object-fit: cover;
   display: block;
   opacity: 0;
-  transition: opacity 220ms ease-out;
+  transition: opacity var(--motion-normal) var(--motion-ease);
 }
 .home-artist-art img.home-artist-art-loaded {
   opacity: 1;
@@ -961,10 +961,10 @@
      moved. clip clips the same and lets the timeline find the rail. */
   overflow: clip;
   transition:
-    box-shadow 180ms cubic-bezier(0.2, 0.65, 0.3, 1),
-    transform 180ms cubic-bezier(0.2, 0.65, 0.3, 1),
-    background-color 120ms ease-out;
-  animation: home-card-in 280ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+    box-shadow var(--motion-instant) var(--motion-ease),
+    transform var(--motion-instant) var(--motion-ease),
+    background-color var(--motion-instant) var(--motion-ease);
+  animation: home-card-in var(--motion-normal) var(--motion-ease) both;
 }
 .home-tour-card:hover {
   background: #fdfaf4;
@@ -1024,7 +1024,7 @@
   flex-direction: column;
   cursor: pointer;
   box-sizing: border-box;
-  animation: home-card-in 280ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+  animation: home-card-in var(--motion-normal) var(--motion-ease) both;
 }
 .home-upcoming-card .home-upcoming-art {
   position: relative;
@@ -1035,7 +1035,7 @@
   background: linear-gradient(135deg, #d8d2c0 0%, #b5ab8e 100%);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
   flex-shrink: 0;
-  transition: box-shadow 180ms ease, transform 180ms ease;
+  transition: box-shadow var(--motion-instant) var(--motion-ease), transform var(--motion-instant) var(--motion-ease);
 }
 .home-upcoming-card:hover .home-upcoming-art {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
@@ -1052,7 +1052,7 @@
   object-fit: cover;
   display: block;
   opacity: 0;
-  transition: opacity 220ms ease-out;
+  transition: opacity var(--motion-normal) var(--motion-ease);
 }
 .home-upcoming-art img.home-album-art-loaded {
   opacity: 1;
@@ -1099,7 +1099,7 @@
   flex-direction: column;
   cursor: pointer;
   box-sizing: border-box;
-  animation: home-card-in 280ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+  animation: home-card-in var(--motion-normal) var(--motion-ease) both;
 }
 .home-release-card .home-release-art {
   position: relative;   /* anchors the hover ▶ preview disc */
@@ -1110,7 +1110,7 @@
   background: #e8e6e0;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
   flex-shrink: 0;
-  transition: box-shadow 180ms ease, transform 180ms ease;
+  transition: box-shadow var(--motion-instant) var(--motion-ease), transform var(--motion-instant) var(--motion-ease);
 }
 .home-release-card:hover .home-release-art {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
@@ -1125,7 +1125,7 @@
   object-fit: cover;
   display: block;
   opacity: 0;
-  transition: opacity 220ms ease-out;
+  transition: opacity var(--motion-normal) var(--motion-ease);
 }
 .home-release-art img.home-album-art-loaded {
   opacity: 1;
@@ -1143,8 +1143,8 @@
   padding: 10px 12px;
   background: rgba(0, 0, 0, 0.02);
   border-radius: 6px;
-  transition: background-color 140ms ease-out, transform 180ms cubic-bezier(0.2, 0.65, 0.3, 1);
-  animation: home-card-in 280ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+  transition: background-color var(--motion-instant) var(--motion-ease), transform var(--motion-instant) var(--motion-ease);
+  animation: home-card-in var(--motion-normal) var(--motion-ease) both;
 }
 .home-news-card:hover {
   background: rgba(var(--brand-orange-rgb), 0.07);
@@ -1168,7 +1168,7 @@
   object-fit: cover;
   display: block;
   opacity: 0;
-  transition: opacity 220ms ease-out;
+  transition: opacity var(--motion-normal) var(--motion-ease);
 }
 .home-news-art img.home-album-art-loaded {
   opacity: 1;
@@ -1202,33 +1202,33 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 .home-card-row > *:nth-child(1)  { animation-delay:   0ms; }
-.home-card-row > *:nth-child(2)  { animation-delay:  28ms; }
-.home-card-row > *:nth-child(3)  { animation-delay:  56ms; }
-.home-card-row > *:nth-child(4)  { animation-delay:  84ms; }
-.home-card-row > *:nth-child(5)  { animation-delay: 112ms; }
-.home-card-row > *:nth-child(6)  { animation-delay: 140ms; }
-.home-card-row > *:nth-child(7)  { animation-delay: 168ms; }
-.home-card-row > *:nth-child(8)  { animation-delay: 196ms; }
-.home-card-row > *:nth-child(9)  { animation-delay: 224ms; }
-.home-card-row > *:nth-child(10) { animation-delay: 252ms; }
-.home-card-row > *:nth-child(11) { animation-delay: 280ms; }
-.home-card-row > *:nth-child(12) { animation-delay: 308ms; }
+.home-card-row > *:nth-child(2)  { animation-delay:  calc(var(--motion-stagger) * 1); }
+.home-card-row > *:nth-child(3)  { animation-delay:  calc(var(--motion-stagger) * 2); }
+.home-card-row > *:nth-child(4)  { animation-delay:  calc(var(--motion-stagger) * 3); }
+.home-card-row > *:nth-child(5)  { animation-delay: calc(var(--motion-stagger) * 4); }
+.home-card-row > *:nth-child(6)  { animation-delay: calc(var(--motion-stagger) * 5); }
+.home-card-row > *:nth-child(7)  { animation-delay: calc(var(--motion-stagger) * 6); }
+.home-card-row > *:nth-child(8)  { animation-delay: calc(var(--motion-stagger) * 7); }
+.home-card-row > *:nth-child(9)  { animation-delay: calc(var(--motion-stagger) * 7); }
+.home-card-row > *:nth-child(10) { animation-delay: calc(var(--motion-stagger) * 8); }
+.home-card-row > *:nth-child(11) { animation-delay: calc(var(--motion-stagger) * 9); }
+.home-card-row > *:nth-child(12) { animation-delay: calc(var(--motion-stagger) * 10); }
 
 /* 4.5 polish: stagger the home SECTIONS so their entrance cascades instead of
    ~8 firing simultaneously (8 concurrent subtree layer-rasterizations janked
    the Home mount). Position-based ramp; non-animating children (scroll-top
    button, header) simply ignore the delay. Keeps the subtle rise — just spreads
    it over time so each frame composites one section, not eight. */
-.home-view > *:nth-child(3)  { animation-delay:  20ms; }
-.home-view > *:nth-child(4)  { animation-delay:  50ms; }
-.home-view > *:nth-child(5)  { animation-delay:  80ms; }
-.home-view > *:nth-child(6)  { animation-delay: 110ms; }
-.home-view > *:nth-child(7)  { animation-delay: 140ms; }
-.home-view > *:nth-child(8)  { animation-delay: 170ms; }
-.home-view > *:nth-child(9)  { animation-delay: 200ms; }
-.home-view > *:nth-child(10) { animation-delay: 230ms; }
-.home-view > *:nth-child(11) { animation-delay: 260ms; }
-.home-view > *:nth-child(12) { animation-delay: 290ms; }
+.home-view > *:nth-child(3)  { animation-delay:  calc(var(--motion-stagger) * 1); }
+.home-view > *:nth-child(4)  { animation-delay:  calc(var(--motion-stagger) * 2); }
+.home-view > *:nth-child(5)  { animation-delay:  calc(var(--motion-stagger) * 3); }
+.home-view > *:nth-child(6)  { animation-delay: calc(var(--motion-stagger) * 4); }
+.home-view > *:nth-child(7)  { animation-delay: calc(var(--motion-stagger) * 5); }
+.home-view > *:nth-child(8)  { animation-delay: calc(var(--motion-stagger) * 6); }
+.home-view > *:nth-child(9)  { animation-delay: calc(var(--motion-stagger) * 7); }
+.home-view > *:nth-child(10) { animation-delay: calc(var(--motion-stagger) * 8); }
+.home-view > *:nth-child(11) { animation-delay: calc(var(--motion-stagger) * 9); }
+.home-view > *:nth-child(12) { animation-delay: calc(var(--motion-stagger) * 10); }
 /* Respect users who turn down motion in System Settings. */
 @media (prefers-reduced-motion: reduce) {
   .home-album-card,
@@ -1300,7 +1300,7 @@
 }
 .home-rediscover-play {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  font-size: 40px; color: #fff; opacity: 0; transition: opacity 0.15s ease;
+  font-size: 40px; color: #fff; opacity: 0; transition: opacity var(--motion-instant) var(--motion-ease);
   background: rgba(0, 0, 0, 0.30); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.55); padding-left: 4px;
 }
 .home-rediscover-art:hover .home-rediscover-play { opacity: 1; }
@@ -1328,17 +1328,17 @@
    the table, not a static document. Uses the existing home-card-in
    keyframes; sections after the 8th share the last delay. ── */
 .home-section {
-  animation: home-card-in 420ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+  animation: home-card-in var(--motion-normal) var(--motion-ease) both;
 }
-.home-section:nth-of-type(1) { animation-delay: 60ms; }
-.home-section:nth-of-type(2) { animation-delay: 115ms; }
-.home-section:nth-of-type(3) { animation-delay: 170ms; }
-.home-section:nth-of-type(4) { animation-delay: 225ms; }
-.home-section:nth-of-type(5) { animation-delay: 280ms; }
-.home-section:nth-of-type(6) { animation-delay: 335ms; }
-.home-section:nth-of-type(n+7) { animation-delay: 390ms; }
-.home-stats { animation-delay: 40ms; }
-.home-mixes { animation-delay: 25ms; }
+.home-section:nth-of-type(1) { animation-delay: calc(var(--motion-stagger) * 2); }
+.home-section:nth-of-type(2) { animation-delay: calc(var(--motion-stagger) * 4); }
+.home-section:nth-of-type(3) { animation-delay: calc(var(--motion-stagger) * 6); }
+.home-section:nth-of-type(4) { animation-delay: calc(var(--motion-stagger) * 8); }
+.home-section:nth-of-type(5) { animation-delay: calc(var(--motion-stagger) * 9); }
+.home-section:nth-of-type(6) { animation-delay: calc(var(--motion-stagger) * 11); }
+.home-section:nth-of-type(n+7) { animation-delay: calc(var(--motion-stagger) * 13); }
+.home-stats { animation-delay: calc(var(--motion-stagger) * 1); }
+.home-mixes { animation-delay: calc(var(--motion-stagger) * 1); }
 
 
 /* New This Week: 30s preview of a song off the album, in place (2026-08-07).
@@ -1349,7 +1349,7 @@
   width: 38px; height: 38px; border-radius: 50%; border: none; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   color: #fff; background: rgba(20, 16, 12, 0.62);
-  opacity: 0; transition: opacity 130ms ease, background 130ms ease;
+  opacity: 0; transition: opacity var(--motion-instant) var(--motion-ease), background var(--motion-instant) var(--motion-ease);
 }
 .home-release-card:hover .home-release-play,
 .home-release-card .home-release-play--on { opacity: 1; }
@@ -1714,7 +1714,7 @@
   justify-content: center;
   background: rgba(0, 0, 0, 0.34);
   backdrop-filter: blur(2px);
-  animation: home-concert-nights-fade 160ms ease both;
+  animation: home-concert-nights-fade var(--motion-normal) var(--motion-ease) both;
 }
 .home-concert-nights-sheet {
   width: min(820px, 92vw);
@@ -1724,7 +1724,7 @@
   border-radius: 14px;
   background: var(--white, #fdfbf7);
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
-  animation: home-concert-nights-rise 200ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+  animation: home-concert-nights-rise var(--motion-normal) var(--motion-ease) both;
 }
 @keyframes home-concert-nights-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes home-concert-nights-rise { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
@@ -1881,7 +1881,7 @@
   object-fit: cover;
   object-position: var(--concert-pos, 50% 33.33%);
   transform: translateX(var(--concert-rest, 0px));
-  transition: opacity 200ms ease-out;
+  transition: opacity var(--motion-normal) var(--motion-ease);
 }
 .home-concert-photo-img--checking { opacity: 0; }
 @supports (animation-timeline: view()) {
@@ -1923,13 +1923,13 @@
   border-radius: 3px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
   transform-origin: top center;
-  animation: home-concert-stub-in 420ms cubic-bezier(0.3, 1.5, 0.5, 1) 80ms both;
+  animation: home-concert-stub-in var(--motion-normal) var(--motion-ease) calc(var(--motion-stagger) * 3) both;
 }
 .home-concert-stub--tonight {
   color: #fff;
   background: var(--brand-orange, #FC5501);
-  animation: home-concert-stub-in 420ms cubic-bezier(0.3, 1.5, 0.5, 1) 80ms both,
-             home-concert-glow 1.4s ease-in-out 600ms infinite alternate;
+  animation: home-concert-stub-in var(--motion-normal) var(--motion-ease) calc(var(--motion-stagger) * 3) both,
+             home-concert-glow var(--motion-pulse) ease-in-out calc(var(--motion-pulse) * 0.5) infinite alternate;
 }
 @keyframes home-concert-stub-in {
   from { transform: perspective(300px) rotateX(-88deg); opacity: 0; }
@@ -1960,10 +1960,10 @@
   border-radius: 1.5px;
   background: #fff;
   transform-origin: bottom;
-  animation: home-concert-eq 380ms ease-in-out infinite alternate;
+  animation: home-concert-eq calc(var(--motion-pulse) * 0.32) ease-in-out infinite alternate;
 }
-.home-concert-eq i:nth-child(2) { animation-duration: 310ms; animation-delay: -120ms; }
-.home-concert-eq i:nth-child(3) { animation-duration: 440ms; animation-delay: -220ms; }
+.home-concert-eq i:nth-child(2) { animation-duration: calc(var(--motion-pulse) * 0.26); animation-delay: calc(var(--motion-pulse) * -0.1); }
+.home-concert-eq i:nth-child(3) { animation-duration: calc(var(--motion-pulse) * 0.37); animation-delay: calc(var(--motion-pulse) * -0.18); }
 @keyframes home-concert-eq {
   from { transform: scaleY(0.35); }
   to { transform: scaleY(1); }
@@ -1982,7 +1982,7 @@
   font-weight: 900;
   letter-spacing: 0.14em;
   pointer-events: none;
-  animation: home-concert-stamp 1.3s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  animation: home-concert-stamp var(--motion-normal) var(--motion-ease) both;
 }
 @keyframes home-concert-stamp {
   0% { transform: translate(-50%, -50%) rotate(-11deg) scale(1.9); opacity: 0; }
@@ -2008,6 +2008,6 @@
   .home-concert-eq i { animation: none; }
   .home-concert-eq i:nth-child(1) { transform: scaleY(0.5); }
   .home-concert-eq i:nth-child(3) { transform: scaleY(0.7); }
-  .home-concert-stamp { animation: home-concert-stamp-fade 1.3s ease both; transform: translate(-50%, -50%) rotate(-11deg); }
+  .home-concert-stamp { animation: home-concert-stamp-fade var(--motion-normal) var(--motion-ease) both; transform: translate(-50%, -50%) rotate(-11deg); }
   @keyframes home-concert-stamp-fade { 0%, 100% { opacity: 0; } 15%, 80% { opacity: 1; } }
 }

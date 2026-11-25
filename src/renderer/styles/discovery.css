@@ -67,7 +67,7 @@
   font-size: 12px;
   line-height: 1;
   opacity: 0;
-  transition: opacity 140ms ease, background 140ms ease;
+  transition: opacity var(--motion-instant) var(--motion-ease), background var(--motion-instant) var(--motion-ease);
 }
 .nfy-card:hover .nfy-nope { opacity: 1; }
 .nfy-nope:hover { background: rgba(160, 40, 30, 0.9); }

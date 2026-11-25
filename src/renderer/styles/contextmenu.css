@@ -16,7 +16,7 @@
   user-select: none;
   -webkit-user-select: none;
   transform-origin: top left;
-  animation: pop-in var(--motion-fast) var(--ease-snap) both;
+  animation: pop-in var(--motion-instant) var(--motion-ease) both;
 }
 
 @media (prefers-reduced-motion: reduce) {

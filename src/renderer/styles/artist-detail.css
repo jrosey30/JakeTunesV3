@@ -32,9 +32,9 @@
      last section standing still. Every rise and its stagger is a share of it
      (see "Motion" below), so this one number retunes the whole entrance. It
      was 1.06 s, which read as "slow to appear"; keep it at 250 ms or less. */
-  --ad-enter-total: 240ms;
+  --ad-enter-total: var(--motion-normal);
   /* A picture arriving in its reserved box (the header photo, a member's face). */
-  --ad-fade: 180ms;
+  --ad-fade: var(--motion-normal);
 
   height: 100%;
   overflow-y: auto;
@@ -82,7 +82,7 @@
   position: absolute;
   inset: 0;
   opacity: 0;
-  transition: opacity var(--ad-fade) ease;
+  transition: opacity var(--ad-fade) var(--motion-ease);
 }
 .ad-hero-layer.is-in { opacity: 1; }
 .ad-hero-layer.is-instant { transition: none; }
@@ -100,7 +100,7 @@
   height: auto;
   -webkit-mask-image: linear-gradient(180deg, #000 62%, transparent 100%);
   mask-image: linear-gradient(180deg, #000 62%, transparent 100%);
-  animation-name: ad-drift-whole;
+  transform: none; /* the whole picture, unzoomed */
 }
 /* A group's tall header photo in a much wider window (heroPhotoFit): the
  * whole picture by its height, right-aligned, its left edge dissolving. */
@@ -109,7 +109,7 @@
   margin-left: auto;
   -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14%);
   mask-image: linear-gradient(90deg, transparent 0, #000 14%);
-  animation-name: ad-drift-whole;
+  transform: none; /* the whole picture, unzoomed */
 }
 .ad-hero-fade-x {
   position: absolute; inset: 0;
@@ -352,7 +352,7 @@
   line-height: 0;
 }
 /* The face fades in over the tile's own colour once it has decoded (MemberTile.tsx). */
-.ad-member-img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 50%; display: block; opacity: 0; transition: opacity var(--ad-fade) ease; }
+.ad-member-img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 50%; display: block; opacity: 0; transition: opacity var(--ad-fade) var(--motion-ease); }
 .ad-member-img.is-in { opacity: 1; }
 .ad-member-img.is-instant { transition: none; }
 .ad-member-mono {
@@ -366,7 +366,7 @@
   font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; line-height: 1;
   color: #fff; background: rgba(0, 0, 0, 0.55);
   opacity: 0;
-  transition: opacity 110ms ease;
+  transition: opacity var(--motion-instant) var(--motion-ease);
 }
 .ad-member-photo:hover .ad-member-hint,
 .ad-member-photo:focus-visible .ad-member-hint,
@@ -444,7 +444,7 @@
 .ad-more-title { font-family: var(--ad-display); font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
 .ad-more-count { font-size: 11px; color: var(--ad-text-3); }
 .ad-more-toggle:hover .ad-more-title { color: var(--ad-orange-dark); }
-.ad-chev { flex: none; color: var(--ad-text-3); transition: transform 0.16s ease; align-self: center; }
+.ad-chev { flex: none; color: var(--ad-text-3); transition: transform var(--motion-instant) var(--motion-ease); align-self: center; }
 .ad-chev.is-open { transform: rotate(90deg); }
 .ad-more-list { margin-top: 12px; display: flex; flex-direction: column; border: 1px solid var(--ad-hair); border-radius: 6px; overflow: hidden; }
 .ad-more-kind { padding: 8px 12px 6px; background: linear-gradient(180deg, #f6f3ee, #e7e1d8); border-bottom: 1px solid var(--border-light, #c8c8c8); color: var(--ad-text-2); }
@@ -504,16 +504,14 @@ button.ad-more-track:hover .ad-more-track-title { color: var(--ad-orange-dark); 
 .ad-related-rel { font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ad-text-3); }
 
 /* ── Motion ── */
-.ad-drift { animation: ad-drift 24s ease-in-out infinite alternate; transform-origin: 50% 30%; }
-@keyframes ad-drift {
-  from { transform: scale(1.02); }
-  to { transform: scale(1.09) translate(-1%, 1%); }
-}
+/* V7: the header photo holds still at the drift's resting frame (it drifted
+ * for ever, 24 s a cycle). */
+.ad-drift { transform: scale(1.02); transform-origin: 50% 30%; }
 /* The entrance: each block rises a few pixels as it fades in, top to bottom.
  * All of it is a share of --ad-enter-total (the knob, on .artist-detail): a
  * rise takes 70% of it and the last block starts 30% in, so the page stands
  * still when the total is up. */
-.ad-rise { animation: ad-rise calc(var(--ad-enter-total) * 0.7) cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.ad-rise { animation: ad-rise calc(var(--ad-enter-total) * 0.7) var(--motion-ease) both; }
 .ad-d1 { animation-delay: calc(var(--ad-enter-total) * 0.05); }
 .ad-d2 { animation-delay: calc(var(--ad-enter-total) * 0.10); }
 .ad-d3 { animation-delay: calc(var(--ad-enter-total) * 0.15); }
@@ -524,19 +522,14 @@ button.ad-more-track:hover .ad-more-track-title { color: var(--ad-orange-dark); 
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
 }
-.ad-lift { transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 0.22s; }
+.ad-lift { transition: transform var(--motion-instant) var(--motion-ease), box-shadow var(--motion-instant) var(--motion-ease); }
 .ad-lift:hover,
 .ad-cover:hover .ad-lift {
   transform: translateY(-4px);
   box-shadow: 0 4px 12px rgba(70, 55, 40, 0.10), 0 20px 48px rgba(70, 55, 40, 0.16);
 }
-/* A whole photo drifts less: the zoom is what would take its outer members back out of view. */
-@keyframes ad-drift-whole {
-  from { transform: scale(1); }
-  to { transform: scale(1.05) translate(-1%, 1%); }
-}
 @media (prefers-reduced-motion: reduce) {
-  .ad-drift, .ad-rise, .ad-hero-photo--whole img, .ad-hero-photo--tall img { animation: none; }
+  .ad-rise { animation: none; }
   .ad-lift, .ad-chev, .ad-member-hint, .ad-hero-layer, .ad-member-img { transition: none; }
   .ad-lift:hover, .ad-cover:hover .ad-lift { transform: none; }
 }

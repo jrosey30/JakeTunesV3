@@ -52,8 +52,10 @@
      Animating a transform on a view's whole subtree forced the browser to
      rasterize the entire (often non-virtualized) list into a compositor layer
      right as it was doing the heavy first render — janking the fade on EVERY
-     switch. Opacity-only + 120ms is the lightest fade that still reads as motion. */
-  animation: view-mount-fade var(--motion-fast) var(--ease-settle);
+     switch. Opacity-only is the lightest fade that still reads as motion.
+     V7: at the normal speed (pages and dialogs); scripts/motion-frames measures
+     it frame by frame (npm run test:frames). */
+  animation: view-mount-fade var(--motion-normal) var(--motion-ease);
 }
 
 @keyframes view-mount-fade {
@@ -89,8 +91,7 @@
 /* Back / forward RETURNS to a page (navIntent.ts): no entrance choreography.
    Every one of these starts at opacity 0 — replayed on a return they read as
    the page blanking and reappearing (measured: ~400 ms of white on back to an
-   artist page, 13 blank frames on back to Home). Continuous motion (the artist
-   photo's Ken Burns drift) is not listed and keeps running. */
+   artist page, 13 blank frames on back to Home). */
 .main-content-view[data-nav='return'] > *,
 .main-content-view[data-nav='return'] :is(
   .ad-rise,

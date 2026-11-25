@@ -1,4 +1,94 @@
-/* Shared motion vocabulary — iTunes-weight snap + warm settle. */
+/* ══════════════════════════════════════════════════════════════════════
+   V7 motion — the one motion module (with src/renderer/motion.ts, its twin).
+
+   The motion follows the look: the iPod and Mac OS X 2002. Three speeds on
+   one curve:
+     --motion-instant  a press, a hover, a state change
+     --motion-normal   pages, dialogs, drawers (about a fifth of a second)
+     --motion-slow     only Cover Flow and the Home hero
+   Every transition and animation in the app names these (the check in
+   src/main/__tests__/motion-rules.test.ts fails on a raw duration or curve).
+   A loop runs only when it means something; its period is a token too, and
+   its reason is written in motion.ts MEANINGFUL_LOOPS.
+   With Reduce Motion on (System Settings, followed live), everything just
+   appears: see the end of this block.
+   ══════════════════════════════════════════════════════════════════════ */
+:root {
+  /* ⚠️ TWIN: motion.ts MOTION_MS / MOTION_EASE / MOTION_PERIOD_MS / MOTION_STAGGER_MS */
+  --motion-instant: 100ms;
+  --motion-normal: 200ms;
+  --motion-slow: 560ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-stagger: 30ms;
+  --motion-spin: 800ms;
+  --motion-blink: 1000ms;
+  --motion-pulse: 1200ms;
+
+  /* Cover Flow stays as it is: its own soft overshoot, at the slow speed. */
+  --ease-carousel: cubic-bezier(0.3, 1.04, 0.22, 1);
+
+  /* Old names, kept so a branch written before V7 still lands on the three
+     speeds and the one curve. New code uses the names above. */
+  --motion-fast: var(--motion-instant);
+  --motion-ui: var(--motion-normal);
+  --motion-panel: var(--motion-normal);
+  --motion-overlay: var(--motion-normal);
+  --motion-exit: var(--motion-normal);
+  --motion-carousel-snap: var(--motion-slow);
+  --ease-settle: var(--motion-ease);
+  --ease-lift: var(--motion-ease);
+  --ease-snap: var(--motion-ease);
+}
+
+/* Reduce Motion: everything just appears. The OS setting (the media query)
+   and the switch on <html> (motion.ts initMotion; the frame test forces it)
+   do the same thing. 0.01ms, not 0: animationend / transitionend still fire,
+   so nothing waiting on them hangs. Script-driven motion asks motion.ts
+   prefersReducedMotion() / motionMs(). */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) {
+    --motion-instant: 0.01ms;
+    --motion-normal: 0.01ms;
+    --motion-slow: 0.01ms;
+    --motion-stagger: 0ms;
+  }
+  :root:not([data-motion='full']) *,
+  :root:not([data-motion='full']) *::before,
+  :root:not([data-motion='full']) *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+:root[data-motion='reduce'] {
+  --motion-instant: 0.01ms;
+  --motion-normal: 0.01ms;
+  --motion-slow: 0.01ms;
+  --motion-stagger: 0ms;
+}
+:root[data-motion='reduce'] *,
+:root[data-motion='reduce'] *::before,
+:root[data-motion='reduce'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Covers (AlbumArtImage): until the picture arrives, hold a square box so it
+   fades in exactly where it belongs and nothing below it shifts. `auto` lets a
+   picture that isn't square keep its own shape once it has loaded. :where()
+   keeps this at zero specificity: any size a page gives its covers wins. */
+:where(img.jt-cover) {
+  aspect-ratio: auto 1 / 1;
+}
+
+/* Shared keyframes — iPod / Aqua weight: short, no bounce. */
 
 @keyframes overlay-backdrop-in {
   from { opacity: 0; }
@@ -61,13 +151,13 @@
 .confirm-overlay,
 .getinfo-overlay,
 .imp-backdrop {
-  animation: overlay-backdrop-in var(--motion-overlay) var(--ease-settle) both;
+  animation: overlay-backdrop-in var(--motion-normal) var(--motion-ease) both;
 }
 
 .confirm-dialog,
 .getinfo-modal,
 .imp-modal {
-  animation: sheet-enter var(--motion-overlay) var(--ease-snap) both;
+  animation: sheet-enter var(--motion-normal) var(--motion-ease) both;
 }
 
 @media (prefers-reduced-motion: reduce) {

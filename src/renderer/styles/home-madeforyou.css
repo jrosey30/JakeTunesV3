@@ -6,7 +6,7 @@
 .home-mixes {
   margin: 8px 0 8px;
   padding: 0 28px;
-  animation: home-card-in 320ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+  animation: home-card-in var(--motion-normal) var(--motion-ease) both;
 }
 
 .home-mixes-head {
@@ -21,7 +21,7 @@
   display: inline-flex; align-items: center; gap: 5px;
   background: none; border: none; cursor: pointer; padding: 2px;
   font-size: 12px; font-weight: 600; color: rgb(var(--brand-orange-rgb));
-  transition: opacity 140ms ease; white-space: nowrap;
+  transition: opacity var(--motion-instant) var(--motion-ease); white-space: nowrap;
 }
 .home-mixes-vibe-btn:focus-visible {
   outline: 2px solid rgb(var(--brand-orange-rgb));
@@ -55,7 +55,7 @@
   overflow: hidden; background: #e8e6e0;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.20);
   border: 0.5px solid rgba(0, 0, 0, 0.10);
-  transition: transform 200ms cubic-bezier(0.2, 0.65, 0.3, 1), box-shadow 200ms ease;
+  transition: transform var(--motion-instant) var(--motion-ease), box-shadow var(--motion-instant) var(--motion-ease);
 }
 .home-mix-cell:hover .home-mix-art { transform: translateY(-3px); box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28); }
 .home-mix-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -99,7 +99,7 @@
   width: 44px; height: 44px; border-radius: 50%; border: none; padding: 0; cursor: pointer;
   background: rgb(var(--brand-orange-rgb)); color: #fff;
   display: flex; align-items: center; justify-content: center;
-  opacity: 0; transition: opacity 160ms ease, transform 160ms ease;
+  opacity: 0; transition: opacity var(--motion-instant) var(--motion-ease), transform var(--motion-instant) var(--motion-ease);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
 .home-mix-cell:hover .home-mix-play,
@@ -113,14 +113,14 @@
   position: fixed; inset: 0; z-index: 1000;
   background: rgba(0, 0, 0, 0.34); backdrop-filter: blur(2px);
   display: flex; align-items: center; justify-content: center;
-  animation: home-vibe-fade 160ms ease both;
+  animation: home-vibe-fade var(--motion-normal) var(--motion-ease) both;
 }
 @keyframes home-vibe-fade { from { opacity: 0; } to { opacity: 1; } }
 .home-vibe-sheet {
   width: min(440px, 90vw);
   background: var(--white, #fdfbf7); border-radius: 14px;
   padding: 22px 22px 18px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
-  animation: home-vibe-rise 200ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+  animation: home-vibe-rise var(--motion-normal) var(--motion-ease) both;
 }
 @keyframes home-vibe-rise { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
 .home-vibe-title { font-size: 16px; font-weight: 600; color: var(--text, #1a1a1a); margin-bottom: 16px; }
@@ -129,7 +129,7 @@
   padding: 12px 8px; border-radius: 11px; border: none; cursor: pointer;
   font-size: 13px; font-weight: 600; color: var(--text, #2a2a2a);
   background: rgba(var(--brand-orange-rgb), 0.10);
-  transition: background 140ms ease, transform 120ms ease;
+  transition: background var(--motion-instant) var(--motion-ease), transform var(--motion-instant) var(--motion-ease);
 }
 .home-vibe-chip:hover:not(:disabled) { background: rgba(var(--brand-orange-rgb), 0.18); }
 .home-vibe-chip:active:not(:disabled) { transform: scale(0.96); }

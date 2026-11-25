@@ -59,7 +59,7 @@
   border-radius: 4px;
   cursor: pointer;
   opacity: 0;
-  transition: opacity var(--motion-fast) ease-out, background-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
+  transition: opacity var(--motion-instant) var(--motion-ease), background-color var(--motion-instant) var(--motion-ease), color var(--motion-instant) var(--motion-ease);
 }
 
 .ltl-row:hover .ltl-download { opacity: 1; }
@@ -129,7 +129,7 @@
   border-radius: 0 0 6px 6px;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
   transform-origin: top center;
-  animation: pop-in var(--motion-fast) var(--ease-snap) both;
+  animation: pop-in var(--motion-instant) var(--motion-ease) both;
 }
 
 .ltl-suggest-empty {
@@ -239,7 +239,7 @@
   gap: 12px;
   padding: 8px 14px;
   border-bottom: 1px solid #e2e2e2;
-  transition: background-color var(--motion-instant) ease-out;
+  transition: background-color var(--motion-instant) var(--motion-ease);
 }
 
 .ltl-row:hover { background: #f1f1f1; }
@@ -278,7 +278,7 @@
   border: none;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.12s ease;
+  transition: opacity var(--motion-instant) var(--motion-ease);
 }
 
 .ltl-art:hover .ltl-preview-btn,
@@ -341,7 +341,7 @@
   border-radius: 4px;
   cursor: pointer;
   opacity: 0;
-  transition: opacity var(--motion-fast) ease-out, background-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
+  transition: opacity var(--motion-instant) var(--motion-ease), background-color var(--motion-instant) var(--motion-ease), color var(--motion-instant) var(--motion-ease);
 }
 
 .ltl-row:hover .ltl-delete { opacity: 1; }
@@ -379,10 +379,10 @@
   height: 24px;
   border-radius: 6px;
   cursor: pointer;
-  transition: background-color var(--motion-fast) ease-out, transform var(--motion-ui) var(--ease-snap);
+  transition: background-color var(--motion-instant) var(--motion-ease), transform var(--motion-normal) var(--motion-ease);
 }
 .ltl-mm-refresh[aria-busy="true"] {
-  animation: mm-refresh-spin 0.75s linear infinite;
+  animation: mm-refresh-spin var(--motion-spin) linear infinite;
 }
 @keyframes mm-refresh-spin {
   to { transform: rotate(360deg); }
@@ -418,7 +418,7 @@
   background: #f4ece0;
   border-radius: 8px;
   padding: 10px 12px;
-  animation: card-stagger-in var(--motion-panel) var(--ease-lift) both;
+  animation: card-stagger-in var(--motion-normal) var(--motion-ease) both;
 }
 .ltl-mm-card:nth-child(1) { animation-delay: 0ms; }
 .ltl-mm-card:nth-child(2) { animation-delay: var(--motion-stagger); }
@@ -523,7 +523,7 @@
   font-weight: 700;
   color: rgb(var(--brand-orange-rgb));
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition: opacity var(--motion-instant) var(--motion-ease);
   white-space: nowrap;
   padding-left: 10px;
 }
@@ -557,7 +557,7 @@
   border-radius: 999px;
   padding: 4px 10px;
   cursor: pointer;
-  transition: background 130ms ease;
+  transition: background var(--motion-instant) var(--motion-ease);
 }
 .ltl-scout:hover { background: rgba(var(--brand-orange-rgb), 0.10); }
 .ltl-scout-stat {
@@ -668,7 +668,7 @@
   border-radius: var(--radius-md);
   border: 1px solid transparent;
   cursor: pointer;
-  transition: background var(--motion-fast) var(--ease-settle), box-shadow var(--motion-fast) var(--ease-settle), border-color var(--motion-fast) var(--ease-settle), transform var(--motion-instant) var(--ease-snap);
+  transition: background var(--motion-instant) var(--motion-ease), box-shadow var(--motion-instant) var(--motion-ease), border-color var(--motion-instant) var(--motion-ease), transform var(--motion-instant) var(--motion-ease);
 }
 .ltl-tri:hover { background: rgba(var(--brand-orange-rgb), 0.045); }
 /* the spotlight — the selected row in the fly-through */
@@ -694,7 +694,7 @@
 .ltl-tri-play {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   background: rgba(0,0,0,0.42); color: #fff; border: none; cursor: pointer; font-size: 13px;
-  opacity: 0; transition: opacity var(--motion-fast) var(--ease-settle);
+  opacity: 0; transition: opacity var(--motion-instant) var(--motion-ease);
 }
 .ltl-tri:hover .ltl-tri-play, .ltl-tri.is-selected .ltl-tri-play, .ltl-tri-play.is-on { opacity: 1; }
 
@@ -717,7 +717,7 @@
   border: 1px solid var(--brand-orange-border); border-radius: var(--radius-pill);
   background: var(--surface-content); color: var(--brand-orange);
   box-shadow: var(--gloss-top), var(--shadow-1); cursor: pointer;
-  transition: background var(--motion-fast) var(--ease-settle), color var(--motion-fast) var(--ease-settle), filter var(--motion-instant) var(--ease-snap);
+  transition: background var(--motion-instant) var(--motion-ease), color var(--motion-instant) var(--motion-ease), filter var(--motion-instant) var(--motion-ease);
 }
 .ltl-tri:hover .ltl-tri-get, .ltl-tri.is-selected .ltl-tri-get, .ltl-tri-get:hover {
   background: linear-gradient(180deg, var(--brand-orange-light), var(--brand-orange-dark));
@@ -727,7 +727,7 @@
   width: 26px; height: 26px; border-radius: var(--radius-pill);
   border: 1px solid transparent; background: transparent; color: var(--text-dim);
   cursor: pointer; font-size: 12px; opacity: 0.5;
-  transition: opacity var(--motion-fast) var(--ease-settle), color var(--motion-fast) var(--ease-settle), background var(--motion-fast) var(--ease-settle);
+  transition: opacity var(--motion-instant) var(--motion-ease), color var(--motion-instant) var(--motion-ease), background var(--motion-instant) var(--motion-ease);
 }
 .ltl-tri:hover .ltl-tri-toss, .ltl-tri.is-selected .ltl-tri-toss { opacity: 1; }
 .ltl-tri-toss:hover { color: #b4472e; background: rgba(180,71,46,0.10); }
@@ -739,7 +739,7 @@
 .ltl-tri-spinner {
   width: 15px; height: 15px; border-radius: 50%;
   border: 2px solid rgba(var(--brand-orange-rgb), 0.25); border-top-color: var(--brand-orange);
-  animation: ltl-spin 0.7s linear infinite;
+  animation: ltl-spin var(--motion-spin) linear infinite;
 }
 @keyframes ltl-spin { to { transform: rotate(360deg); } }
 
@@ -764,7 +764,7 @@
   padding: var(--space-4) var(--space-5); border-radius: var(--radius-pill);
   background: rgba(28,24,20,0.94); color: #f4ede2;
   box-shadow: var(--shadow-2); font-size: var(--font-13); z-index: 60;
-  animation: ltl-toast-in var(--motion-panel) var(--ease-lift) both;
+  animation: ltl-toast-in var(--motion-normal) var(--motion-ease) both;
 }
 @keyframes ltl-toast-in { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
 .ltl-toast-text strong { font-weight: var(--fw-semibold); }

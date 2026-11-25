@@ -5,6 +5,7 @@
 // space and no fade. These are the rules that replace that, each run here
 // without a window: what is known is on the first frame, a slow or absent
 // homemini never holds it, and what arrives later arrives without a swap.
+import { MOTION_MS } from '../../renderer/motion.ts'
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -439,13 +440,10 @@ describe('artist → artist is a new page', () => {
 
 describe('the entrance is one knob, 250 ms or less', () => {
   const css = renderer('styles', 'artist-detail.css')
-  const ms = (name: string): number => {
-    const m = new RegExp(`${name}:\\s*([0-9.]+)(ms|s)\\b`).exec(css)
-    assert.ok(m, `${name} is set`)
-    return Number(m![1]) * (m![2] === 's' ? 1000 : 1)
-  }
   it('the whole entrance — the last block standing still — takes at most 250 ms', () => {
-    const total = ms('--ad-enter-total')
+    // V7: the knob is the app's normal speed (motion.css / motion.ts).
+    assert.match(css, /--ad-enter-total:\s*var\(--motion-normal\);/)
+    const total = MOTION_MS.normal
     assert.ok(total > 0 && total <= 250, `--ad-enter-total is ${total} ms`)
     const rise = /\.ad-rise \{ animation: ad-rise calc\(var\(--ad-enter-total\) \* ([0-9.]+)\)/.exec(css)
     assert.ok(rise, 'the rise is a share of the knob')
@@ -459,7 +457,9 @@ describe('the entrance is one knob, 250 ms or less', () => {
   })
   it('reduced motion: no rise, no drift, and pictures appear without a fade', () => {
     const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'))
-    assert.match(reduced, /\.ad-drift, \.ad-rise,[^{]*\{ animation: none; \}/)
+    assert.match(reduced, /\.ad-rise \{ animation: none; \}/)
+    // V7 cut the header photo's drift: it doesn't move at all, Reduce Motion or not.
+    assert.doesNotMatch(css, /animation(-name)?:\s*ad-drift/)
     assert.match(reduced, /\.ad-hero-layer, \.ad-member-img \{ transition: none; \}/)
   })
   it('Back still skips the entrance altogether', () => {

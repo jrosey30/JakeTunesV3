@@ -7,7 +7,7 @@
   height: 100%;
   overflow: hidden;
   background: linear-gradient(180deg, #ebe8e1 0%, #f5f3ef 280px, #fdfdfd 100%);
-  animation: view-mount-fade var(--motion-ui) var(--ease-settle) both;
+  animation: view-mount-fade var(--motion-normal) var(--motion-ease) both;
 }
 
 .album-page-topbar {
@@ -235,11 +235,11 @@
   border-radius: 16px;
   color: var(--brand-orange, #FC5501);
   font-size: 12.5px; font-weight: 600; cursor: pointer;
-  transition: background 140ms ease;
+  transition: background var(--motion-instant) var(--motion-ease);
 }
 .album-page-take-toggle:hover { background: rgba(252, 85, 1, 0.13); }
 .album-page-take-icon { font-size: 13px; line-height: 1; }
-.album-page-take-caret { font-size: 15px; line-height: 1; margin-left: 1px; transition: transform 160ms ease; }
+.album-page-take-caret { font-size: 15px; line-height: 1; margin-left: 1px; transition: transform var(--motion-instant) var(--motion-ease); }
 .album-page-take-toggle.is-open .album-page-take-caret { transform: rotate(90deg); }
 .album-page-take-body {
   margin-top: 9px; max-width: 780px; padding: 11px 14px;
@@ -276,7 +276,7 @@
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
-  transition: background 140ms ease, color 140ms ease;
+  transition: background var(--motion-instant) var(--motion-ease), color var(--motion-instant) var(--motion-ease);
 }
 .album-page-flip-btn:hover:not(:disabled) { background: #fff; color: var(--brand-orange, #FC5501); }
 .album-page-flip-btn:disabled { opacity: 0.3; cursor: default; }
@@ -309,7 +309,7 @@
 /* Crowd ambience toggle — quiet by default, glows orange when armed. */
 .album-page-liveset-crowd {
   color: #6a6a68;
-  transition: color 120ms ease-out, box-shadow 120ms ease-out;
+  transition: color var(--motion-instant) var(--motion-ease), box-shadow var(--motion-instant) var(--motion-ease);
 }
 .album-page-liveset-crowd--on {
   color: var(--brand-orange, #FC5501);
@@ -350,7 +350,7 @@
   height: var(--row-height);
   font-size: var(--font-body);
   cursor: pointer;
-  transition: background-color 90ms ease-out;
+  transition: background-color var(--motion-instant) var(--motion-ease);
 }
 .album-page-setlist-row:nth-child(odd) { background: var(--row-alt); }
 .album-page-setlist-row:hover { background: rgba(var(--selection-top-rgb), 0.11); }
@@ -766,7 +766,7 @@
   cursor: pointer;
 }
 .apd-take-more:hover { text-decoration: underline; }
-.apd-take-more svg { transition: transform 160ms ease; }
+.apd-take-more svg { transition: transform var(--motion-instant) var(--motion-ease); }
 .apd-take-more.is-open svg { transform: rotate(180deg); }
 .apd-take-text,
 .apd-take-status {
@@ -908,7 +908,7 @@
   cursor: default;
   user-select: none;
   -webkit-user-select: none;
-  transition: background-color 90ms ease-out;
+  transition: background-color var(--motion-instant) var(--motion-ease);
   scroll-margin-top: 22px;
   scroll-margin-bottom: 4px;
 }
@@ -950,7 +950,7 @@
   place-items: center;
   color: #b9b2a6;
   cursor: pointer;
-  transition: color 0.12s ease, transform 0.1s ease;
+  transition: color var(--motion-instant) var(--motion-ease), transform var(--motion-instant) var(--motion-ease);
 }
 .apd-star:hover { color: var(--brand-orange); transform: scale(1.15); }
 .apd-star--on { color: var(--brand-orange); }

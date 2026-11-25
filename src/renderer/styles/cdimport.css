@@ -236,7 +236,7 @@
 .cd-progress-fill {
   height: 100%;
   background: linear-gradient(90deg, #4a90d9, #3a7dc8);
-  transition: width 0.3s ease;
+  transition: width var(--motion-normal) var(--motion-ease);
   border-radius: 0 2px 2px 0;
 }
 
@@ -393,7 +393,7 @@
 }
 
 .cd-spinner {
-  animation: cd-spin 1s linear infinite;
+  animation: cd-spin var(--motion-spin) linear infinite;
 }
 
 /* Done message */

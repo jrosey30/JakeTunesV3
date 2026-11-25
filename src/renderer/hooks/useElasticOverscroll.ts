@@ -37,6 +37,7 @@
  *     don't double-bounce with Chromium's native effect.
  *   - On unmount, all inline styles are cleared.
  */
+import { motionMs } from '../motion'
 
 import { useEffect } from 'react'
 
@@ -53,7 +54,7 @@ interface UseElasticOverscrollOptions {
    * you'd photograph. Matches macOS Music app's subtle horizontal rows.
    */
   damping?: number
-  /** Spring-back animation duration in ms. Default 320. */
+  /** When to drop the spring-back transition, in ms. Default: the normal speed (motion.ts), which the spring runs at. */
   springMs?: number
   /**
    * Maximum overscroll offset in px. Default: 12% of the container's
@@ -72,7 +73,7 @@ export function useElasticOverscroll(
   ref: React.RefObject<HTMLElement | null>,
   options: UseElasticOverscrollOptions = {},
 ): void {
-  const { axis = 'y', damping = 0.18, springMs = 320, cap } = options
+  const { axis = 'y', damping = 0.18, springMs = motionMs('normal'), cap } = options
 
   useEffect(() => {
     const el = ref.current
@@ -110,7 +111,7 @@ export function useElasticOverscroll(
     const springBack = () => {
       springTimeout = null
       if (overscroll === 0) return
-      target.style.transition = `transform ${springMs}ms cubic-bezier(0.16, 1, 0.3, 1)`
+      target.style.transition = 'transform var(--motion-normal) var(--motion-ease)'
       apply(0)
       overscroll = 0
       // Clear the transition after it completes so subsequent overscroll
