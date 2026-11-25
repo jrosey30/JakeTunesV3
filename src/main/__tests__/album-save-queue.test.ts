@@ -194,7 +194,7 @@ describe('Save album from a Listen List row, in one click', () => {
   it('albumJobFor: the Search tab’s album job for that edition', () => {
     const q = albumJobFor({ artist: 'Wire', album: 'Pink Flag', edition: { collectionId: 9, name: 'Pink Flag - EP', label: 'Standard', trackCount: 21, explicitness: 'explicit' }, editionFrom: 'picked', surface: 'for-you', clickedAt: 5 })
     assert.equal(q.album, 'Pink Flag'); assert.equal(q.collectionId, 9); assert.equal(q.explicitSource, true); assert.equal(q.cleanedSource, false)
-    assert.equal(q.id, albumQueryId('Wire', 'Pink Flag - EP')); assert.equal(q.editionFrom, 'picked'); assert.equal(q.mediaType, 'album')
+    assert.equal(q.id, `${albumQueryId('Wire', 'Pink Flag - EP')}|9`, 'the edition named is in the id (review of #486)'); assert.equal(q.editionFrom, 'picked'); assert.equal(q.mediaType, 'album')
   })
 })
 

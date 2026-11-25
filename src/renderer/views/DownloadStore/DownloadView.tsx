@@ -21,7 +21,7 @@ import type { CardRecord } from '../../../common/shop-card-edition'
 import { albumKeyOf } from '../../utils/albumKey'
 import { buildIndex, search as searchLibrary, type AlbumRow as LibAlbumRow, type ArtistRow as LibArtistRow, type TrackRow as LibTrackRow } from '../../utils/searchIndex'
 import './shop-search.css'
-import { enqueue, itemFor, subscribeQueue, getQueue, retry, cancel, primaryFor, trackQueryId, albumQueryId, type QItem, type QResult, type QueueOrigin } from './downloadQueue'
+import { enqueue, itemFor, subscribeQueue, getQueue, retry, cancel, primaryFor, trackQueryId, editionQueryId, type QItem, type QResult, type QueueOrigin } from './downloadQueue'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
 import type { ItunesSuggestion } from '../../types'
 import { explicitWins } from '../../../common/explicit'
@@ -155,7 +155,7 @@ const songQ = (r: SongRow): QResult => ({
 })
 const albumQ = (r: AlbumRow): QResult => ({
   kind: 'query', source: 'qobuz', mediaType: 'album',
-  id: albumQueryId(r.artist, r.album),
+  id: editionQueryId(r.artist, r.album, r.collectionId),
   desc: `${displayAlbumTitle(r.album)} — ${r.artist} (album)`,
   artist: r.artist,
   // Search Qobuz without Apple's " - Single"/" - EP" stamp. Identity (id)

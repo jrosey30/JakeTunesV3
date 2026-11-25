@@ -16,7 +16,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { cardEdition, cardEditionLabel, cardSaveEdition, type CardEditionsState, type CardRecord } from '../../common/shop-card-edition.ts'
-import { albumSaveButton } from '../../common/shop-save-button.ts'
+import { albumSaveButton, followSave } from '../../common/shop-save-button.ts'
 import { SHOP_WORDS, retiredNamesIn } from '../../common/shop-names.ts'
 import type { AlbumEdition, AlbumEditions } from '../../common/album-preflight.ts'
 
@@ -66,12 +66,20 @@ describe('what a card shows under Save album', () => {
     assert.deepEqual(e.options.map((o) => o.label), ['Standard · 6 songs', '2011 Remaster · 6 songs'])
     assert.equal(cardSaveEdition(meddle, e), null, 'the card’s own edition saves as the card’s own job')
   })
-  it('the edition picked is the edition saved', () => {
-    const e = cardEdition(meddle, ready(editions, 40, true))
+  it('the edition picked on this card is the edition saved', () => {
+    const e = cardEdition(meddle, ready(editions), 40)
     assert.equal(e.kind === 'menu' && e.selectedId, 40)
     assert.equal(cardSaveEdition(meddle, e)?.collectionId, 40)
-    const back = cardEdition(meddle, ready(editions, 4, true))
+    const back = cardEdition(meddle, ready(editions), 4)
     assert.equal(cardSaveEdition(meddle, back), null)
+  })
+  it('a pick belongs to its card: the record-wide pick (For You, the list) never moves a search card', () => {
+    const e = cardEdition(meddle, ready(editions, 40, true))
+    assert.equal(e.kind === 'menu' && e.selectedId, 4, 'the card shows and saves its own edition')
+    assert.equal(cardSaveEdition(meddle, e), null)
+    const foot = src('renderer/views/DownloadStore/AlbumCardFoot.tsx')
+    assert.doesNotMatch(foot, /pickEdition\(/, 'the card never writes the record-wide pick')
+    assert.match(foot, /cardEdition\(card, s, pick\)/)
   })
   it('the card’s own edition is always a choice, even when the name lookup left it out', () => {
     const e = cardEdition({ collectionId: 99, name: 'Meddle (Japan)', trackCount: 7 }, ready(editions))
@@ -91,6 +99,17 @@ describe('what a card shows under Save album', () => {
   })
 })
 
+describe('a Retry that names another edition answers the failed job', () => {
+  it('the old failed job is dropped, so the red count clears; nothing else ever is', () => {
+    assert.deepEqual(followSave('k1', 'failed', 'k2'), { key: 'k2', drop: 'k1' })
+    assert.deepEqual(followSave('k1', 'failed', 'k1'), { key: 'k1', drop: null }, 'the same job retried is not dropped')
+    assert.deepEqual(followSave('k1', 'done', 'k2'), { key: 'k2', drop: null }, 'only a failed job')
+    assert.deepEqual(followSave('k1', 'downloading', 'k2'), { key: 'k2', drop: null })
+    assert.deepEqual(followSave(null, undefined, 'k2'), { key: 'k2', drop: null })
+    assert.deepEqual(followSave('k1', 'failed', undefined), { key: 'k1', drop: null }, 'a save that queued nothing keeps the old one')
+  })
+})
+
 describe('the For You card’s Save album button', () => {
   it('saves, then follows its save', () => {
     assert.deepEqual(albumSaveButton(undefined), { label: SHOP_WORDS.saveAlbum, clickable: true, failed: false })
@@ -106,10 +125,11 @@ describe('the For You card’s Save album button', () => {
 
 // ── saveAlbumNamed hands back the job it queued, so a card can follow it ──
 type Answer = { ok: boolean; imported?: number; dupes?: number }
+let walkAnswer: Answer = { ok: true, imported: 5, dupes: 0 }
 let editions: AlbumEditions = { ok: true, editions: [], chosenId: null }
 ;(globalThis as unknown as { window: unknown }).window = {
   electronAPI: {
-    streamripDownloadByQuery: async (): Promise<Answer> => ({ ok: true, imported: 5, dupes: 0 }),
+    streamripDownloadByQuery: async (): Promise<Answer> => walkAnswer,
     checkQobuzAlbum: async () => ({ answer: 'unknown', why: 'no-token' }),
     listAlbumEditions: async () => editions,
     usageLog: () => {},
@@ -118,8 +138,8 @@ let editions: AlbumEditions = { ok: true, editions: [], chosenId: null }
   addEventListener: () => {},
   removeEventListener: () => {},
 }
-const { getQueue, clearFinished } = await import('../../renderer/views/DownloadStore/downloadQueue.ts')
-const { resetEditionsForTests } = await import('../../renderer/views/DownloadStore/albumEditions.ts')
+const { getQueue, clearFinished, enqueue, queueKey, dropFailed, sameRecordKey, albumQueryId, editionQueryId } = await import('../../renderer/views/DownloadStore/downloadQueue.ts')
+const { resetEditionsForTests, albumJobFor } = await import('../../renderer/views/DownloadStore/albumEditions.ts')
 const { saveAlbumNamed } = await import('../../renderer/listen-to-the-list/ltlDownload.ts')
 const settle = async () => { for (let i = 0; i < 200; i++) { await new Promise((r) => setTimeout(r, 5)); if (!getQueue().some((q) => q.status === 'queued' || q.status === 'downloading')) return } }
 
@@ -140,6 +160,57 @@ describe('a For You album not on the list saves in one click', () => {
     const again = await saveAlbumNamed('Pink Floyd', 'Animals', 'for-you')
     assert.equal(again.existingKey, r.key)
     assert.equal(again.key, r.key)
+  })
+})
+
+describe('two editions of one name are two jobs (review of #486)', () => {
+  beforeEach(async () => { await settle(); clearFinished(); resetEditionsForTests() })
+  const clean = { ...ed(901, 'Ready to Die', 'Clean', 17, 1994), explicitness: 'cleaned' }
+  const explicit = { ...ed(902, 'Ready to Die', 'Standard', 17, 1994), explicitness: 'explicit' }
+  it('a clean card and the explicit edition of the same name save as two jobs', () => {
+    const a = albumJobFor({ artist: 'The Notorious B.I.G.', album: 'Ready to Die', edition: clean, editionFrom: 'card', surface: 'search' })
+    const b = albumJobFor({ artist: 'The Notorious B.I.G.', album: 'Ready to Die', edition: explicit, editionFrom: 'picked', surface: 'search' })
+    assert.notEqual(queueKey(a), queueKey(b))
+    enqueue(a); enqueue(b)
+    assert.equal(getQueue().filter((q) => q.result.album === 'Ready to Die').length, 2, 'the explicit edition can be saved after the clean one')
+  })
+  it('with no edition named, the record still goes by its name, as before', () => {
+    const j = albumJobFor({ artist: 'Black Flag', album: 'Damaged', edition: null, editionFrom: 'none', surface: 'for-you' })
+    assert.equal(j.id, albumQueryId('Black Flag', 'Damaged'))
+    assert.equal(editionQueryId('Black Flag', 'Damaged', 5), `${albumQueryId('Black Flag', 'Damaged')}|5`)
+  })
+  it('the Listening List still finds a job by its record, edition or not', () => {
+    const name = `qobuz|album|${albumQueryId('Black Flag', 'Damaged')}`
+    assert.equal(sameRecordKey(name, name), true)
+    assert.equal(sameRecordKey(`${name}|12345`, name), true)
+    assert.equal(sameRecordKey(`${name} II|12345`, name), false)
+    assert.equal(sameRecordKey(`${name}|deluxe`, name), false)
+  })
+  it('the Search card’s job carries its edition too', () => {
+    const view = src('renderer/views/DownloadStore/DownloadView.tsx')
+    assert.match(view, /id: editionQueryId\(r\.artist, r\.album, r\.collectionId\)/)
+  })
+  it('dropFailed drops only a failed job', async () => {
+    walkAnswer = { ok: false }
+    enqueue(albumJobFor({ artist: 'X', album: 'Y', edition: ed(7, 'Y', 'Standard', 3), editionFrom: 'card', surface: 'for-you' }))
+    await settle()
+    const k = getQueue()[0].key
+    assert.equal(getQueue()[0].status, 'failed')
+    assert.equal(dropFailed(k), true)
+    assert.equal(getQueue().length, 0)
+    walkAnswer = { ok: true, imported: 5, dupes: 0 }
+    enqueue(albumJobFor({ artist: 'X', album: 'Z', edition: null, editionFrom: 'none', surface: 'for-you' }))
+    await settle()
+    assert.equal(dropFailed(getQueue()[0].key), false, 'a done job stays')
+  })
+})
+
+describe('the click time is the click’s (review of #486)', () => {
+  it('a job made while drawing a card carries no click time; the save stamps it', () => {
+    const j = albumJobFor({ artist: 'A', album: 'B', edition: ed(1, 'B', 'Standard'), editionFrom: 'picked', surface: 'search' })
+    assert.equal('clickedAt' in j, false)
+    assert.doesNotMatch(src('renderer/views/DownloadStore/AlbumCardFoot.tsx'), /Date\.now\(\)/)
+    assert.match(src('renderer/views/DownloadStore/DownloadView.tsx'), /clickedAt: asked\.clickedAt \?\? Date\.now\(\)/)
   })
 })
 

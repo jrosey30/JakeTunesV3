@@ -576,8 +576,8 @@ export default function NewForYouView() {
   return (
     <div className="df-view" ref={pageRef}>
       <div className="store-head">
+        {/* One heading: the shop's own, above the tabs (DiscoveryView, SHOP_WORDS.shop). */}
         <div>
-          <h1 className="store-title">The Record Shop</h1>
           <span className="store-sub">WJLR Records · Greenpoint{generatedAt ? ` · restocked ${new Date(generatedAt).toLocaleDateString()}` : ''}</span>
         </div>
         <div className="store-head-right">

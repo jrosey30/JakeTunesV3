@@ -23,3 +23,15 @@ export function albumSaveButton(status: SaveJobStatus | undefined, waiting = fal
     default: return { label: 'Save album', clickable: true, failed: false }
   }
 }
+
+/**
+ * After a save from the card: the job it now follows, and a failed job to
+ * drop because this save answered it with another edition (review of #486:
+ * the red count clears). Never drops a job that isn't failed, or the one
+ * just saved. Pure.
+ */
+export function followSave(prevKey: string | null, prevStatus: SaveJobStatus | undefined, newKey: string | undefined): { key: string | null; drop: string | null } {
+  if (!newKey) return { key: prevKey, drop: null }
+  const drop = prevKey && prevKey !== newKey && prevStatus === 'failed' ? prevKey : null
+  return { key: newKey, drop }
+}

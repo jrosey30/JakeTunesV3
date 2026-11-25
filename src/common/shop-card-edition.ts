@@ -6,7 +6,10 @@
  * saved. "The edition you see on the card is the one it saves."
  *
  * A search card is one of Apple's editions already (its own collection id),
- * so it is the default; Jake's pick from the menu wins over it. Pure.
+ * so it is the default; Jake's pick from this card's menu wins over it. A pick
+ * belongs to the card it was made on (review of #486): two cards of one
+ * record, say "Meddle" and "Meddle (2011 Remaster)", each keep their own.
+ * Pure.
  */
 import { editionOptionLabel, type AlbumEdition } from './album-preflight.ts'
 
@@ -63,15 +66,15 @@ function cardAsEdition(card: CardRecord): AlbumEdition | null {
   return { collectionId: card.collectionId, name: card.name, label: cardEditionLabel(card.name, card.explicitness), trackCount: card.trackCount, releaseYear: card.releaseYear, explicitness: card.explicitness }
 }
 
-/** What the card shows under Save album. */
-export function cardEdition(card: CardRecord, s: CardEditionsState): CardEdition {
+/** What the card shows under Save album. `cardPick`: the edition picked on this card's own menu. */
+export function cardEdition(card: CardRecord, s: CardEditionsState, cardPick: number | null = null): CardEdition {
   if (!card.name) return { kind: 'none' }
   const own = cardAsEdition(card)
   const listed = s.state === 'ready' ? [...s.editions] : []
   // The card's own edition is always one of the choices (a search hit can be an edition the name lookup filters out).
   const editions = own && !listed.some((e) => e.collectionId === own.collectionId) && listed.length ? [own, ...listed] : listed
   if (editions.length >= 2) {
-    const want = s.picked && s.chosenId != null ? s.chosenId : own?.collectionId ?? s.chosenId
+    const want = cardPick ?? own?.collectionId ?? s.chosenId
     const selected = editions.find((e) => e.collectionId === want) ?? editions[0]
     return { kind: 'menu', options: editions.map((e) => ({ id: e.collectionId, label: editionOptionLabel(e, editions) })), selectedId: selected.collectionId, selected }
   }

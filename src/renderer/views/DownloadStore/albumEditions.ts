@@ -14,7 +14,7 @@
  * line, ahead of every lookup still waiting. A lookup that failed is not asked
  * again by a hover for a minute (FAILED_QUIET_MS); a click still asks.
  */
-import { albumQueryId, trackQueryId, type QResult, type QueueOrigin } from './downloadQueue.ts'
+import { albumQueryId, editionQueryId, trackQueryId, type QResult, type QueueOrigin } from './downloadQueue.ts'
 import { norm } from './downloadKeys.ts'
 import type { AlbumEdition, AlbumEditions, AlbumSaveEdition, AlbumSaveSurface } from '../../../common/album-preflight.ts'
 
@@ -193,12 +193,13 @@ export function albumJobFor(o: {
   editionFrom: AlbumSaveEdition
   surface: AlbumSaveSurface
   origin?: QueueOrigin
-  clickedAt: number
+  /** When Jake clicked; left out, the queue stamps it when the job is saved (startGet). */
+  clickedAt?: number
 }): QResult {
   const name = o.edition ? plainName(o.edition.name) : o.album
   return {
     kind: 'query', source: 'qobuz', mediaType: 'album',
-    id: albumQueryId(o.artist, o.edition?.name ?? o.album),
+    id: editionQueryId(o.artist, o.edition?.name ?? o.album, o.edition?.collectionId),
     desc: `${name} — ${o.artist} (album)`,
     artist: o.artist,
     album: name,
@@ -210,7 +211,7 @@ export function albumJobFor(o: {
       explicitSource: o.edition.explicitness === 'explicit',
     } : {}),
     ...(o.origin ? { origin: o.origin } : {}),
-    clickedAt: o.clickedAt,
+    ...(o.clickedAt != null ? { clickedAt: o.clickedAt } : {}),
     surface: o.surface,
     editionFrom: o.edition ? o.editionFrom : 'none',
   }

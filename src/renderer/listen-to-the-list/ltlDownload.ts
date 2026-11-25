@@ -23,7 +23,7 @@ import type { Recommendation } from '../types.ts'
 import { friendOf, isLinkKind } from './friend.ts'
 import {
   enqueue, cancel, retry, subscribeQueue, getQueue, itemForRecommendation, itemFor, newestJob,
-  trackQueryId, albumQueryId, queueKey, type QItem, type QResult, type QueueOrigin,
+  trackQueryId, albumQueryId, queueKey, sameRecordKey, type QItem, type QResult, type QueueOrigin,
 } from '../views/DownloadStore/downloadQueue.ts'
 import { albumJobFor, editionToSave } from '../views/DownloadStore/albumEditions.ts'
 import type { AlbumSaveSurface } from '../../common/album-preflight.ts'
@@ -124,7 +124,7 @@ export function projectRecoStatus(queue: QItem[], rec: Pick<Recommendation, 'id'
   // (Brief 257) is a second job for the same jot, after the refused one.
   // Newest by when it was queued, never by place: a restart moves an interrupted job to the front.
   const it = newestJob(queue, (q) => Boolean(q.result.origin?.recommendationIds.includes(rec.id)))
-    ?? (rec.artist || rec.song || rec.album ? (() => { const k = jobKeyFor(rec as Recommendation); return k ? queue.find((q) => q.key === k) : undefined })() : undefined)
+    ?? (rec.artist || rec.song || rec.album ? (() => { const k = jobKeyFor(rec as Recommendation); return k ? queue.find((q) => sameRecordKey(q.key, k)) : undefined })() : undefined)
   if (!it) return { state: 'idle' }
   const base = { jobKey: it.key, matchDesc: it.matchDesc, completion: it.completion, primary: it.primary, detail: it.detail, outcome: it.outcome }
   switch (it.status) {
@@ -207,13 +207,13 @@ export function queueAllRecoDownloads(recs: Recommendation[]): { queued: number;
  * running or done, so the caller can show it in Downloads (Brief 253: Save
  * album never does nothing).
  */
-export async function saveRecoAlbum(rec: Recommendation, surface: AlbumSaveSurface): Promise<{ existingKey?: string }> {
+export async function saveRecoAlbum(rec: Recommendation, surface: AlbumSaveSurface): Promise<{ existingKey?: string; key?: string }> {
   const clickedAt = Date.now()
   const { artist, title, album } = recoFields(rec)
   const name = album || title
   if (!artist || !name) return {}
   const mine = itemForRecommendation(rec.id)
-  if (mine && mine.status !== 'failed' && mine.status !== 'canceled') return { existingKey: mine.key }
+  if (mine && mine.status !== 'failed' && mine.status !== 'canceled') return { existingKey: mine.key, key: mine.key }
   return saveAlbumNamed(artist, name, surface, recoOrigin(rec), clickedAt)
 }
 

@@ -129,6 +129,7 @@ describe('the shop: a title, one search box, four tabs', () => {
     assert.doesNotMatch(view, /className="dl-input"/)
     assert.match(view, /useSyncExternalStore\(subscribeShopQuery, getShopQuery\)/)
     assert.doesNotMatch(view, /useState\(pageCache\.query\)/)
+    assert.doesNotMatch(withoutComments(src('renderer/views/NewForYouView.tsx')), /<h1\b/, 'one heading: For You does not say the shop’s name a second time')
   })
 })
 

@@ -6,21 +6,29 @@
  * and the button follows that job: Queued, Saving, In your library, or Retry
  * with the one-tap offers when the exact edition isn't there.
  *
- * A save already running or done for the same edition opens Downloads on it
- * (never a silent no-op, Brief 253).
+ * The job a card follows is kept by the record (saveJobs), so leaving the tab
+ * and coming back still shows it. A Retry that names another edition drops
+ * the old failed job: it is answered, and the red count clears. A save already
+ * running or done for the same edition opens Downloads on it (never a silent
+ * no-op, Brief 253).
  */
 import { useState, useSyncExternalStore } from 'react'
-import { getQueue, subscribeQueue } from './downloadQueue'
+import { dropFailed, getQueue, subscribeQueue } from './downloadQueue'
 import { saveAlbumNamed } from '../../listen-to-the-list/ltlDownload'
 import { showDownload } from '../../components/DownloadsPanel'
 import OfferButtons from './OfferButtons'
-import { albumSaveButton } from '../../../common/shop-save-button'
+import { albumSaveButton, followSave } from '../../../common/shop-save-button'
 import type { AlbumSaveSurface } from '../../../common/album-preflight'
+
+/** artist|album|surface → the key of the job that card's save made. */
+const saveJobs = new Map<string, string>()
 
 export default function AlbumSaveButton({ artist, album, surface, className, offerClassName }: { artist: string; album: string; surface: AlbumSaveSurface; className?: string; offerClassName?: string }) {
   const queue = useSyncExternalStore(subscribeQueue, getQueue)
-  const [key, setKey] = useState<string | null>(null)
+  const record = `${artist}|${album}|${surface}`
+  const [, setTick] = useState(0)
   const [waiting, setWaiting] = useState(false)
+  const key = saveJobs.get(record) ?? null
   const item = key ? queue.find((q) => q.key === key) : undefined
   const b = albumSaveButton(item?.status, waiting)
   const save = (): void => {
@@ -28,8 +36,11 @@ export default function AlbumSaveButton({ artist, album, surface, className, off
     setWaiting(true)
     void saveAlbumNamed(artist, album, surface)
       .then((r) => {
-        if (r.key) setKey(r.key)
+        const next = followSave(key, item?.status, r.key)
+        if (next.drop) dropFailed(next.drop)
+        if (next.key) saveJobs.set(record, next.key)
         if (r.existingKey) showDownload(r.existingKey)
+        setTick((n) => n + 1)
       })
       .finally(() => setWaiting(false))
   }

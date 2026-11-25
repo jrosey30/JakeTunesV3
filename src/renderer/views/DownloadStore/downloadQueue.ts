@@ -63,6 +63,18 @@ const normKey = (s: string): string => norm(String(s || ''))   // any script —
 /** ⚠️ TWIN: DownloadView.songQ/albumQ build their ids through these. */
 export const trackQueryId = (artist: string, title: string): string => `q|track|${normKey(artist)}|${normKey(title)}`
 export const albumQueryId = (artist: string, album: string): string => `q|album|${normKey(artist)}|${normKey(album)}`
+/**
+ * An album job's id names its edition whenever one is named (review of #486,
+ * 2026-11-25): Apple gives the clean and the explicit edition of a record the
+ * same name, and by name alone they were one job, so the second could never be
+ * saved. With no edition named, the record goes by name, as it always has.
+ */
+export const editionQueryId = (artist: string, album: string, collectionId?: number): string =>
+  collectionId ? `${albumQueryId(artist, album)}|${collectionId}` : albumQueryId(artist, album)
+/** A job's key is the record's by-name key, or that key with an edition's id after it. */
+export function sameRecordKey(key: string, nameKey: string): boolean {
+  return key === nameKey || (key.startsWith(`${nameKey}|`) && /^\d+$/.test(key.slice(nameKey.length + 1)))
+}
 
 export interface QResult {
   source: string
@@ -598,6 +610,19 @@ export function retryFailed(): void {
   if (!any) return
   emit()
   void pump()
+}
+
+/**
+ * Drop one failed job, when the save it stood for was made again another way
+ * (a Retry that named another edition): the failure is answered, so the red
+ * count clears. Running and done jobs are never dropped here.
+ */
+export function dropFailed(key: string): boolean {
+  const before = queue.length
+  queue = queue.filter((q) => !(q.key === key && q.status === 'failed'))
+  if (queue.length === before) return false
+  emit()
+  return true
 }
 
 /** Drop the done/failed items — a "clear finished" affordance. */
