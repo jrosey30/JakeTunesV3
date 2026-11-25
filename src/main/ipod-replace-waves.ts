@@ -42,26 +42,43 @@ export function ownerOfSide(sideAbs: string): { owner: string; tag: typeof NEW_T
 
 export interface WaveItem { id: number; newSize: number }
 
+/** A file's size on the card: whole clusters (FAT) / blocks. */
+export function onCardBytes(size: number, clusterBytes: number): number {
+  const c = clusterBytes > 0 ? clusterBytes : 4096
+  return Math.ceil(Math.max(0, size) / c) * c
+}
+
 /**
- * The next wave: replacements in order while they fit in the free space less the reserve.
- * Empty = not even the first fits beside its original (the caller stops; nothing is deleted).
+ * What a wave must leave free beside its replacements: the fixed reserve, two copies of the
+ * catalog (the temp copy and the new one) and the artwork database the catalog write rewrites.
  */
-export function nextWave(items: readonly WaveItem[], freeBytes: number, reserveBytes = WAVE_RESERVE_BYTES): WaveItem[] {
+export function waveReserveBytes(catalogBytes: number, artworkBytes: number): number {
+  return WAVE_RESERVE_BYTES + 2 * Math.max(0, catalogBytes) + Math.max(0, artworkBytes)
+}
+
+/**
+ * The next wave: first fit, in order, of the replacements that fit (rounded up to whole
+ * clusters) in the free space less the reserve. A song too big for the space now doesn't block
+ * smaller ones after it; it waits for a later wave, when originals have been released. Empty =
+ * nothing fits beside its original (the caller stops; nothing is deleted).
+ */
+export function nextWave(items: readonly WaveItem[], freeBytes: number, reserveBytes = WAVE_RESERVE_BYTES, clusterBytes = 4096): WaveItem[] {
   const room = freeBytes - reserveBytes
   const out: WaveItem[] = []
   let used = 0
   for (const it of items) {
-    if (used + it.newSize > room) break
+    const need = onCardBytes(it.newSize, clusterBytes)
+    if (used + need > room) continue
     out.push(it)
-    used += it.newSize
+    used += need
   }
   return out
 }
 
-/** The plain refusal when the first replacement doesn't fit beside its original. */
-export function noRoomForReplacement(title: string, needBytes: number, freeBytes: number): string {
+/** The plain refusal when no replacement fits beside its original. */
+export function noRoomForReplacement(title: string, needBytes: number, freeBytes: number, reserveBytes: number): string {
   const mb = (n: number) => `${Math.max(0, Math.round(n / 1e6))} MB`
-  return `There isn't room on the iPod to put the new copy of "${title}" (${mb(needBytes)}) beside the old one (${mb(freeBytes)} free). Nothing was deleted. Free some space on the iPod or take songs off its list, then sync again.`
+  return `There isn't room on the iPod to put the new copy of "${title}" beside the old one: it needs ${mb(needBytes + reserveBytes)} free (the song and room for the song list) and ${mb(freeBytes)} is free. Nothing was deleted. Free some space on the iPod or take songs off its list, then sync again.`
 }
 
 /** iTunesDB: colon path → mhit fileSize (0x24), for repairing an interrupted wave. */
@@ -126,22 +143,28 @@ export async function recoverInterruptedWaves(
       const abs = join(musicRoot, d, n)
       const side = ownerOfSide(abs)
       if (!side) continue
-      if (side.tag === NEW_TAG) {
-        await unlink(abs).then(() => rep.staleNew.push(abs), () => rep.kept.push(abs))
-        continue
-      }
-      const orig = await stat(abs).catch(() => null)
-      const now = await stat(side.owner).catch(() => null)
-      const want = catalog?.get(toColon(side.owner))
-      if (!orig || want === undefined) { rep.kept.push(abs); continue }
-      if (want === orig.size && (!now || now.size !== orig.size)) {
-        if (now) await unlink(side.owner)
-        await rename(abs, side.owner)
-        rep.restored.push(side.owner)
-      } else if (now && want === now.size) {
-        await unlink(abs)
-        rep.released.push(abs)
-      } else {
+      try {
+        if (side.tag === NEW_TAG) {
+          await unlink(abs)
+          rep.staleNew.push(abs)
+          continue
+        }
+        const orig = await stat(abs).catch(() => null)
+        const now = await stat(side.owner).catch(() => null)
+        const want = catalog?.get(toColon(side.owner))
+        if (!orig || want === undefined) { rep.kept.push(abs); continue }
+        if (want === orig.size && (!now || now.size !== orig.size)) {
+          // Never committed: the original goes straight back over the new copy (one rename).
+          await rename(abs, side.owner)
+          rep.restored.push(side.owner)
+        } else if (now && want === now.size) {
+          await unlink(abs)
+          rep.released.push(abs)
+        } else {
+          rep.kept.push(abs)
+        }
+      } catch (err) {
+        console.warn(`[ipod-waves] couldn't put right ${abs} (left as found):`, err instanceof Error ? err.message : err)
         rep.kept.push(abs)
       }
     }

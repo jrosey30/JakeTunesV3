@@ -8,23 +8,30 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { catalogSizesByPath, nextWave, noRoomForReplacement, ownerOfSide, recoverInterruptedWaves, sideName, WAVE_RESERVE_BYTES } from '../ipod-replace-waves.ts'
+import { catalogSizesByPath, nextWave, noRoomForReplacement, onCardBytes, ownerOfSide, recoverInterruptedWaves, sideName, waveReserveBytes, WAVE_RESERVE_BYTES } from '../ipod-replace-waves.ts'
 import { runActivitySync, type ActivitySyncHost } from '../ipod-activity-engine.ts'
 import { parseCatalogPaths } from '../sync-engine/roundtrip.ts'
 import { LANDED_RECORD_FILE } from '../ipod-landed-record.ts'
 
 describe('wave sizing', () => {
   const items = [{ id: 1, newSize: 400 }, { id: 2, newSize: 400 }, { id: 3, newSize: 400 }]
-  it('as many as fit beside their originals, in order, less the reserve', () => {
-    assert.deepEqual(nextWave(items, 900, 0).map((w) => w.id), [1, 2])
-    assert.deepEqual(nextWave(items, 5000, 0).map((w) => w.id), [1, 2, 3])
-    assert.deepEqual(nextWave(items, WAVE_RESERVE_BYTES + 450).map((w) => w.id), [1])
+  it('as many as fit beside their originals, first fit, rounded up to whole clusters, less the reserve', () => {
+    assert.deepEqual(nextWave(items, 900, 0, 1).map((w) => w.id), [1, 2])
+    assert.deepEqual(nextWave(items, 5000, 0, 1).map((w) => w.id), [1, 2, 3])
+    assert.deepEqual(nextWave(items, WAVE_RESERVE_BYTES + 450, WAVE_RESERVE_BYTES, 1).map((w) => w.id), [1])
+    assert.deepEqual(nextWave(items, 900, 0, 512).map((w) => w.id), [1], 'each 400-byte file takes a 512-byte cluster')
+  })
+  it('one big song doesn\'t block smaller ones after it', () => {
+    assert.deepEqual(nextWave([{ id: 9, newSize: 5000 }, ...items], 900, 0, 1).map((w) => w.id), [1, 2])
   })
   it('none fits: an empty wave (the sync stops; nothing is deleted to make room)', () => {
-    assert.deepEqual(nextWave(items, 399, 0), [])
-    assert.match(noRoomForReplacement('Zero', 7_000_000, 1_000_000), /isn't room .*"Zero".*Nothing was deleted/)
+    assert.deepEqual(nextWave(items, 399, 0, 1), [])
+    assert.match(noRoomForReplacement('Zero', 7_000_000, 1_000_000, WAVE_RESERVE_BYTES), /isn't room .*"Zero".*needs 74 MB free.*1 MB is free\. Nothing was deleted/)
+    assert.equal(waveReserveBytes(300_000, 1_000_000), WAVE_RESERVE_BYTES + 1_600_000)
+    assert.equal(onCardBytes(1, 32768), 32768)
   })
   it('side names are hidden, beside the file, and map back', () => {
     const n = sideName('/V/iPod_Control/Music/F27/14677.m4a', 'jtnew')
@@ -59,12 +66,23 @@ describe('a format change on the real engine: replaced in place, in waves, never
   let mirrorBytes = 250_000
   let free: number | null = null
   const events: string[] = []
+  /** Fail the remount that follows a catalog write, once, from the Nth "Replacing" wave on. */
+  let failRemountAtWave = 0
+  let wavesSeen = 0
+  let remountsFailed = 0
   const tracks: Array<Record<string, unknown>> = []
   let host: ActivitySyncHost
   const sync = () => runActivitySync(host, {
     tracks: tracks.map((t) => ({ ...t })), playlists: [{ name: 'Nano', trackIds: tracks.map((t) => t.id) }],
     requestedTarget: N, listOnly: true, ipodName: 'Nano', convertOptions: { enabled: true, targetKbps: 256, codec: 'aac' },
   })
+  /** Free space that holds `n` replacements of `bytes` beside their originals, with the reserve the engine computes. */
+  const roomFor = async (n: number, bytes: number) => {
+    const db = (await stat(join(card, 'iPod_Control', 'iTunes', 'iTunesDB'))).size
+    return waveReserveBytes(Math.ceil(db * 1.5), 0) + n * onCardBytes(bytes, 4096) + 2048
+  }
+  /** A new recipe / format: the record of what's on the card no longer vouches for it. */
+  const newFormat = async (bytes: number) => { mirrorBytes = bytes; await rm(join(state, LANDED_RECORD_FILE), { force: true }) }
   const cardFiles = async () => {
     const out = new Map<string, number>()
     const music = join(card, 'iPod_Control', 'Music')
@@ -86,7 +104,8 @@ describe('a format change on the real engine: replaced in place, in waves, never
     host = {
       pythonCmd: 'python3', pythonHint: '', coreScript: (rel) => join(REPO, rel), tempDir: root, stateDir: state, pid: process.pid,
       musicDir: join(lib, 'iPod_Control', 'Music'), pathSep: '/', isMac: true,
-      sendProgress: (p) => { events.push(p.title) }, isCancelled: () => false, isStreamedTrackFile: async () => false,
+      sendProgress: (p) => { events.push(p.title); if (/^Replacing \d+ songs? beside/.test(p.title)) wavesSeen++ },
+      isCancelled: () => false, isStreamedTrackFile: async () => false,
       // The "recipe": its output size stands for the encode; a new size = a new format/recipe.
       buildAacMirror: async (src) => {
         const out = join(cache, createHash('sha1').update(`${src}|${mirrorBytes}`).digest('hex').slice(0, 16) + '.m4a')
@@ -103,8 +122,14 @@ describe('a format change on the real engine: replaced in place, in waves, never
       probeHomeminiTrack: async () => ({ ok: false, error: 'not in this test' }),
       stageTrack: async () => ({ ok: false, error: 'not in this test', reason: 'other' } as never),
       freeBytes: async () => 500 * 1024 ** 3,
-      remountVolume: async (m: string) => ({ ok: true, mountPoint: m }),
+      remountVolume: async (m: string) => {
+        if (failRemountAtWave > 0 && wavesSeen >= failRemountAtWave && remountsFailed === 0) { remountsFailed++; return { ok: false, error: 'the card went away (test)' } }
+        return { ok: true, mountPoint: m }
+      },
       cardFreeBytes: async () => free,
+      // A real nano's size (8 GB of which these ten songs are a fraction is too lenient: use a card
+      // where replacing every song would be well over the 15% hole rule if it counted).
+      cardCapacityBytes: async () => 8_000_000,
     }
   })
   after(async () => { await rm(root, { recursive: true, force: true }) })
@@ -129,15 +154,15 @@ describe('a format change on the real engine: replaced in place, in waves, never
     assert.ok((await readFile(join(card, 'iPod_Control', 'iTunes', 'iTunesDB'))).equals(dbBefore))
   })
 
-  it('every song changes (a new format): swap, not a wipe; replaced in place in waves of what fits; originals gone only after the catalog', async () => {
-    free = WAVE_RESERVE_BYTES + 3 * 300_000 + 10        // three replacements at a time
+  it('every song changes (a new format) on a small card: swap, not a wipe (the 70% and 15% rules don\'t count replacements); replaced in place in waves; originals gone only after the catalog', async () => {
+    free = await roomFor(3, 300_000)                // three replacements at a time
     events.length = 0
     const res = await sync()
     assert.equal(res.ok, true, res.error)
     assert.equal(res.mode, 'swap', String(res.fullReason))
     assert.ok(!events.some((t) => /^Wiping/.test(t)), 'never a wipe')
     const waves = events.filter((t) => /^Replacing \d+ songs? beside/.test(t))
-    assert.ok(waves.length >= 4, `waves of at most three: ${waves.join(' | ')}`)
+    assert.ok(waves.length >= 4 && waves.every((t) => /^Replacing [123] songs?/.test(t)), `waves of at most three: ${waves.join(' | ')}`)
     const files = await cardFiles()
     assert.equal(files.size, N, 'no side file left, nothing extra')
     for (const [p, size] of files) assert.equal(size, 300_000, `${p} is the new copy`)
@@ -146,6 +171,51 @@ describe('a format change on the real engine: replaced in place, in waves, never
     assert.equal(paths.length, N)
     const sizes = catalogSizesByPath(db)!
     for (const p of paths) assert.equal(sizes.get(p), 300_000)
+  })
+
+  it('a remount fails right after a wave\'s song list is written: originals left hidden, nothing put back; the next sync settles them from the list on the card and finishes the waves (no wipe)', async () => {
+    await newFormat(320_000)
+    free = await roomFor(3, 320_000)
+    failRemountAtWave = 2; wavesSeen = 0; remountsFailed = 0
+    events.length = 0
+    const stopped = await sync()
+    assert.equal(stopped.ok, false, 'the run stops when the card can\'t be checked after a write')
+    assert.equal(remountsFailed, 1)
+    failRemountAtWave = 0
+    events.length = 0
+    const res = await sync()
+    assert.equal(res.ok, true, res.error)
+    assert.equal(res.mode, 'swap', String(res.fullReason))
+    assert.ok(!events.some((t) => /^Wiping/.test(t)), 'never a wipe')
+    const files = await cardFiles()
+    assert.equal(files.size, N, 'no hidden file left')
+    for (const [p, size] of files) assert.equal(size, 320_000, `${p} is the new copy`)
+    const sizes = catalogSizesByPath(await readFile(join(card, 'iPod_Control', 'iTunes', 'iTunesDB')))!
+    assert.equal(sizes.size, N)
+    for (const v of sizes.values()) assert.equal(v, 320_000)
+  })
+
+  it('a rename that fails mid-wave puts every original of the wave back; the next sync finishes', { skip: process.platform !== 'darwin' }, async () => {
+    await newFormat(340_000)
+    free = await roomFor(3, 340_000)
+    const music = join(card, 'iPod_Control', 'Music')
+    const victim = join(music, 'F01', 'M4.m4a')
+    execFileSync('chflags', ['uchg', victim])     // its rename to the hidden name fails
+    const before = await cardFiles()
+    events.length = 0
+    let res = await sync()
+    execFileSync('chflags', ['nouchg', victim])
+    assert.equal(res.ok, false)
+    assert.match(String(res.error), /Couldn't put the new copies on the iPod/)
+    const after = await cardFiles()
+    for (const [p, size] of before) {
+      if (after.get(p) !== size) assert.equal(after.get(p), 340_000, `${p}: either the original, or a committed earlier wave`)
+    }
+    assert.ok(![...after.keys()].some((p) => p.split('/').pop()!.startsWith('.')), 'no hidden file left by the undo')
+    res = await sync()
+    assert.equal(res.ok, true, res.error)
+    assert.equal(res.mode, 'swap', String(res.fullReason))
+    for (const [p, size] of await cardFiles()) assert.equal(size, 340_000, `${p}`)
   })
 })
 
