@@ -1,18 +1,18 @@
 /**
- * TONIGHT ON JAKETUNES — launch page "G", the top of the desktop Home
- * (Jake approved 2026-10-18 after five rejected directions: "give me
- * goosebumps", "stay in line with the JakeTunes world"; references: Apple
- * Music Now Playing, the old iTunes/iPod, a Letterboxd profile).
+ * Island albums + Now digging — what is left of launch page "G" (Jake approved
+ * 2026-10-18 after five rejected directions: "give me goosebumps", "stay in
+ * line with the JakeTunes world"; references: Apple Music Now Playing, the old
+ * iTunes/iPod, a Letterboxd profile).
  *
- *   backdrop   the cover of the album you're living in, blurred 70px +
- *              saturate(1.35), drifting slowly (still under reduced motion),
- *              under a rgba(12,22,36,0.42) veil; the art dissolves into the
- *              Home canvas at the bottom.
- *   hero       400px cover · TONIGHT ON JAKETUNES (pix Chicago) · headline ·
- *              the Music Man's frosted pill (his line + the stats line) ·
- *              ONE button, Play <album>. The pill itself is the intro: click
- *              → he speaks his line, then the record plays from track 1
- *              (launch/musicManIntro.ts). Jake, mid-build: "calm the page".
+ * V7 (2026-11-24): G's hero became the Home's "Tonight on JakeTunes" card
+ * (components/HomeHero.tsx, the Music Man's intro with it), and this band moved
+ * off the Home to the Made for You page (views/MadeForYouView.tsx), where it
+ * opens the page (common/home-layout.ts MOVED_OFF_HOME).
+ *
+ *   backdrop   the No. 1 island cover, blurred 70px + saturate(1.35),
+ *              drifting slowly (still under reduced motion), under a
+ *              rgba(12,22,36,0.42) veil; the art dissolves into the page's
+ *              canvas at the bottom.
  *   islands    the synced TOP 10 ISLAND ALBUMS (renderer/syncedPicks.ts) as a
  *              classic glossy Cover Flow (common/cover-flow.ts) — click a side
  *              cover to bring it forward, ←/→ when focused, the mouse's side
@@ -26,8 +26,7 @@
  *   digging    NOW DIGGING — five 2:3 artist posters (the app's artist photos,
  *              an initials poster otherwise), click → the artist page.
  *
- * Like the library (Jake, 2026-10-20): the hero cover and every island cover
- * you own right-click to the Albums view's album menu (HomeItemMenus) and drag
+ * Like the library (Jake, 2026-10-20): every island cover you own right-click to the Albums view's album menu (HomeItemMenus) and drag
  * as the album; a Now Digging poster drags as the artist's songs, the way an
  * Artists tile does (the library has no artist menu, so neither does this).
  *
@@ -58,9 +57,6 @@ import { tracksForArtist } from '../utils/artistTracks'
 import { setAlbumDragPayload } from '../utils/trackDrag'
 import { useHomeItemMenus } from './HomeItemMenus'
 import { sessionArtistImages, hashColor, initials } from '../utils/artistPortrait'
-import { audioFromBase64Mpeg } from '../audio/base64-audio'
-import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
-import { createMusicManIntro, type IntroPhase, type MusicManIntro } from '../launch/musicManIntro'
 import { setNotice } from '../activity'
 import type { Track } from '../types'
 import type { DiggingCard } from '../../common/home-spotlight-doc'
@@ -74,15 +70,12 @@ type HomeAction =
   | { type: 'ADD_ARTWORK'; key: string; hash: string }
 
 interface Props {
-  /** The REGULAR library (declared live sets' songs excluded) — HomeView's projection. */
+  /** The REGULAR library (declared live sets' songs excluded). */
   tracks: Track[]
   artworkMap: Record<string, string>
   artIndex: Map<string, string>
   dispatch: (action: HomeAction) => void
-  playTrack: (track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean, freshContext?: boolean, preserveOrder?: boolean) => void
 }
-
-const FADE_READY_CAP_MS = 2000
 
 function DiscGlyph({ size }: { size: number }): JSX.Element {
   return (
@@ -92,51 +85,6 @@ function DiscGlyph({ size }: { size: number }): JSX.Element {
       <circle cx="20" cy="20" r="2" fill="rgba(255,255,255,0.55)" />
     </svg>
   )
-}
-
-/** The frosted pill's inside: on-air dot, station ident, his line, then the facts. */
-function MusicManPillBody({ line, stats, live }: { line: string; stats: string | null; live: boolean }): JSX.Element {
-  return (
-    <>
-      <span className={`tn-mm-dot${live ? ' tn-mm-dot--live' : ''}`} aria-hidden="true" />
-      <span className="tn-mm-body">
-        <span className="tn-mm-label">THE MUSIC MAN · WJLR 330.9</span>
-        <span className="tn-mm-line">“{line}”</span>
-        {stats && <span className="tn-mm-stats">{stats}</span>}
-      </span>
-    </>
-  )
-}
-
-/** The speech clip for the intro: audioFromBase64Mpeg (blob URL) + the broadcast graph. */
-function domClip(b64: string) {
-  const el = audioFromBase64Mpeg(b64)
-  return {
-    play: () => el.play(),
-    onEnd: (cb: (() => void) | null) => {
-      el.onended = cb ? () => cb() : null
-      el.onerror = cb ? () => cb() : null
-    },
-    attach: () => attachClipToBroadcast(el),
-    detach: () => detachClipFromBroadcast(el),
-    release: () => {
-      el.pause()
-      if (el.src.startsWith('blob:')) URL.revokeObjectURL(el.src)
-    },
-  }
-}
-
-function waitForDuck(): Promise<void> {
-  return new Promise((resolve) => {
-    let timer: ReturnType<typeof setTimeout> | null = null
-    const done = (): void => {
-      window.removeEventListener('musicman-fade-ready', done)
-      if (timer) clearTimeout(timer)
-      resolve()
-    }
-    window.addEventListener('musicman-fade-ready', done)
-    timer = setTimeout(done, FADE_READY_CAP_MS)
-  })
 }
 
 /** The jewel case's run on the front cover: opening, back open on Home, or snapping shut. */
@@ -175,14 +123,13 @@ function DigPlaying({ artist }: { artist: string }): JSX.Element | null {
   return on ? <span className="home-concert-eq tn-dig-eq" role="img" aria-label="Playing now"><i /><i /><i /></span> : null
 }
 
-export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispatch, playTrack }: Props): JSX.Element | null {
+export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispatch }: Props): JSX.Element | null {
   const spot = useHomeSpotlight()
   const island = useIslandAlbums()
   const menus = useHomeItemMenus()
   const doc = spot.doc
-  const living = doc?.livingIn ?? null
 
-  // Library albums, matched to the living-in album and to the island picks
+  // Library albums, matched to the island picks
   // under either artist form (the phone may group under a different spelling).
   const albums = useMemo(() => groupTracksIntoAlbums(tracks), [tracks])
   const byIdentity = useMemo(() => indexAlbumsForIsland(albums), [albums])
@@ -199,27 +146,6 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
     return lookupArtwork(artworkMap, artIndex, artist, name)
   }, [artworkMap, artIndex])
 
-  const livingAlbum = useMemo(() => (living ? byIdentity.get(islandAlbumKey({ artist: living.artist, album: living.album })) : undefined), [living, byIdentity])
-  const livingTracks = useMemo(() => livingAlbum?.tracks ?? [], [livingAlbum])
-  // The cover: homemini's artworkHash first (the /api/albums hash — md5 of
-  // "artist|||album", the desktop's own artwork file name); if that file
-  // won't load here, this Mac's artwork lookup by artist + album.
-  const [refusedHash, setRefusedHash] = useState<string | null>(null)
-  const localLivingHash = living ? artFor(livingAlbum, living.artist, living.album) : undefined
-  const livingHash = living
-    ? (living.artworkHash && living.artworkHash !== refusedHash ? living.artworkHash : localLivingHash)
-    : undefined
-  const onLivingArtError = useCallback(() => {
-    if (living?.artworkHash && living.artworkHash !== localLivingHash) setRefusedHash(living.artworkHash)
-  }, [living, localLivingHash])
-  // The hero cover opens its album, as the phone's does (Jake's parity audit,
-  // 2026-10-21); right-click and drag stay the library's.
-  const openLiving = useCallback(() => {
-    if (!living) return
-    if (livingAlbum) dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyFromStrings(livingAlbum.artist, livingAlbum.name) })
-    else setNotice(`${living.album} by ${living.artist} isn’t in this library`)
-  }, [living, livingAlbum, dispatch])
-
   // Island picks in rank order; the rank is the slot (No. 1 … No. 10).
   const flow = useMemo(() => island.values
     .map((pick, slot) => {
@@ -232,48 +158,9 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
   // Covers the artwork map doesn't have yet — the same idle resolver the grids use.
   useEffect(() => {
     const missing: Array<{ artist: string; album: string }> = []
-    if (living && livingAlbum && !localLivingHash) missing.push({ artist: livingAlbum.artist, album: livingAlbum.name })
     for (const f of flow) if (f.album && !f.hash) missing.push({ artist: f.album.artist, album: f.album.name })
     if (missing.length) queueArtworkResolutions(missing, dispatch)
-  }, [living, livingAlbum, localLivingHash, flow, dispatch])
-
-  // ── Play / the Music Man's introduction ──────────────────────────────
-  const playLiving = useCallback(() => {
-    if (livingTracks.length === 0) return
-    // Front to back from track 1, verbatim (preserveOrder: shuffle can't reorder a record).
-    playTrack(livingTracks[0], livingTracks, 0, undefined, true, true)
-  }, [livingTracks, playTrack])
-  const playLivingRef = useRef(playLiving)
-  playLivingRef.current = playLiving
-
-  const [introPhase, setIntroPhase] = useState<IntroPhase>('idle')
-  const introRef = useRef<MusicManIntro | null>(null)
-  useEffect(() => {
-    const intro = createMusicManIntro({
-      speak: (line) => window.electronAPI.musicmanSpeak(line, false),
-      makeClip: domClip,
-      emit: (name) => window.dispatchEvent(new Event(name)),
-      waitForDuck,
-      playAlbum: () => playLivingRef.current(),
-      onPhase: setIntroPhase,
-      notice: (m) => setNotice(m),
-    })
-    introRef.current = intro
-    // Leaving the Home mid-introduction stops him and never starts the record.
-    return () => { intro.cancel(); introRef.current = null }
-  }, [])
-
-  const onPlay = useCallback(() => {
-    introRef.current?.cancel()
-    playLiving()
-  }, [playLiving])
-  const onIntro = useCallback(() => {
-    const intro = introRef.current
-    const line = doc?.musicMan?.line
-    if (!intro) return
-    if (intro.phase() !== 'idle') { intro.cancel(); return }
-    if (line) void intro.start(line)
-  }, [doc])
+  }, [flow, dispatch])
 
   // ── Cover Flow ───────────────────────────────────────────────────────
   // Back from an album page that came out of the case's disc, the case comes
@@ -434,92 +321,19 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
     return () => { live = false }
   }, [diggingNames])
 
-  // The backdrop: the album you're living in; with none, the No. 1 island cover.
-  const backdropHash = livingHash ?? flow[0]?.hash
-  if (!living && flow.length === 0 && digging.length === 0) return null
-
-  const spotlight = doc?.spotlight ?? null
-  const mm = doc?.musicMan ?? null
-  const canPlay = livingTracks.length > 0
+  // The backdrop: the No. 1 island cover.
+  const backdropHash = flow[0]?.hash
+  if (flow.length === 0 && digging.length === 0) return null
   const current = flow[at]
 
   return (
-    <section className="tn" aria-label="Tonight on JakeTunes">
+    <section className="tn" aria-label="Island albums and Now digging">
       <div className="tn-art" aria-hidden="true">
-        {backdropHash && <AlbumArtImage hash={backdropHash} alt="" size={320} className="tn-art-img" onError={backdropHash === livingHash ? onLivingArtError : undefined} />}
+        {backdropHash && <AlbumArtImage hash={backdropHash} alt="" size={320} className="tn-art-img" />}
         <div className="tn-veil" />
       </div>
 
       <div className="tn-inner">
-        {living && (
-          <div className="tn-hero">
-            <div
-              className="tn-cover"
-              role="button"
-              tabIndex={0}
-              aria-label={`Open ${living.album} by ${living.artist}`}
-              title={`Open ${living.album}`}
-              onClick={openLiving}
-              onKeyDown={(e) => {
-                if (e.key !== 'Enter' || e.target !== e.currentTarget) return
-                e.preventDefault()
-                e.stopPropagation()
-                openLiving()
-              }}
-              {...(livingAlbum ? {
-                onContextMenu: (e: React.MouseEvent) => menus?.openAlbumMenu(e, livingAlbum.tracks),
-                draggable: true,
-                onDragStart: (e: React.DragEvent) => setAlbumDragPayload(e, sortAlbumTracks(livingAlbum.tracks).map((t) => t.id)),
-              } : {})}
-            >
-              {livingHash
-                ? <AlbumArtImage hash={livingHash} alt={`${living.album} by ${living.artist}`} priority onError={onLivingArtError} />
-                : <div className="tn-cover-ph"><DiscGlyph size={72} /></div>}
-            </div>
-            <div className="tn-copy">
-              <div className="tn-eyebrow">TONIGHT ON JAKETUNES</div>
-              <h1 className="tn-headline">{spotlight?.headline ?? `${living.album}, ${living.artist}`}</h1>
-              {mm ? (
-                // The Music Man's pill IS the intro control (Jake, 2026-10-18: "calm
-                // the page" — one button, the pill speaks): click / Enter / Space →
-                // his line, then the record from track 1; again → stop him. Static
-                // when the record isn't in this library (nothing to introduce).
-                canPlay ? (
-                  <button
-                    type="button"
-                    className={`tn-mm tn-mm--action${introPhase !== 'idle' ? ' tn-mm--on' : ''}`}
-                    onClick={onIntro}
-                    aria-pressed={introPhase !== 'idle'}
-                    aria-label={introPhase === 'idle'
-                      ? `The Music Man: “${mm.line}” Let him introduce ${living.album}, then play it.`
-                      : 'Stop the Music Man’s introduction'}
-                    title={introPhase === 'idle' ? 'Let the Music Man introduce it' : 'Stop the introduction'}
-                  >
-                    <MusicManPillBody line={mm.line} stats={spotlight?.statsLine ?? null} live={introPhase === 'speaking'} />
-                  </button>
-                ) : (
-                  <div className="tn-mm">
-                    <MusicManPillBody line={mm.line} stats={spotlight?.statsLine ?? null} live={false} />
-                  </div>
-                )
-              ) : (
-                // No line from him (offline: this Mac's own history) → no pill;
-                // the facts stay, as one quiet line.
-                spotlight?.statsLine && <div className="tn-stats">{spotlight.statsLine}</div>
-              )}
-              {canPlay && (
-                <div className="tn-actions">
-                  <button type="button" className="tn-btn tn-btn--play" onClick={onPlay}>
-                    {/* 13×13 play glyph in a 50px-tall pill (~1/4 of its height) */}
-                    <svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1.5v11l9-5.5z" fill="currentColor" /></svg>
-                    <span>Play {living.album}</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
         {flow.length > 0 && (
           <div className="tn-islands">
             <div className="tn-sec-head">

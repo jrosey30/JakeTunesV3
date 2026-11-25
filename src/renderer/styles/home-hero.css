@@ -1,0 +1,121 @@
+/* TONIGHT ON JAKETUNES — the desktop Home's hero (V7, 2026-11-24; numbers are
+   the approved mock's, DesktopHome.dc.html at a 1280px window): a dark card
+   (#211D1E, 14px corners, 22px inside) with a 180px cover, the eyebrow in the
+   logo orange mixed with white (#FFB187), a 30px title, then ▶ Play (the logo
+   orange, --brand-orange) and Shuffle (an outlined pill). */
+
+.home-hero {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin: 24px var(--home-gutter, 28px) var(--home-section-gap, 44px);
+  padding: 22px;
+  border-radius: 14px;
+  background: #211D1E;
+  color: #FFFFFF;
+  animation: home-section-in 260ms ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-hero { animation: none; }
+}
+
+.home-hero-cover {
+  width: 180px;
+  height: 180px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+.home-hero-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.home-hero-cover:focus-visible { outline: 2px solid var(--brand-orange, #FC5501); outline-offset: 3px; }
+.home-hero-cover-ph {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.home-hero-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.home-hero-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #FFB187;
+}
+.home-hero-title {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.15;
+  /* names wrap, never clip */
+  overflow-wrap: anywhere;
+}
+.home-hero-byline,
+.home-hero-show {
+  font-size: 15px;
+  color: #D8CFD2;
+}
+.home-hero-mm {
+  /* his line is a quiet button: click and he introduces the record */
+  font: inherit;
+  font-size: 14px;
+  color: #D8CFD2;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.home-hero-mm:hover { color: #FFFFFF; }
+.home-hero-mm--on { color: #FFB187; }
+.home-hero-mm:focus-visible { outline: 2px solid var(--brand-orange, #FC5501); outline-offset: 3px; border-radius: 3px; }
+
+.home-hero-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+.home-hero-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 20px;
+  border-radius: 18px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.home-hero-btn--play {
+  background: var(--brand-orange, #FC5501);
+  color: #FFFFFF;
+  border: 0;
+  font-weight: 700;
+}
+.home-hero-btn--play:hover { filter: brightness(1.06); }
+.home-hero-btn--shuffle {
+  background: transparent;
+  color: #FFFFFF;
+  border: 1px solid #6D6669;
+}
+.home-hero-btn--shuffle:hover { border-color: #A9A2A5; }
+.home-hero-btn:focus-visible { outline: 2px solid #FFB187; outline-offset: 2px; }
+
+@media (max-width: 760px) {
+  .home-hero { gap: 16px; padding: 16px; }
+  .home-hero-cover { width: 132px; height: 132px; }
+  .home-hero-title { font-size: 24px; }
+}

@@ -291,12 +291,17 @@ export function sameHandoffLoc(a: HandoffLoc, b: HandoffLoc): boolean {
 
 export type DiscHandoffKind = 'open' | 'close'
 
+/** The page the island Cover Flow lives on (V7, 2026-11-24: it left the Home
+ *  for Made for You — common/home-layout.ts MOVED_OFF_HOME). */
+export const DISC_HANDOFF_PAGE = 'made-for-you'
+
 /**
  * Is this navigation the disc handoff?
- *   open   Home → the album page whose case is open with its disc up (armed).
- *   close  that album page → straight back to Home (opened). Anything in
- *          between (another album, the artist, any other view) forgets the
- *          case: when Home isn't the page you came from, no reverse.
+ *   open   the Cover Flow's page (DISC_HANDOFF_PAGE) → the album page whose
+ *          case is open with its disc up (armed).
+ *   close  that album page → straight back (opened). Anything in between
+ *          (another album, the artist, any other view) forgets the case:
+ *          when the Cover Flow's page isn't where you came from, no reverse.
  */
 export function discHandoffKind(
   prev: HandoffLoc,
@@ -304,8 +309,8 @@ export function discHandoffKind(
   armed: { albumKey: string } | null,
   opened: { albumKey: string } | null,
 ): DiscHandoffKind | null {
-  if (prev.view === 'home' && next.view === 'album-detail' && armed && next.albumKey === armed.albumKey) return 'open'
-  if (prev.view === 'album-detail' && next.view === 'home' && opened && prev.albumKey === opened.albumKey) return 'close'
+  if (prev.view === DISC_HANDOFF_PAGE && next.view === 'album-detail' && armed && next.albumKey === armed.albumKey) return 'open'
+  if (prev.view === 'album-detail' && next.view === DISC_HANDOFF_PAGE && opened && prev.albumKey === opened.albumKey) return 'close'
   return null
 }
 

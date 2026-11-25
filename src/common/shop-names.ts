@@ -19,8 +19,9 @@ export const SHOP_WORDS = {
   chooseAnother: 'Choose another…',
 } as const
 
-/** The shop's tabs, in order. */
-export const SHOP_TAB_LABELS = ['For You', 'Search', SHOP_WORDS.list, 'Bandcamp'] as const
+/** The shop's tabs, in order. News (V7, 2026-11-24): New This Week, On the
+ *  Horizon and Music News, which left the Home (common/home-layout.ts). */
+export const SHOP_TAB_LABELS = ['For You', 'Search', SHOP_WORDS.list, 'Bandcamp', 'News'] as const
 
 /** The sidebar's STORE section: these rows and no others. */
 export const STORE_ROWS = [SHOP_WORDS.shop, SHOP_WORDS.downloads] as const

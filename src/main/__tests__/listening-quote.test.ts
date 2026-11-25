@@ -149,8 +149,8 @@ describe('createHubListeningQuote', () => {
   })
 })
 
-describe('the desktop Home shows the quote, not the cards', () => {
-  const home = src('views', 'HomeView.tsx')
+describe('the desktop shows the quote, not the cards (on Made for You since V7)', () => {
+  const home = src('views', 'MadeForYouView.tsx')
   const css = src('styles', 'home.css')
   it('renders memory.quote with the Music Man credit', () => {
     assert.match(home, /\{memory\?\.quote && \(/)

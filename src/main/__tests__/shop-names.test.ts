@@ -109,16 +109,16 @@ describe('STORE is the Record Shop and Downloads', () => {
   })
 })
 
-describe('the shop: a title, one search box, four tabs', () => {
-  it('the tabs are For You, Search, Listening List and Bandcamp, ids unchanged', () => {
-    assert.deepEqual([...SHOP_TAB_LABELS], ['For You', 'Search', 'Listening List', 'Bandcamp'])
+describe('the shop: a title, one search box, five tabs', () => {
+  it('the tabs are For You, Search, Listening List, Bandcamp and News (V7: it left the Home), ids unchanged', () => {
+    assert.deepEqual([...SHOP_TAB_LABELS], ['For You', 'Search', 'Listening List', 'Bandcamp', 'News'])
     assert.deepEqual(SHOP_TABS.map((t) => t.label), [...SHOP_TAB_LABELS])
-    assert.deepEqual(SHOP_TABS.map((t) => t.id), ['new-for-you', 'browse', 'your-list', 'bandcamp'])
+    assert.deepEqual(SHOP_TABS.map((t) => t.id), ['new-for-you', 'browse', 'your-list', 'bandcamp', 'news'])
   })
   it('the shop draws its tabs from SHOP_TABS, with its name and the box above them', () => {
     const dv = withoutComments(src('renderer/views/DiscoveryView.tsx'))
     assert.match(dv, /SHOP_TABS\.map\(/)
-    assert.doesNotMatch(dv, />(For You|Search|Listening List|Bandcamp)</, 'no tab label written by hand')
+    assert.doesNotMatch(dv, />(For You|Search|Listening List|Bandcamp|News)</, 'no tab label written by hand')
     assert.match(dv, /<h1 className="discovery-title">\{SHOP_WORDS\.shop\}<\/h1>/)
     // Typing on any tab (Bandcamp too) brings Search forward: the box says what it searches.
     assert.match(dv, /placeholder="Search the Record Shop"/)

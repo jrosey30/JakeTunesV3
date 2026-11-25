@@ -2013,3 +2013,15 @@
   /* Reduce Motion: the stamp is simply shown for its 1.3 s (motion.css, timed displays). */
   .home-concert-stamp { transform: translate(-50%, -50%) rotate(-11deg); }
 }
+
+/* V7 (2026-11-24): the pages that took what left the Home. Made for You opens
+   on launch page G's island band, under the shell's back strip — so its top
+   is the 24px every page starts at, not the 72px G kept clear for the Home's
+   own back pill. News sits under the Record Shop's tabs. */
+.mfy-view .tn-inner { padding-top: 24px; }
+.news-view { padding-top: 24px; }
+.news-view-empty {
+  margin: 24px var(--home-gutter, 28px);
+  color: var(--text-secondary, #6d6669);
+  font-size: 13px;
+}

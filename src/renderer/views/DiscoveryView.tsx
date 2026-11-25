@@ -3,6 +3,7 @@ import NewForYouView from './NewForYouView'
 import ListenToTheListView from './ListenToTheListView'
 import DownloadView from './DownloadStore/DownloadView'
 import StoreView from './BandcampStore'
+import NewsView from './NewsView'
 import { useShopList } from '../record-shop/useShopSession'
 import { DISCOVERY_TAB_EVENT, SHOP_TABS, rememberDiscoveryTab, rememberedDiscoveryTab, type DiscoveryTab } from './discoveryTab'
 import { getShopQuery, setShopQuery, shopSearching, subscribeShopQuery, typingOpensSearch } from './DownloadStore/shopQuery'
@@ -85,7 +86,8 @@ export default function DiscoveryView({ initialTab }: { initialTab?: DiscoveryTa
         {tab === 'new-for-you' ? <NewForYouView />
           : tab === 'browse' ? <DownloadView />
             : tab === 'bandcamp' ? <StoreView />
-              : <ListenToTheListView />}
+              : tab === 'news' ? <NewsView />
+                : <ListenToTheListView />}
       </div>
     </div>
   )

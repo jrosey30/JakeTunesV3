@@ -50,6 +50,12 @@ const NO_IPOD_IDS: number[] = []
 
 const LIBRARY_ICONS: Record<string, JSX.Element> = {
   home: <HomeIcon />,
+  // Made for You (V7, 2026-11-24): a four-point sparkle, 14×14 in the row's 14px icon box.
+  'made-for-you': (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 1.8 9.4 6.6 14.2 8 9.4 9.4 8 14.2 6.6 9.4 1.8 8 6.6 6.6z" />
+    </svg>
+  ),
   songs: <SongsIcon />,
   artists: <ArtistsIcon />,
   albums: <AlbumsIcon />,
@@ -81,6 +87,10 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   // 4.4.19: Home/Dashboard. Surfaces Recently Added + Top Artists,
   // future ships add Listening Stats / Picks / Music News / Bandsintown.
   { label: 'Home', view: 'home' },
+  // V7 (2026-11-24): what left the Home lives here — island albums, Now
+  // digging, today's tapes, Rediscover, the Music Man's line, Year in Review
+  // (common/home-layout.ts MOVED_OFF_HOME).
+  { label: 'Made for You', view: 'made-for-you' },
   { label: 'Songs', view: 'songs' },
   { label: 'Artists', view: 'artists' },
   { label: 'Albums', view: 'albums' },
