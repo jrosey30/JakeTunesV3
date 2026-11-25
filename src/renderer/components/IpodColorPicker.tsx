@@ -62,7 +62,7 @@ export function IpodColorPicker({ deviceId, ipodName, current, x, y, onClose, on
 
   return (
     <div className="context-menu ipod-color-picker" ref={ref} style={{ left: pos.x, top: pos.y }} onContextMenu={(e) => e.preventDefault()}>
-      <div className="ipod-color-picker-title">iPod color</div>
+      <div className="ipod-color-picker-title">iPod Color</div>
       <div className="ipod-color-picker-swatches">
         {IPOD_COLORS.map((c) => (
           <button

@@ -347,13 +347,13 @@ export default function SearchPanel({ query, inputEl, onClose, header }: Props) 
       {header}
       {topRows.length > 0 && (
         <div className="search-panel-section search-panel-section--top">
-          <div className="search-panel-section-header">Top hit</div>
+          <div className="search-panel-section-header">Top Hit</div>
           {topRows.map(renderRow)}
         </div>
       )}
       {trackRows.length > 0 && (
         <div className="search-panel-section">
-          <div className="search-panel-section-header">Tracks</div>
+          <div className="search-panel-section-header">Songs</div>
           {trackRows.map(renderRow)}
         </div>
       )}

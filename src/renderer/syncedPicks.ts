@@ -183,13 +183,13 @@ export function useFavoriteArtists(): PicksState<FavoriteSlot> {
 
 /** One line under a shelf's title — only when there is something to say. */
 export function picksStatusLine(s: AnyPicksState): { text: string; tone: 'dim' | 'warn' } | null {
-  if (s.rejected) return { text: `homemini refused the last change — ${s.rejected}`, tone: 'warn' }
-  if (s.pending && s.reachable === false) return { text: 'Saved on this Mac — sends to your phone when homemini is reachable', tone: 'dim' }
+  if (s.rejected) return { text: `Couldn’t save the last change — ${s.rejected}`, tone: 'warn' }
+  if (s.pending && s.reachable === false) return { text: 'Saved on this Mac — sends to your phone when back online', tone: 'dim' }
   if (s.reachable === false && s.syncedAt) {
     const when = new Date(s.syncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-    return { text: `homemini is offline — showing the copy from ${when}`, tone: 'dim' }
+    return { text: `Offline — showing the copy from ${when}`, tone: 'dim' }
   }
-  if (s.reachable === false) return { text: 'Waiting for homemini — editing unlocks after the first sync', tone: 'dim' }
+  if (s.reachable === false) return { text: 'Offline — editing unlocks after the first sync', tone: 'dim' }
   if (s.syncedAt !== null && s.updatedAt === null && specFor(s.kind).awaitFirstWrite) {
     return { text: 'Waiting for your phone’s picks — open JakeTunes on the phone once to bring them over', tone: 'dim' }
   }

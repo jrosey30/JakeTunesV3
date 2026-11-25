@@ -341,7 +341,7 @@ function AppInner() {
     return window.electronAPI.onBandcampAllDuplicates((info) => {
       import('./activity').then(a => {
         a.setNotice(
-          `Already in your library: "${info.filename}" — all ${info.dupeCount} track${info.dupeCount === 1 ? '' : 's'} skipped`,
+          `Already in your library: "${info.filename}" — all ${info.dupeCount} song${info.dupeCount === 1 ? '' : 's'} skipped`,
           { kind: 'info', durationMs: 6000 }
         )
       }).catch(() => {})

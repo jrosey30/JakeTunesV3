@@ -127,7 +127,7 @@ export function MmSuggestions({ visible, loading, onRefresh, onAdd }: MmSuggesti
   return (
     <div className="ltl-mm-suggests">
       <div className="ltl-mm-head">
-        <span className="ltl-mm-title">Music Man suggests</span>
+        <span className="ltl-mm-title">The Music Man Suggests</span>
         <button
           type="button"
           className="ltl-mm-refresh"

@@ -310,7 +310,7 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
 
           {K.variety.seats > 0 && (
             <>
-              <h3 className="yir-p-h3">Who holds a seat</h3>
+              <h3 className="yir-p-h3">Who Holds a Seat</h3>
               <div className="yir-p-big3">
                 <div><b>{n(K.variety.artists)}</b><span>artists</span></div>
                 <div><b>{K.variety.brackets} of {K.variety.bracketsTotal}</b><span>genre brackets</span></div>
@@ -331,7 +331,7 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
               </div>
               {K.variety.bracketChampions.length > 0 && (
                 <>
-                  <h3 className="yir-p-h3">Number one, everywhere</h3>
+                  <h3 className="yir-p-h3">Number One, Everywhere</h3>
                   <ol className="yir-p-chart">
                     {K.variety.bracketChampions.map((c) => (
                       <li key={c.bracket}>

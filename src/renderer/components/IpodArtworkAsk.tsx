@@ -30,7 +30,7 @@ export function IpodModelChoices({ onPick, disabled }: { onPick: (family: string
           <button type="button" className="device-link-btn" disabled={disabled} onClick={() => onPick(f.family)}>{f.name}</button>{' · '}
         </span>
       ))}
-      <button type="button" className="device-link-btn" disabled={disabled} onClick={() => onPick('none')}>No colour screen</button>
+      <button type="button" className="device-link-btn" disabled={disabled} onClick={() => onPick('none')}>No color screen</button>
     </>
   )
 }

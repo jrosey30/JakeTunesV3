@@ -1798,7 +1798,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
           <button
             className={`transport-toggle dj-btn radio-mode-btn ${radioMode ? 'radio-mode-btn--on' : ''}`}
             onClick={handleRadioToggle}
-            title={radioMode ? 'Radio Mode is ON (⇧⌘R) — click to turn OFF (WJLR 330.9, Music Man + Larry)' : 'Radio Mode (⇧⌘R) — click to start WJLR 330.9 (whole library shuffled, MM + Larry banter)'}
+            title={radioMode ? 'Radio Mode is ON (⇧⌘R) — click to turn OFF (WJLR 330.9, the Music Man + Larry)' : 'Radio Mode (⇧⌘R) — click to start WJLR 330.9 (whole library shuffled, MM + Larry banter)'}
           >
             <RadioIcon />
             {radioMode && (
@@ -1897,7 +1897,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
               <span className="airplay-device-icon">
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><circle cx="6" cy="6" r="2"/><path d="M6 1v1M6 10v1M1 6h1M10 6h1M2.5 2.5l.7.7M8.8 8.8l.7.7M9.5 2.5l-.7.7M3.2 8.8l-.7.7"/></svg>
               </span>
-              Sound Settings...
+              Sound Settings…
             </div>
           </div>
         )}
@@ -1905,7 +1905,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       <button
         className={`transport-toggle queue-toggle ${showMusicMan ? 'queue-toggle--active' : ''}`}
         onClick={onToggleMusicMan}
-        title="The Music Man (⇧⌘M) — ask about what's in front of you"
+        title="The Music Man (⇧⌘M)"
         aria-label="The Music Man"
       >
         <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1919,7 +1919,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       <button
         className={`transport-toggle queue-toggle ${showQueue ? 'queue-toggle--active' : ''}`}
         onClick={onToggleQueue}
-        title="Up Next — drop songs here to play them next"
+        title="Up Next"
         onDragOver={(e) => {
           e.preventDefault()
           e.dataTransfer.dropEffect = 'copy'
