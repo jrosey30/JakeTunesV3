@@ -106,7 +106,7 @@ export default function IslandAlbumsShelf({ albums, findArtHash, lookupArt, requ
   const choose = useCallback((slot: number) => {
     if (editable) setPicking(slot)
     else setNotice(picks.syncedAt === null
-      ? 'Island Albums sync through homemini — editing unlocks after the first sync.'
+      ? 'Offline — editing unlocks after the first sync.'
       : 'Waiting for your phone’s picks — open JakeTunes on the phone once to bring them over.')
   }, [editable, picks.syncedAt])
 

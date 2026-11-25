@@ -14,7 +14,7 @@ describe('the "Added to your library" toast', () => {
   })
 
   it('a track with no title still reads as a sentence', () => {
-    assert.equal(summarizeImportBatch([{ id: 7 }])?.message, 'Added track to your library')
+    assert.equal(summarizeImportBatch([{ id: 7 }])?.message, 'Added a song to your library')
   })
 
   it('an album burst headlines the album and carries every id in arrival order', () => {

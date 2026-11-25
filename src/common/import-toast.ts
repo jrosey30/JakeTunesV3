@@ -37,7 +37,7 @@ export function summarizeImportBatch(batch: readonly ImportedTrackLike[]): Impor
 
   if (batch.length === 1) {
     const t = batch[0]
-    const label = t.title ? `'${t.title}'` : 'track'
+    const label = t.title ? `'${t.title}'` : 'a song'
     return { message: `Added ${label} to your library`, trackIds }
   }
 

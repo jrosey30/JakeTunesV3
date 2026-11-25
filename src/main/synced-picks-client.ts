@@ -271,7 +271,7 @@ export function createSyncedPicksClient<V>(opts: SyncedPicksClientOptions<V>): S
       const b = body && typeof body === 'object' ? body as { error?: unknown; message?: unknown } : {}
       const msg = typeof b.error === 'string' && b.error ? b.error
         : typeof b.message === 'string' && b.message ? b.message
-          : 'Couldn’t save that change.'
+          : 'Couldn’t save the last change.'
       rejected = msg
       warn(`${spec.kind}:rejected`, `${tag} homemini refused the edit (400: ${msg}) — dropped; showing the stored document`)
       await settleOutbox(edit.id)
