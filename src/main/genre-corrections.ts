@@ -31,6 +31,7 @@ import { GENRE_NAMES } from '../common/genre-vocab.ts'
 import { EVIDENCE_VERSION, isSettled, trackFingerprint, type CheckEntry, type FilerDeps, type FilerTrack } from './genre-filer.ts'
 import { isHis, sameSong, type FilerHow, type ProvenanceDoc } from './genre-provenance.ts'
 import { CORRECTIONS_ID, SEEDS, RESTORES, CORRECTIONS, type Correction } from './genre-corrections-data.ts'
+import { landed } from '../common/jake-edits-stay.ts'
 
 export const MARKER_FILE = 'genre-corrections-applied.json'
 
@@ -116,7 +117,7 @@ export async function runGenreCorrections(deps: CorrectionsDeps): Promise<Correc
     const t = tracks.find((x) => x.id === r.id)
     if (!t || (t.genre || '').trim() !== r.from || isHis(t.genreBy) && t.genreBy !== 'unknown') continue
     if (trackFingerprint(t) !== r.fp) { result.skipped.push({ artist: r.artist, album: r.album, reason: `song ${r.id} changed since the audit` }); continue }
-    await deps.persist(t, { genre: r.to })   // no provenance row: the journal already says it is his
+    if (!landed(await deps.persist(t, { genre: r.to }), 'genre')) continue   // no provenance row: the journal already says it is his
     updates.push({ trackId: t.id, field: 'genre', newValue: r.to })
     result.restored++
   }
@@ -137,11 +138,13 @@ export async function runGenreCorrections(deps: CorrectionsDeps): Promise<Correc
     const ours = songs.filter((t) => !his.includes(t))
     if (ours.length) {
       const how: FilerHow = c.confidence === 'high' ? 'correction' : 'suggestion'
+      let n = 0
       for (const t of ours) {
-        await deps.persist(t, { genre: c.to }, { by: 'filer', how, confidence: c.confidence === 'high' ? 'high' : 'low' })
+        if (!landed(await deps.persist(t, { genre: c.to }, { by: 'filer', how, confidence: c.confidence === 'high' ? 'high' : 'low' }), 'genre')) continue
         updates.push({ trackId: t.id, field: 'genre', newValue: c.to })
+        n++
       }
-      if (c.confidence === 'high') result.applied.push({ artist: c.artist, album: c.album, from: c.from, to: c.to, songs: ours.length })
+      if (c.confidence === 'high' && n) result.applied.push({ artist: c.artist, album: c.album, from: c.from, to: c.to, songs: n })
       else {
         const key = albumKey(c.artist, c.album)
         const i = check.findIndex((e) => e.key === key)

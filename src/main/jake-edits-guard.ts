@@ -1,21 +1,67 @@
 /**
  * The main-process side of "Jake's edits stay" (common/jake-edits-stay.ts):
- * reads his journal (user-edits.json in userData) for an automatic writer.
- * Cynthia's sweep asks this before it auto-applies a fix (cynthia-sweep.ts
- * heldForJake); the genre filer asks the same rule in persistWithProvenance.
+ * his records of hand, read for an automatic writer.
+ *
+ *   - his journal (user-edits.json in userData), read strictly: a missing
+ *     file is "no edits yet", but a file that can't be read or parsed holds
+ *     every automatic write back (never guess that a field isn't his);
+ *   - the phone's Get Info edits, the copy the desktop already reads
+ *     (mobile-metadata-overrides.json, fingerprint-matched per song).
+ *
+ * Read once per sweep: a lookup is reused for TTL_MS, so a pass over hundreds
+ * of songs reads the files once.
+ *
+ * Users: Cynthia's sweep (createHeldForJake → cynthia-sweep.ts heldForJake)
+ * and the genre filer (genre-filer-persist.ts).
  */
-import { readUserEditsJournal } from './user-edits-sync.ts'
-import { mayWriteField } from '../common/jake-edits-stay.ts'
+import type { UserEditsDoc } from '../common/user-edits.ts'
+import { readUserEditsJournalStrict } from './user-edits-sync.ts'
+import { mayWriteField, phoneEdit, type JournalEdit } from '../common/jake-edits-stay.ts'
 
-/** True when an automatic write of `value` to this song's `field` would change something Jake set. */
-export function createHeldForJake(dir: () => string, read = readUserEditsJournal) {
-  return async (trackId: number, field: string, value: string, durationMs?: number): Promise<boolean> => {
-    let doc: Awaited<ReturnType<typeof readUserEditsJournal>> = null
-    try { doc = await read(dir()) } catch (err) {
-      // A journal that can't be read holds everything back: never guess that a field isn't his.
-      console.warn('[jake-edits] journal unreadable; automatic fixes wait:', err instanceof Error ? err.message : err)
+export const TTL_MS = 30_000
+
+type PhoneDoc = Record<string, { fp?: string; fields?: Record<string, string> } | undefined>
+
+/** His records for one song + field (journal first, then the phone's). */
+export type JakeEditLookup = (id: number, field: string, fp: string | undefined) => JournalEdit[]
+
+/** The journal, strictly: missing → null; unreadable or not a journal → throws (user-edits-sync.ts). */
+export const readJournalStrict = readUserEditsJournalStrict
+
+export function lookupFrom(journal: UserEditsDoc | null, phone: PhoneDoc | null): JakeEditLookup {
+  return (id, field, fp) => {
+    const out: JournalEdit[] = []
+    const j = journal?.edits[String(id)]?.[field]
+    if (j) out.push({ v: j.v, at: j.at, dur: j.dur })
+    const p = phoneEdit(phone, id, field, fp)
+    if (p) out.push(p)
+    return out
+  }
+}
+
+/** One lookup per sweep: built on first ask, reused for TTL_MS. A journal that can't be read is never cached: it throws every time. */
+export function createJakeEdits(o: { readJournal: () => Promise<UserEditsDoc | null>; readPhone: () => Promise<PhoneDoc | null>; now?: () => number; ttlMs?: number }) {
+  const now = o.now ?? Date.now
+  let cached: { at: number; look: JakeEditLookup } | null = null
+  return {
+    lookup: async (): Promise<JakeEditLookup> => {
+      if (cached && now() - cached.at < (o.ttlMs ?? TTL_MS)) return cached.look
+      const journal = await o.readJournal()   // throws on a corrupt journal: the caller holds everything
+      const phone = await o.readPhone().catch(() => null)
+      cached = { at: now(), look: lookupFrom(journal, phone) }
+      return cached.look
+    },
+  }
+}
+
+/** For Cynthia's sweep: true when an automatic write of `value` would change something Jake set. */
+export function createHeldForJake(edits: { lookup: () => Promise<JakeEditLookup> }, warn: (m: string) => void = (m) => console.warn(m)) {
+  return async (trackId: number, field: string, value: string, durationMs?: number, fp?: string): Promise<boolean> => {
+    let look: JakeEditLookup
+    try { look = await edits.lookup() } catch (err) {
+      warn(`[jake-edits] his edits can't be read; automatic fixes wait: ${err instanceof Error ? err.message : String(err)}`)
       return true
     }
-    return !mayWriteField({ writer: { by: 'auto' }, edit: doc?.edits[String(trackId)]?.[field], value, durationMs })
+    return !mayWriteField({ writer: { by: 'auto' }, edit: look(trackId, field, fp), value, durationMs })
   }
 }

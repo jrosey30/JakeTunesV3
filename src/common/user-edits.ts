@@ -178,7 +178,8 @@ export function sameValue(a: unknown, b: unknown): boolean {
   return false
 }
 
-const DURATION_SLACK_MS = 2000
+/** Durations within this much are one song (exported for the stay rule, common/jake-edits-stay.ts). */
+export const DURATION_SLACK_MS = 2000
 
 /** Same song? The id says so; a duration that disagrees by >2 s says the id moved. */
 function sameSong(edit: UserEdit, row: RowLike): boolean {
