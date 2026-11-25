@@ -63,7 +63,7 @@ export interface LibraryIpcHost {
     orphanBytes: number
     samples: Array<{ basename: string; mtimeMs: number; size: number }>
   }>
-  purgeLibraryOrphans: () => Promise<{ deleted: number; bytesFreed: number }>
+  purgeLibraryOrphans: () => Promise<{ deleted: number; bytesFreed: number; refused?: string }>
 }
 
 export function registerLibraryIpc(ipc: IpcRegistrar, host: LibraryIpcHost): void {
@@ -186,7 +186,8 @@ export function registerLibraryIpc(ipc: IpcRegistrar, host: LibraryIpcHost): voi
 
   ipc.handle('purge-library-orphans', async () => {
     try {
-      const { deleted, bytesFreed } = await host.purgeLibraryOrphans()
+      const { deleted, bytesFreed, refused } = await host.purgeLibraryOrphans()
+      if (refused) return { ok: false, error: 'refused', reason: 'not-this-macs-folder' }
       return { ok: true, deleted, bytesFreed }
     } catch (err) {
       return { ok: false, error: safeIpcError(err, 'unknown') }

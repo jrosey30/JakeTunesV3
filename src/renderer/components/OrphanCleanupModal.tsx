@@ -2,6 +2,8 @@ import { useEscape } from '../hooks/useKeyboard'
 import { useEffect, useState } from 'react'
 import ConfirmDialog from './ConfirmDialog'
 import '../styles/import-convert.css'
+import CloseButton from './CloseButton'
+import { refusalWords } from '../deadTrackWords'
 
 interface OrphanSample {
   basename: string
@@ -53,7 +55,7 @@ export default function OrphanCleanupModal({ onClose, onLibraryChanged }: Props)
           window.electronAPI.scanDeadTracks(),
         ])
         if (!orphanRes.ok) {
-          setError(orphanRes.error || 'Orphan scan failed')
+          setError('Couldn’t look through the folder.')
         } else {
           setTrackCount(orphanRes.trackCount ?? 0)
           setDiskCount(orphanRes.diskCount ?? 0)
@@ -65,8 +67,8 @@ export default function OrphanCleanupModal({ onClose, onLibraryChanged }: Props)
           setDeadCount(deadRes.count ?? 0)
           setDeadTracks((deadRes.tracks ?? []) as DeadTrack[])
         }
-      } catch (err) {
-        setError(String(err))
+      } catch {
+        setError('Something went wrong. Try again.')
       }
       setScanning(false)
     })()
@@ -79,26 +81,19 @@ export default function OrphanCleanupModal({ onClose, onLibraryChanged }: Props)
     try {
       const r = await window.electronAPI.purgeLibraryOrphans()
       if (!r.ok) {
-        setError(r.error || 'Purge failed')
+        setError(refusalWords(r.reason))
         setRunning(false)
         return
       }
-      const cache = await window.electronAPI.pruneAlacCache()
-      const cacheMb = cache.ok ? ((cache.bytesFreed ?? 0) / 1024 / 1024).toFixed(1) : '0'
-      let msg =
-        `Deleted ${r.deleted ?? 0} orphan file(s), freed ${formatBytes(r.bytesFreed ?? 0)}.` +
-        (cache.ok && (cache.pruned ?? 0) > 0 ? ` Pruned ${cache.pruned} play-cache entries (${cacheMb} MB).` : '')
-      const ipod = await window.electronAPI.checkIpodMounted?.()
-      if (ipod?.mounted) {
-        msg += ' iPod is connected — sync from Device view to align device storage.'
-      }
-      setResult(msg)
+      // The play cache is tidied by the nightly check (main/self-care.ts).
+      const n = r.deleted ?? 0
+      setResult(`${n === 1 ? 'Deleted one file' : `Deleted ${n.toLocaleString()} files`}, ${formatBytes(r.bytesFreed ?? 0)} freed.`)
       setOrphanCount(0)
       setOrphanBytes(0)
       setSamples([])
       setDiskCount(trackCount)
-    } catch (err) {
-      setError(String(err))
+    } catch {
+      setError('Something went wrong. Try again.')
     }
     setRunning(false)
   }
@@ -110,7 +105,7 @@ export default function OrphanCleanupModal({ onClose, onLibraryChanged }: Props)
     try {
       const r = await window.electronAPI.removeDeadTracks()
       if (!r.ok) {
-        setError(r.error || 'Remove failed')
+        setError(refusalWords(r.reason))   // the guard's reason, in plain words
         setRunning(false)
         return
       }
@@ -120,12 +115,12 @@ export default function OrphanCleanupModal({ onClose, onLibraryChanged }: Props)
         setRunning(false)
         return
       }
-      setResult(`Removed ${r.removed ?? 0} track(s) with missing audio from library.`)
+      setResult((r.removed ?? 0) === 1 ? 'Removed the song with no file.' : `Removed ${r.removed ?? 0} songs with no file.`)
       setDeadCount(0)
       setDeadTracks([])
       onLibraryChanged()
-    } catch (err) {
-      setError(String(err))
+    } catch {
+      setError('Something went wrong. Try again.')
     }
     setRunning(false)
   }
@@ -135,29 +130,29 @@ export default function OrphanCleanupModal({ onClose, onLibraryChanged }: Props)
       <div className="imp-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !running) onClose() }}>
         <div className="imp-modal" role="dialog" aria-modal="true">
           <div className="imp-header">
-            <h2>Clean Orphan Files</h2>
-            <button className="imp-close" onClick={onClose} disabled={running} title="Close">×</button>
+            <h2>Files Not in Your Library</h2>
+            <CloseButton onClick={onClose} disabled={running} />
           </div>
 
           <div className="imp-body">
             <p className="imp-help">
-              Orphan files are audio on disk not referenced by any track in your library.
-              Deletion is permanent and uses filename identity only — no tag matching.
+              Song files in your music folder that no song in your library points at.
+              Deleting them can’t be undone.
             </p>
 
             {scanning ? (
-              <p className="imp-help">Scanning library mirror…</p>
+              <p className="imp-help">Looking…</p>
             ) : (
               <div className="imp-help">
-                <div><strong>{trackCount.toLocaleString()}</strong> tracks indexed</div>
-                <div><strong>{diskCount.toLocaleString()}</strong> audio files on disk</div>
+                <div><strong>{trackCount.toLocaleString()}</strong> songs in your library</div>
+                <div><strong>{diskCount.toLocaleString()}</strong> song files in the folder</div>
                 <div>
-                  <strong>{orphanCount.toLocaleString()}</strong> orphan file{orphanCount === 1 ? '' : 's'}
+                  <strong>{orphanCount.toLocaleString()}</strong> {orphanCount === 1 ? 'file isn’t' : 'files aren’t'} in your library
                   {orphanCount > 0 ? ` (${formatBytes(orphanBytes)})` : ''}
                 </div>
                 {deadCount > 0 && (
                   <div style={{ marginTop: 8 }}>
-                    <strong>{deadCount}</strong> library track{deadCount === 1 ? '' : 's'} with missing audio
+                    <strong>{deadCount}</strong> {deadCount === 1 ? 'song has' : 'songs have'} no file
                   </div>
                 )}
                 {samples.length > 0 && (
@@ -198,7 +193,7 @@ export default function OrphanCleanupModal({ onClose, onLibraryChanged }: Props)
                 disabled={scanning || running}
                 style={{ marginRight: 'auto' }}
               >
-                Remove {deadCount} Dead Track{deadCount === 1 ? '' : 's'}
+                {deadCount === 1 ? 'Remove the Song With No File' : `Remove ${deadCount} Songs With No File`}
               </button>
             )}
             <button
@@ -206,7 +201,7 @@ export default function OrphanCleanupModal({ onClose, onLibraryChanged }: Props)
               onClick={() => setConfirmPurge(true)}
               disabled={scanning || running || orphanCount === 0 || !!result}
             >
-              {running ? 'Deleting…' : `Delete ${orphanCount || ''} Orphan${orphanCount === 1 ? '' : 's'}`.trim()}
+              {running ? 'Deleting…' : orphanCount === 1 ? 'Delete the File' : `Delete ${orphanCount || ''} Files`.replace('  ', ' ')}
             </button>
           </div>
         </div>
@@ -214,8 +209,8 @@ export default function OrphanCleanupModal({ onClose, onLibraryChanged }: Props)
 
       {confirmPurge && (
         <ConfirmDialog
-          message={`Permanently delete ${orphanCount} orphan file${orphanCount === 1 ? '' : 's'}?`}
-          detail={`This removes ${formatBytes(orphanBytes)} of audio not referenced by your ${trackCount.toLocaleString()} library tracks. This cannot be undone.`}
+          message={orphanCount === 1 ? 'Delete this file for good?' : `Delete these ${orphanCount.toLocaleString()} files for good?`}
+          detail={`${formatBytes(orphanBytes)} of song files no song in your library points at. This can’t be undone.`}
           confirmLabel="Delete Forever"
           onConfirm={handlePurge}
           onCancel={() => setConfirmPurge(false)}
@@ -224,8 +219,8 @@ export default function OrphanCleanupModal({ onClose, onLibraryChanged }: Props)
 
       {confirmDead && (
         <ConfirmDialog
-          message={`Remove ${deadCount} track${deadCount === 1 ? '' : 's'} with missing audio from library?`}
-          detail="These entries have no playable file on disk. The library count will decrease. Audio files are not affected."
+          message={deadCount === 1 ? 'Remove the song that has no file?' : `Remove the ${deadCount} songs that have no file?`}
+          detail="They can’t play: their file is gone. No file is touched."
           confirmLabel="Remove from Library"
           onConfirm={handleRemoveDead}
           onCancel={() => setConfirmDead(false)}

@@ -38,17 +38,6 @@
   gap: 12px;
 }
 
-.musicman-badge {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  background: var(--musicman-accent);
-  color: #1e140a;
-  padding: 3px 10px;
-  border-radius: 10px;
-}
-
 .musicman-tagline {
   font-size: 14px;
   font-style: italic;
@@ -121,35 +110,6 @@
   min-height: 0;
   height: auto;
 }
-.musicman-analysis-strip {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 9px 24px;
-  border-top: 1px solid rgba(var(--brand-orange-rgb),0.2);
-  background: rgba(0,0,0,0.18);
-  font-size: 12.5px;
-  color: #a89878;
-}
-.musicman-analysis-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-left: auto;
-  flex: 1;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  max-width: 72%;
-}
-.musicman-analysis-status { white-space: nowrap; }
-.musicman-analysis-strip .musicman-org-action-btn {
-  padding: 5px 12px;
-  font-size: 12px;
-  margin-top: 0;
-  white-space: nowrap;
-}
-.musicman-analysis-strip .musicman-org-bar-track { height: 6px; margin-top: 0; }
 
 /* Chat Layout */
 .musicman-chat-layout {
@@ -2310,32 +2270,6 @@
   .pl-suggest-refresh, .pl-suggest-add, .pl-suggest-nope, .pl-quick { transition: none; }
 }
 
-/* ── THE BRAIN — the Music Man's back wall (what he's actually learned) ── */
-.mm-wall {
-  margin: 0 24px 14px;
-  border: 1px solid #d8cfae;
-  background: #faf6ea;
-  border-radius: 8px;
-  padding: 10px 14px;
-}
-.mm-wall-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
-.mm-wall-title { font-size: 11px; font-weight: 800; letter-spacing: 1.6px; color: #8a7f5e; }
-.mm-wall-health { font-size: 11px; }
-.mm-wall-health--green { color: #1d6f3f; }
-.mm-wall-health--amber { color: #b07818; }
-.mm-wall-health--red { color: #b5341c; font-weight: 700; }
-.mm-wall-tiles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
-.mm-wall-tile {
-  display: flex; flex-direction: column; gap: 2px;
-  background: #fffdf4;
-  border: 1px solid #e6ddc2;
-  border-radius: 5px;
-  padding: 7px 9px;
-}
-.mm-wall-num { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; color: #33301f; }
-.mm-wall-num small { font-size: 11px; font-weight: 500; color: #8a7f5e; }
-.mm-wall-label { font-size: 10px; color: #8a7f5e; letter-spacing: 0.3px; }
-@media (max-width: 1100px) { .mm-wall-tiles { grid-template-columns: repeat(3, 1fr); } }
 
 /* 2026-08-07: chat replies keep their structure — the model writes real
    lists and paragraphs; flattening them made a 50-song reply an

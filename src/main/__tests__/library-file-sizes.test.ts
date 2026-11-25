@@ -138,21 +138,24 @@ describe('refresh is saved by the renderer, not written by main', () => {
     assert.match(body, /measureLibraryFileSizes\(tracks, .*, shouldMeasure, lstat, onProgress, withFingerprints \? computeAudioFingerprint : undefined\)/)
   })
 
-  test('both renderer flows apply the measured sizes with UPDATE_TRACKS', () => {
-    assert.match(app, /measuredFileUpdates\(libTracksRef\.current, r\.measured \?\? \[\]\)/)
-    assert.match(app, /measuredFileUpdates\(libTracksRef\.current, r\.fileSizes \?\? \[\]\)/)
-    assert.equal((app.match(/if \(sizeUpdates\.length\) dispatch\(\{ type: 'UPDATE_TRACKS', updates: sizeUpdates \}\)/g) || []).length, 2)
+  test('the nightly check\'s sizes are applied with UPDATE_TRACKS by the renderer', () => {
+    const at = app.indexOf('window.electronAPI.onSelfCareMeasured((measured) => {')
+    assert.ok(at > app.indexOf('const libTracksRef = useRef('), 'subscribes after libTracksRef exists')
+    const body = app.slice(at, at + 400)
+    assert.match(body, /measuredFileUpdates\(libTracksRef\.current, measured\)/)
+    assert.match(body, /if \(sizeUpdates\.length\) dispatch\(\{ type: 'UPDATE_TRACKS', updates: sizeUpdates \}\)/)
   })
 
-  test('tag write-back re-measures size and fingerprint; the menu refresh measures sizes only', () => {
+  test('per-edit tag write-back re-measures size and fingerprint; the nightly size check measures sizes only', () => {
     const hookStart = index.indexOf('const result = await writeTagsToFile({ audioFilePath: absPath, overrides })')
     assert.ok(hookStart > 0, 'per-edit write-back still writes tags')
     const hook = index.slice(hookStart, index.indexOf('} else if (!result.ok)', hookStart))
     assert.match(hook, /measureLibraryFileSizes\(\[track\], \(\) => absPath, \(\) => true, lstat, undefined, computeAudioFingerprint\)/)
     assert.match(hook, /sendToRenderer\('tag-writeback:file-changed', measured\[0\]\)/)
-    assert.match(index, /measureFileSizesOnDisk\(\(absPath\) => refreshedPaths\.has\(absPath\), undefined, true\)/)
-    const menu = index.slice(index.indexOf("ipc.handle('refresh-file-sizes'"), index.indexOf("ipc.handle('refresh-file-sizes'") + 600)
-    assert.equal(/measureFileSizesOnDisk\([\s\S]*?,\s*true\s*\)/.test(menu), false, 'the menu refresh does not re-stamp fingerprints')
+    // The nightly size job measures every file without re-stamping fingerprints.
+    const job = index.slice(index.indexOf("'file-sizes': async () => {"), index.indexOf("'file-sizes': async () => {") + 600)
+    assert.match(job, /measureFileSizesOnDisk\(\(\) => true\)/)
+    assert.match(job, /sendToRenderer\('self-care:measured', scan\.measured\)/)
   })
 
   test('the renderer applies a per-edit rewrite through UPDATE_TRACKS', () => {

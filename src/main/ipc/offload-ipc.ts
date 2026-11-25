@@ -5,7 +5,7 @@
  * resumes only when offload-migration.json says a start already happened,
  * or when argv is --offload-dry-run / --offload-start.
  *
- * Registered through the IPC registrar. Menu clicks call the same functions.
+ * Registered through the IPC registrar. Settings › Storage calls them (V7).
  */
 import { dialog } from 'electron'
 import { mkdir, readFile, writeFile, lstat, statfs, rename, unlink } from 'fs/promises'
@@ -18,6 +18,7 @@ import { colonPathToAbs } from '../activity-boardable.ts'
 import { emptyLedger, parseLedger, returnedLately, returnRecentSongs, RETURN_LEDGER_FILE, type ReturnLedger } from '../offload-recent-return.ts'
 import { askAudioIdentity, hubBaseFromAudioBase } from '../audio-identity.ts'
 import { writeJsonAtomic } from '../atomic-write.ts'
+import { countsFromReport, startConfirmMessage, type OffloadCounts } from '../offload-counts.ts'
 import {
   bootOffloadIntent,
   compareLocalToRaw,
@@ -135,16 +136,16 @@ async function confirmStart(message: string, interactive: boolean): Promise<bool
   if (!interactive) return true
   const r = await dialog.showMessageBox({
     type: 'question',
-    buttons: ['Cancel', 'Start Offload'],
+    buttons: ['Cancel', 'Move'],
     defaultId: 0,
     cancelId: 0,
-    title: 'Offload Audio',
+    title: 'Keep songs on the home server',
     message,
   })
   return r.response === 1
 }
 
-async function runDry(interactive: boolean): Promise<{ ok: boolean; report?: string; error?: string }> {
+async function runDry(interactive: boolean): Promise<{ ok: boolean; report?: string; counts?: OffloadCounts; error?: string }> {
   if (!host) return { ok: false, error: 'offload is not ready' }
   const source = await host.readStreamSource()
   const offload = await host.readOffloadAudio()
@@ -172,7 +173,7 @@ async function runDry(interactive: boolean): Promise<{ ok: boolean; report?: str
     console.warn('[offload] could not write dry-run report:', err instanceof Error ? err.message : err)
   }
   await showText('Offload dry run', text, interactive)
-  return { ok: true, report: text }
+  return { ok: true, report: text, counts: countsFromReport(report) }
 }
 
 async function resumeDrain(state: OffloadMigrationState): Promise<void> {
@@ -347,17 +348,32 @@ async function runRehydrate(interactive: boolean): Promise<{ ok: boolean; restor
   return { ok: !result.stoppedBecause, restored: result.restored, error: result.stoppedBecause ?? undefined }
 }
 
+/** The setting reader caches for 5 s (createCachedOffloadReader): a start sent right after Save waits it out. */
+export const SETTING_CACHE_WAIT_MS = 5_500
+
 export function registerOffloadIpc(ipc: IpcRegistrar, h: OffloadIpcHost): void {
   host = h
-  ipc.handle('offload-audio-dry-run', async () => runDry(true), { refuse: REFUSED_SENDER })
-  ipc.handle('offload-audio-start', async () => runStart(true), { refuse: REFUSED_SENDER })
-  ipc.handle('offload-audio-rehydrate', async () => runRehydrate(true), { refuse: REFUSED_SENDER })
-}
-
-export function menuHubOffload(action: 'dry-run' | 'start' | 'rehydrate'): void {
-  if (action === 'dry-run') void runDry(true)
-  else if (action === 'start') void runStart(true)
-  else void runRehydrate(true)
+  // V7: Settings › Storage is the one place (the File menu's three items are
+  // gone). Settings asks Jake first with its own confirm, so these show no
+  // dialogs of their own. Every refusal rule is runStart's and the convert
+  // pass's, unchanged (hubOffloadActive here; dropAudioRefusal per file).
+  // "Check first": the dry run, counts only (its report file is written as before).
+  ipc.handle('offload-audio-dry-run', async () => runDry(false), { refuse: REFUSED_SENDER })
+  // Turning the switch on: count first, then a native confirm naming the
+  // count. Only a yes lets Settings turn the switch on; Save then starts.
+  ipc.handle('offload-audio-confirm', async () => {
+    const dry = await runDry(false)
+    if (!dry.ok || !dry.counts) return { ok: false, reason: 'count-failed' as const }
+    if (dry.counts.ready === 0) return { ok: false, reason: 'nothing-ready' as const, counts: dry.counts }
+    return { ok: await confirmStart(startConfirmMessage(dry.counts), true), counts: dry.counts }
+  }, { refuse: REFUSED_SENDER })
+  // Start after Save: runStart, with every one of its refusals (a replica,
+  // the switch off). The convert pass's per-file refusal (dropAudioRefusal) is unchanged.
+  ipc.handle('offload-audio-start', async (_e, opts?: { settingJustSaved?: boolean }) => {
+    if (opts?.settingJustSaved) await new Promise((resolve) => setTimeout(resolve, SETTING_CACHE_WAIT_MS))
+    return runStart(false)
+  }, { refuse: REFUSED_SENDER })
+  ipc.handle('offload-audio-rehydrate', async () => runRehydrate(false), { refuse: REFUSED_SENDER })
 }
 
 /** Called once after the library path is resolved. Does not scan unless a start is on record or argv asks. */

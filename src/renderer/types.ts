@@ -981,28 +981,15 @@ declare global {
       artworkBackfillStatus: () => Promise<{ ok: boolean; done: boolean }>
       backfillEmbeddedArtwork: (tracks: Array<{ path: string; artist: string; album: string }>) => Promise<{ ok: boolean; artwork?: Array<{ key: string; hash: string }>; error?: string }>
       onArtworkBackfillProgress: (callback: (progress: { processed: number; total: number }) => void) => () => void
-      // Brief 020: tag write-back batch + progress subscription. Per-edit
-      // write-back fires automatically in save-metadata-override; only
-      // the batch + progress need a renderer-side surface.
-      applyOverridesBatch: () => Promise<{
-        ok: boolean
-        total?: number
-        succeeded?: number
-        failed?: number
-        skippedNoTrack?: number
-        skippedFpMismatch?: number
-        skippedNoWritable?: number
-        fileSizesRefreshed?: number
-        fileSizes?: Array<{ id: number; fileSize: number; audioFingerprint?: string; fileVersion?: string }>
-        waitingForPlayback?: number
-        failures?: Array<{ filePath: string; error?: string }>
-        error?: string
-      }>
       onTagWritebackFileChanged: (callback: (m: { id: number; fileSize: number; audioFingerprint?: string; fileVersion?: string }) => void) => () => void
-      onTagWritebackProgress: (callback: (p: { done: number; total: number; succeeded: number; failed: number; currentPath?: string }) => void) => () => void
-      // Brief 016 commit 2: full-library fileSize refresh + progress.
-      refreshFileSizes: () => Promise<{ ok: boolean; refreshed?: number; measured?: Array<{ id: number; fileSize: number }>; streamed?: number; missing?: number; error?: string }>
-      onRefreshFileSizesProgress: (callback: (p: { scanned: number; refreshed: number; total: number }) => void) => () => void
+      // V7 nightly check (main/self-care.ts).
+      onSelfCareMeasured: (callback: (measured: Array<{ id: number; fileSize: number; audioFingerprint?: string; fileVersion?: string }>) => void) => () => void
+      selfCareStatus: () => Promise<{ lastRunAt: number | null; needsYou: { orphanFiles: number; orphanBytes: number; playCacheHeld: string | null } } | null>
+      // Settings › Storage (V7).
+      offloadCheck: () => Promise<{ ok: boolean; counts?: { ready: number; notYet: number; alreadyMoved: number }; error?: string }>
+      offloadConfirm: () => Promise<{ ok: boolean; reason?: 'count-failed' | 'nothing-ready'; counts?: { ready: number; notYet: number; alreadyMoved: number } }>
+      offloadStart: (opts?: { settingJustSaved?: boolean }) => Promise<{ ok: boolean; error?: string }>
+      offloadBringBack: () => Promise<{ ok: boolean; restored?: number; error?: string }>
       importResolvePaths: (paths: string[]) => Promise<{ ok: boolean; paths?: string[]; error?: string }>
       importPickFiles: () => Promise<{ ok: boolean; paths?: string[]; canceled?: boolean }>
       allowDroppedImportPaths: (files: File[]) => Promise<{ ok: boolean; paths?: string[]; error?: string }>
@@ -1184,14 +1171,14 @@ declare global {
         samples?: Array<{ basename: string; mtimeMs: number; size: number }>
         error?: string
       }>
-      purgeLibraryOrphans: () => Promise<{ ok: boolean; deleted?: number; bytesFreed?: number; error?: string }>
+      purgeLibraryOrphans: () => Promise<{ ok: boolean; deleted?: number; bytesFreed?: number; error?: string; reason?: string }>
       scanDeadTracks: () => Promise<{
         ok: boolean
         count?: number
         tracks?: Array<{ id: number; title: string; artist: string; path: string }>
         error?: string
       }>
-      removeDeadTracks: () => Promise<{ ok: boolean; removed?: number; error?: string }>
+      removeDeadTracks: () => Promise<{ ok: boolean; removed?: number; error?: string; reason?: string }>
       brainStatus?: () => Promise<{ ok: boolean; tracks?: number; subgenred?: number; starred?: number; descriptors?: number; themed?: number; descriptorsMtime?: number; lyrics?: number; embeddingsMtime?: number; embeddingsBytes?: number; syncs?: number; syncEdits?: number; lastSync?: string | null }>
       getIpodDbTracks: () => Promise<{ ok: boolean; tracks: Track[]; playlists: { name: string; trackIds: number[] }[]; total: number; error?: string }>
       onLibraryExternalChange: (callback: () => void) => () => void

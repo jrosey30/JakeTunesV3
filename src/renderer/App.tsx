@@ -30,13 +30,12 @@ import { OPEN_PREFERENCES_EVENT } from './views/DownloadStore/credential-notice-
 import { ingestSyncEvent } from './syncTimeline'
 import ImportConvertModal from './components/ImportConvertModal'
 import ShowDuplicatesModal from './components/ShowDuplicatesModal'
-import PlayCacheModal from './components/PlayCacheModal'
+import NeedsYouSheet from './components/NeedsYouSheet'
 import OrphanCleanupModal from './components/OrphanCleanupModal'
 import SettingsModal, { type SettingsTab } from './components/SettingsModal'
 import ImportQueuePanel from './components/ImportQueuePanel'
 import Breadcrumb from './components/chrome/Breadcrumb'
 import StatusBar from './components/chrome/StatusBar'
-import ConfirmDialog from './components/ConfirmDialog'
 import { FriendShareHost } from './components/FriendShareDialog'
 import BandcampImportToast from './components/BandcampImportToast'
 import { initRecentlyAdded, isRecentlyAdded } from './state/recentlyAdded'
@@ -88,7 +87,6 @@ import { ackVersionAfterSave, hubAdoptAfterMerge, trackIdKey } from '../common/h
 import { phoneOverlayFields } from '../common/genre-vocab'
 import { measuredFileUpdates } from '../common/library-file-sizes'
 import { noteMeasuredVersions } from './audio/audioUrlVersion'
-import { applyOverridesSummary, type ApplyOverridesCounts } from '../common/apply-overrides-summary'
 import { songTitleOnly } from '../common/sync-progress-model'
 import { syncFailureCopy } from '../common/sync-failure-copy'
 import { bumpArtRevisions } from './artRevision'
@@ -188,7 +186,7 @@ function AppInner() {
   const [goAnywhereOpen, setGoAnywhereOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [importConvertOpen, setImportConvertOpen] = useState(false)
-  const [playCacheMode, setPlayCacheMode] = useState<'prepare' | 'prune' | null>(null)
+  const [needsYouOpen, setNeedsYouOpen] = useState(false)
   const [orphanCleanupOpen, setOrphanCleanupOpen] = useState(false)
   const [showDuplicatesOpen, setShowDuplicatesOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -199,18 +197,6 @@ function AppInner() {
     window.addEventListener(OPEN_PREFERENCES_EVENT, onOpen)
     return () => window.removeEventListener(OPEN_PREFERENCES_EVENT, onOpen)
   }, [])
-  // Brief 020: tag write-back batch UI state. Two phases:
-  //   - applyOverridesConfirmOpen → confirm modal
-  //   - applyOverridesProgress != null → in-flight modal (counter + bar)
-  //   - applyOverridesResult != null → result summary modal
-  const [applyOverridesConfirmOpen, setApplyOverridesConfirmOpen] = useState(false)
-  const [applyOverridesProgress, setApplyOverridesProgress] = useState<{ done: number; total: number; succeeded: number; failed: number } | null>(null)
-  const [applyOverridesResult, setApplyOverridesResult] = useState<ApplyOverridesCounts | null>(null)
-  // Brief 016 commit 2: refresh-file-sizes UI state — same three-phase
-  // confirm/progress/result pattern as Brief 020's apply-overrides flow.
-  const [refreshSizesConfirmOpen, setRefreshSizesConfirmOpen] = useState(false)
-  const [refreshSizesProgress, setRefreshSizesProgress] = useState<{ scanned: number; refreshed: number; total: number } | null>(null)
-  const [refreshSizesResult, setRefreshSizesResult] = useState<{ refreshed: number; error?: string } | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   // Bug #1 data-loss guard: shown when NAS reconnects mid-session while
   // we're in local-fallback mode. Saves get refused in main until restart.
@@ -1611,32 +1597,12 @@ function AppInner() {
         case 'toggle-music-man': toggleMusicManRef.current(); break
         case 'toggle-lyrics': toggleLyricsRef.current(); break
         case 'open-import-convert': setImportConvertOpen(true); break
-        case 'prepare-alac-cache':  setPlayCacheMode('prepare'); break
-        case 'prune-alac-cache':    setPlayCacheMode('prune'); break
-        case 'clean-orphan-files':  setOrphanCleanupOpen(true); break
+        case 'show-needs-you':      setNeedsYouOpen(true); break
         case 'show-duplicates':     setShowDuplicatesOpen(true); break
         case 'open-preferences':    setSettingsTab(undefined); setSettingsOpen(true); break
         // Brief 023: 'export-mobile-snapshot' and 'apply-mobile-overrides'
         // removed — vestigial mobile-sync feature that never shipped.
         // Tag write-back (Brief 020) is the path Plex/mobile consume now.
-        case 'apply-overrides-to-files': {
-          // Brief 020 batch backfill — push every writable override
-          // (~1.6k entries at ship time) into the corresponding audio
-          // file's embedded tags so Plex sees the corrected metadata.
-          // Just opens the confirm; the actual run happens after
-          // onConfirm in the ConfirmDialog renders below.
-          setApplyOverridesConfirmOpen(true)
-          break
-        }
-        case 'refresh-file-sizes': {
-          // Brief 016 commit 2 retrofit — walk every track, stat the
-          // on-disk file, update library.json.fileSize when stale.
-          // Eliminates the ~30% fileSize drift Matt's mobile probe v2
-          // flagged. Confirm-then-run pattern, identical shape to the
-          // apply-overrides flow above.
-          setRefreshSizesConfirmOpen(true)
-          break
-        }
       }
     })
     // Main process watches library.json on disk and fires this when
@@ -1914,6 +1880,15 @@ function AppInner() {
       noteMeasuredVersions(libTracksRef.current, [m])   // the next load of it is a new URL (audioUrlVersion.ts)
     })
   }, [dispatch])
+  // The nightly check (main/self-care.ts) measured sizes on disk: applied
+  // here so the library's own save writes them, like any edit.
+  useEffect(() => {
+    return window.electronAPI.onSelfCareMeasured((measured) => {
+      const sizeUpdates = measuredFileUpdates(libTracksRef.current, measured)
+      if (sizeUpdates.length) dispatch({ type: 'UPDATE_TRACKS', updates: sizeUpdates })
+      noteMeasuredVersions(libTracksRef.current, measured)
+    })
+  }, [dispatch])
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault()
@@ -1985,9 +1960,8 @@ function AppInner() {
       )}
       {preservedOrphanBanner != null && preservedOrphanBanner > 0 && (
         <div className="state-save-locked-banner" role="alert">
-          <strong>{preservedOrphanBanner} file{preservedOrphanBanner === 1 ? '' : 's'} removed from library but kept on disk.</strong>
-          {' '}Use File → Library → Clean Orphan Files to reclaim space.
-          <button onClick={() => { setOrphanCleanupOpen(true); setPreservedOrphanBanner(null) }}>Clean Now</button>
+          <strong>{preservedOrphanBanner === 1 ? 'A removed song’s file is still on this Mac.' : `${preservedOrphanBanner} removed songs’ files are still on this Mac.`}</strong>
+          <button onClick={() => { setOrphanCleanupOpen(true); setPreservedOrphanBanner(null) }}>Review</button>
           <button onClick={() => setPreservedOrphanBanner(null)}>Dismiss</button>
         </div>
       )}
@@ -2019,7 +1993,6 @@ function AppInner() {
         {showDownloads && <DownloadsPanel ref={downloadsRef} onClose={() => setShowDownloads(false)} />}
         {showLyrics && <LyricsPanel ref={lyricsRef} onClose={() => setShowLyrics(false)} />}
         {importConvertOpen && <ImportConvertModal onClose={() => setImportConvertOpen(false)} />}
-        {playCacheMode && <PlayCacheModal mode={playCacheMode} onClose={() => setPlayCacheMode(null)} />}
         {orphanCleanupOpen && (
           <OrphanCleanupModal
             onClose={() => setOrphanCleanupOpen(false)}
@@ -2035,6 +2008,7 @@ function AppInner() {
             initial={appSettings}
             initialTab={settingsTab}
             onClose={() => setSettingsOpen(false)}
+            onApplied={(next) => setAppSettings(next)}
             onSaved={(next) => {
               setAppSettings(next)
               setCrossfadeSettings(next.crossfade)
@@ -2051,191 +2025,11 @@ function AppInner() {
             onDelete={(id) => dispatch({ type: 'DELETE_TRACKS', ids: [id] })}
           />
         )}
-        {/* Brief 020: Apply-Overrides-to-Files three-phase modal flow.
-            Confirm → progress → result. Each phase shares the
-            ConfirmDialog styling for visual consistency; progress is
-            a custom inline modal since ConfirmDialog assumes buttoned
-            interaction and the in-flight phase has nothing to click. */}
-        {applyOverridesConfirmOpen && (
-          <ConfirmDialog
-            message="Apply JakeTunes overrides to audio files?"
-            detail="This writes your edited metadata (title, artist, album, genre, year, track/disc numbers) into the audio files' embedded tags. Plex will pick up the corrected values on its next scan. Each file's original tags are backed up to a sidecar (<path>.original-tags.json) before any change — reversible. Analysis fields (BPM, key) and listener stats stay JakeTunes-only and are NOT written."
-            confirmLabel="Apply Overrides"
-            cancelLabel="Cancel"
-            destructive={false}
-            onCancel={() => setApplyOverridesConfirmOpen(false)}
-            onConfirm={() => {
-              setApplyOverridesConfirmOpen(false)
-              setApplyOverridesProgress({ done: 0, total: 0, succeeded: 0, failed: 0 })
-              const unsub = window.electronAPI.onTagWritebackProgress((p) => {
-                setApplyOverridesProgress(p)
-              })
-              void (async () => {
-                try {
-                  const r = await window.electronAPI.applyOverridesBatch()
-                  unsub()
-                  setApplyOverridesProgress(null)
-                  if (r.ok) {
-                    // Tag writes resize files. Main measured them; the
-                    // track list's own save writes the new sizes.
-                    const sizeUpdates = measuredFileUpdates(libTracksRef.current, r.fileSizes ?? [])
-                    if (sizeUpdates.length) dispatch({ type: 'UPDATE_TRACKS', updates: sizeUpdates })
-                    noteMeasuredVersions(libTracksRef.current, r.fileSizes ?? [])
-                    setApplyOverridesResult({
-                      total: r.total ?? 0,
-                      succeeded: r.succeeded ?? 0,
-                      failed: r.failed ?? 0,
-                      waitingForPlayback: r.waitingForPlayback ?? 0,
-                      skippedNoTrack: r.skippedNoTrack ?? 0,
-                      skippedFpMismatch: r.skippedFpMismatch ?? 0,
-                      skippedNoWritable: r.skippedNoWritable ?? 0,
-                      failures: r.failures ?? [],
-                    })
-                  } else {
-                    setApplyOverridesResult({
-                      total: 0, succeeded: 0, failed: 0, waitingForPlayback: 0,
-                      skippedNoTrack: 0, skippedFpMismatch: 0, skippedNoWritable: 0,
-                      failures: [{ filePath: '(batch error)', error: r.error }],
-                    })
-                  }
-                } catch (err) {
-                  unsub()
-                  setApplyOverridesProgress(null)
-                  setApplyOverridesResult({
-                    total: 0, succeeded: 0, failed: 0, waitingForPlayback: 0,
-                    skippedNoTrack: 0, skippedFpMismatch: 0, skippedNoWritable: 0,
-                    failures: [{ filePath: '(client error)', error: err instanceof Error ? err.message : String(err) }],
-                  })
-                }
-              })()
-            }}
-          />
-        )}
-        {applyOverridesProgress && (
-          <div className="confirm-overlay">
-            <div className="confirm-dialog">
-              <div className="confirm-message">Applying overrides to files…</div>
-              <div className="confirm-detail">
-                {applyOverridesProgress.total === 0
-                  ? 'Preparing…'
-                  : `${applyOverridesProgress.done.toLocaleString()} of ${applyOverridesProgress.total.toLocaleString()} files (${applyOverridesProgress.succeeded.toLocaleString()} written, ${applyOverridesProgress.failed.toLocaleString()} failed)`}
-              </div>
-              <div style={{
-                marginTop: 12,
-                height: 6,
-                background: '#2a2a2a',
-                borderRadius: 3,
-                overflow: 'hidden',
-              }}>
-                <div style={{
-                  height: '100%',
-                  width: `${applyOverridesProgress.total > 0 ? (applyOverridesProgress.done / applyOverridesProgress.total) * 100 : 0}%`,
-                  background: '#F9864C',
-                  transition: 'width var(--motion-normal) var(--motion-ease)',
-                }} />
-              </div>
-            </div>
-          </div>
-        )}
-        {applyOverridesResult && (
-          <ConfirmDialog
-            message={applyOverridesSummary(applyOverridesResult).message}
-            detail={applyOverridesSummary(applyOverridesResult).detail}
-            confirmLabel="Done"
-            hideCancel
-            destructive={false}
-            onCancel={() => setApplyOverridesResult(null)}
-            onConfirm={() => setApplyOverridesResult(null)}
-          />
-        )}
-        {/* Brief 016 commit 2: three-phase Refresh File Sizes flow.
-            Same shape as the Brief 020 Apply-Overrides flow above —
-            ConfirmDialog → inline progress modal → ConfirmDialog
-            result summary. Reuses the .confirm-overlay / .confirm-
-            dialog CSS classes plus the brand-orange progress bar. */}
-        {refreshSizesConfirmOpen && (
-          <ConfirmDialog
-            message="Refresh library.json file sizes from disk?"
-            detail="Walks every track in your library, stats the actual audio file, and updates library.json's cached fileSize when it differs. Audio files themselves are NOT modified. Fixes a known ~30% fileSize drift that prevents mobile (Plex via JakeTunes Mobile) from validating tracks correctly."
-            confirmLabel="Refresh Sizes"
-            cancelLabel="Cancel"
-            destructive={false}
-            onCancel={() => setRefreshSizesConfirmOpen(false)}
-            onConfirm={() => {
-              setRefreshSizesConfirmOpen(false)
-              setRefreshSizesProgress({ scanned: 0, refreshed: 0, total: 0 })
-              const unsub = window.electronAPI.onRefreshFileSizesProgress((p) => {
-                setRefreshSizesProgress(p)
-              })
-              void (async () => {
-                try {
-                  const r = await window.electronAPI.refreshFileSizes()
-                  unsub()
-                  setRefreshSizesProgress(null)
-                  if (r.ok) {
-                    // Applied here so save-library writes them. Main used
-                    // to write library.json itself, and the next save put
-                    // the old sizes back.
-                    const sizeUpdates = measuredFileUpdates(libTracksRef.current, r.measured ?? [])
-                    if (sizeUpdates.length) dispatch({ type: 'UPDATE_TRACKS', updates: sizeUpdates })
-                    setRefreshSizesResult({ refreshed: sizeUpdates.length })
-                  } else {
-                    setRefreshSizesResult({ refreshed: 0, error: r.error })
-                  }
-                } catch (err) {
-                  unsub()
-                  setRefreshSizesProgress(null)
-                  setRefreshSizesResult({ refreshed: 0, error: err instanceof Error ? err.message : String(err) })
-                }
-              })()
-            }}
-          />
-        )}
-        {refreshSizesProgress && (
-          <div className="confirm-overlay">
-            <div className="confirm-dialog">
-              <div className="confirm-message">Refreshing file sizes…</div>
-              <div className="confirm-detail">
-                {refreshSizesProgress.total === 0
-                  ? 'Preparing…'
-                  : `Scanned ${refreshSizesProgress.scanned.toLocaleString()} of ${refreshSizesProgress.total.toLocaleString()} (${refreshSizesProgress.refreshed.toLocaleString()} refreshed so far)`}
-              </div>
-              <div style={{
-                marginTop: 12,
-                height: 6,
-                background: '#2a2a2a',
-                borderRadius: 3,
-                overflow: 'hidden',
-              }}>
-                <div style={{
-                  height: '100%',
-                  width: `${refreshSizesProgress.total > 0 ? (refreshSizesProgress.scanned / refreshSizesProgress.total) * 100 : 0}%`,
-                  background: '#F9864C',
-                  transition: 'width var(--motion-normal) var(--motion-ease)',
-                }} />
-              </div>
-            </div>
-          </div>
-        )}
-        {refreshSizesResult && (
-          <ConfirmDialog
-            message={
-              refreshSizesResult.error
-                ? 'Refresh failed.'
-                : `Refreshed fileSize on ${refreshSizesResult.refreshed.toLocaleString()} tracks.`
-            }
-            detail={
-              refreshSizesResult.error
-                ? refreshSizesResult.error
-                : (refreshSizesResult.refreshed === 0
-                    ? 'No drift found. library.json fileSize already matched disk for every track.'
-                    : 'library.json has been updated. The next sync will propagate the corrected sizes to Mini.')
-            }
-            confirmLabel="Done"
-            hideCancel
-            destructive={false}
-            onCancel={() => setRefreshSizesResult(null)}
-            onConfirm={() => setRefreshSizesResult(null)}
+        {needsYouOpen && (
+          <NeedsYouSheet
+            onClose={() => setNeedsYouOpen(false)}
+            onShowDuplicates={() => { setNeedsYouOpen(false); setShowDuplicatesOpen(true) }}
+            onShowOrphans={() => { setNeedsYouOpen(false); setOrphanCleanupOpen(true) }}
           />
         )}
       </div>

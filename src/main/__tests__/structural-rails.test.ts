@@ -140,6 +140,7 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: 'startTasteStatePull', file: 'main/index.ts', minCalls: 1, why: 'learned taste — unwired, the strip never sees what the nightly taste engine learned' },
     { fn: 'initArtistDiscography', file: 'main/index.ts', minCalls: 1, why: 'release gate (2026-10-20) — unwired, every artist page throws instead of listing releases' },
     { fn: 'gateReleaseGroups', file: 'main/artist-discography.ts', minCalls: 1, why: 'release gate — unwired, bootlegs, namesakes and unavailable releases reach the artist page again' },
+    { fn: 'startSelfCare', file: 'main/index.ts', minCalls: 1, why: 'V7 — unwired, the nightly check never runs and the library stops looking after itself (File › Library lost its tools for it)' },
     { fn: 'initFlightRecorder', file: 'main/index.ts', minCalls: 1, why: 'reliability P0 — without the recorder the app goes back to being blind to its own failures' },
     { fn: 'decideSyncMode', file: 'main/sync-orchestrator.ts', minCalls: 1, why: 'WAN full-sync doctrine — unwired, every remote safety-net run burns the 10-min kill-timer again' },
     { fn: 'onNasRecovery', file: 'main/sync-orchestrator.ts', minCalls: 1, why: 'recovery kick — unwired, good windows on a flapping link go back to being harvested by luck' },

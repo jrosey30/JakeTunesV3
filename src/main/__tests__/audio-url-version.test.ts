@@ -105,10 +105,10 @@ describe('the renderer side is wired', () => {
     assert.match(useAudio, /import \{ withFileVersion \} from '\.\.\/audio\/audioUrlVersion'/)
   })
 
-  test('both tag-write results reach the map', () => {
+  test('both tag-write results reach the map (per edit, and the nightly check)', () => {
     const app = readFileSync(join(SRC, 'renderer/App.tsx'), 'utf8')
     assert.match(app, /if \(updates\.length\) dispatch\(\{ type: 'UPDATE_TRACKS', updates \}\)\s*\n\s*noteMeasuredVersions\(libTracksRef\.current, \[m\]\)/)
-    assert.match(app, /noteMeasuredVersions\(libTracksRef\.current, r\.fileSizes \?\? \[\]\)/)
+    assert.match(app, /noteMeasuredVersions\(libTracksRef\.current, measured\)/)
   })
 
   test('the seam scheduler reads the path without the marker (ffprobe gets a file, not "…m4a?v=…")', async () => {

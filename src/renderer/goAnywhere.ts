@@ -53,7 +53,7 @@ export const GO_PAGES: readonly { title: string; view: string; also?: string }[]
 ]
 
 /** The Preferences tabs (components/SettingsModal.tsx TABS). */
-export const GO_SETTINGS: readonly string[] = ['Playback', 'EQ', 'Library', 'Music Sources', 'Sync', 'Audio', 'AI']
+export const GO_SETTINGS: readonly string[] = ['Playback', 'EQ', 'Library', 'Music Sources', 'Backups', 'Storage', 'Audio', 'AI']
 
 export interface GoSources {
   artists: readonly { name: string }[]
