@@ -180,7 +180,7 @@ export default function ShopAlbumPage({ album, marks, onSave, renderAction, onBa
                 <span className="shop-track-dot">{dot ? <span className={`shop-dot shop-dot--${dot}`} title={losslessTitle(dot)} /> : planIsSure(songPlan) ? <span className={`shop-dot shop-dot--${songPlan.hires ? 'hires' : 'lossless'}`} title={planTitle(songPlan)} /> : null}</span>
                 <span className="shop-track-dur">{t.durationSecs ? mmss(t.durationSecs) : ''}</span>
                 <span className="shop-track-act">
-                  {have && !item ? <span className="dl-inlib">In library</span> : job ? <>{songMark && !item ? <span className="shop-mark shop-mark--list">{songMark}</span> : null}{renderAction(job, item)}</> : null}
+                  {have && !item ? <span className="shop-own">In your library</span> : job ? <>{songMark && !item ? <span className="shop-mark shop-mark--list">{songMark}</span> : null}{renderAction(job, item)}</> : null}
                 </span>
               </li>
             )

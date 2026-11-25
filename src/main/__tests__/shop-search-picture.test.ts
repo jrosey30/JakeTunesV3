@@ -11,41 +11,69 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { libraryMarks, listMarks, ownedAlbumCount, artistLine, albumFactsLine } from '../../common/shop-search.ts'
+import { libraryMarks, listMarks, ownedAlbumCount, ownedRecord, artistLine, albumFactsLine } from '../../common/shop-search.ts'
 import { LIST_MARK } from '../../common/shop-names.ts'
 
 const SRC = join(import.meta.dirname, '..', '..')
 const src = (p: string): string => readFileSync(join(SRC, p), 'utf-8')
 
+const pf = (title: string, album: string, trackCount?: number, o: Record<string, unknown> = {}) => ({ title, artist: 'Pink Floyd', album, ...(trackCount ? { trackCount } : {}), ...o })
 const lib = libraryMarks([
-  { title: 'Time', artist: 'Pink Floyd', album: 'The Dark Side of the Moon' },
-  { title: 'Money', artist: 'Pink Floyd', album: 'The Dark Side of the Moon' },
-  { title: 'Wish You Were Here', artist: 'Pink Floyd', album: 'Wish You Were Here' },
-  { title: 'Have a Cigar', artist: 'Pink Floyd', album: 'Wish You Were Here (2011 Remaster)' },
-  { title: 'Dogs', artist: 'Pink Floyd', album: 'Animals' },
-  { title: 'Comfortably Numb', artist: 'Various', albumArtist: 'Pink Floyd', album: 'The Wall' },
+  // Dark Side, whole (10 of 10).
+  ...['Speak to Me', 'Breathe', 'On the Run', 'Time', 'The Great Gig in the Sky', 'Money', 'Us and Them', 'Any Colour You Like', 'Brain Damage', 'Eclipse'].map((t) => pf(t, 'The Dark Side of the Moon', 10)),
+  // Wish You Were Here, whole across two editions of it (5 of 5): one record.
+  ...['Shine On You Crazy Diamond (Parts I-V)', 'Welcome to the Machine', 'Have a Cigar'].map((t) => pf(t, 'Wish You Were Here', 5)),
+  ...['Wish You Were Here', 'Shine On You Crazy Diamond (Parts VI-IX)'].map((t) => pf(t, 'Wish You Were Here (2011 Remaster)', 5)),
+  // The Wall by album artist, whole (tags say 2 on this test copy).
+  { title: 'Comfortably Numb', artist: 'Various', albumArtist: 'Pink Floyd', album: 'The Wall', trackCount: 2 },
+  { title: 'Hey You', artist: 'Pink Floyd', albumArtist: 'Pink Floyd', album: 'The Wall', trackCount: 2 },
+  // One song from an album is a song, not the album.
+  pf('Dogs', 'Animals', 5),
+  // No size in the tags: one song isn't the album; two or more count.
+  pf('One of These Days', 'Meddle'),
+  // Radiohead: five single songs, each from another album.
+  ...['Creep', 'Karma Police', 'No Surprises', 'Idioteque', 'Reckoner'].map((t, i) => ({ title: t, artist: 'Radiohead', album: ['Pablo Honey', 'OK Computer', 'OK Computer', 'Kid A', 'In Rainbows'][i], trackCount: 12 })),
+  // Elton John on a various-artists record, whole: The Lion King is never his.
+  ...['Circle of Life', 'Can You Feel the Love Tonight'].map((t) => ({ title: t, artist: 'Elton John', albumArtist: 'Various Artists', album: 'The Lion King', trackCount: 2 })),
+  // A compilation flagged in its tags, whole: not an album of his either.
+  { title: 'Your Song', artist: 'Elton John', album: 'Now 1970', trackCount: 1, compilation: true },
   { title: 'Loose Song', artist: 'Syd Barrett' },
-  { title: 'Song', artist: 'X', album: '' },
 ])
 
-describe('how many records you own by an artist', () => {
-  it('each record once, however many editions or songs of it', () => {
-    assert.equal(ownedAlbumCount(lib, 'Pink Floyd'), 4, 'Dark Side, Wish You Were Here (two editions = one), Animals, The Wall by album artist')
-    assert.equal(ownedAlbumCount(lib, 'pink floyd'), 4, 'by the shop’s name key, not the case')
-    assert.equal(ownedAlbumCount(lib, 'Syd Barrett'), 0, 'a song with no album is no record')
-    assert.equal(ownedAlbumCount(lib, 'Nobody'), 0)
+describe('how many records you own by an artist (review of #492)', () => {
+  it('only records you have whole, each once however many editions of it', () => {
+    assert.equal(ownedAlbumCount(lib, 'Pink Floyd'), 3, 'Dark Side, Wish You Were Here (two editions = one), The Wall by album artist; not Animals (1 of 5), not Meddle (1 song, no size)')
+    assert.equal(ownedAlbumCount(lib, 'pink floyd'), 3, 'by the shop’s name key, not the case')
+  })
+  it('single songs are songs, not albums', () => {
+    assert.equal(ownedAlbumCount(lib, 'Radiohead'), 0)
+    assert.equal(artistLine(lib, listMarks([]), 'Radiohead'), '5 songs in your library')
+  })
+  it('a various-artists record or a compilation is never the artist’s album', () => {
+    assert.equal(ownedAlbumCount(lib, 'Elton John'), 0, 'The Lion King (Various Artists) and a flagged compilation')
+    assert.equal(artistLine(lib, listMarks([]), 'Elton John'), '3 songs in your library')
+  })
+  it('the rule, alone', () => {
+    const base = { albumArtist: '', artist: 'A' }
+    assert.equal(ownedRecord({ ...base, have: 10, size: 10 }), true)
+    assert.equal(ownedRecord({ ...base, have: 9, size: 10 }), false)
+    assert.equal(ownedRecord({ ...base, have: 1, size: 0 }), false)
+    assert.equal(ownedRecord({ ...base, have: 2, size: 0 }), true)
+    assert.equal(ownedRecord({ have: 2, size: 2, albumArtist: 'Various Artists', artist: 'Various Artists' }), false)
+    assert.equal(ownedRecord({ have: 2, size: 2, albumArtist: 'Someone Else', artist: 'A' }), false)
+    assert.equal(ownedRecord({ ...base, have: 3, size: 3, compilation: true }), false)
   })
 })
 
 describe('the line under an artist', () => {
   const list = listMarks([{ kind: 'artist', artist: 'Wednesday' }])
   it('"You own N albums" first', () => {
-    assert.equal(artistLine(lib, list, 'Pink Floyd'), 'You own 4 albums')
-    const one = libraryMarks([{ title: 'a', artist: 'Low', album: 'Things We Lost in the Fire' }])
+    assert.equal(artistLine(lib, list, 'Pink Floyd'), 'You own 3 albums')
+    const one = libraryMarks([{ title: 'a', artist: 'Low', album: 'Things We Lost in the Fire', trackCount: 1 }])
     assert.equal(artistLine(one, list, 'Low'), 'You own 1 album')
   })
-  it('songs but no record: in your library; on the list: the list; else nothing', () => {
-    assert.equal(artistLine(lib, list, 'Syd Barrett'), 'In your library')
+  it('songs and no whole record: how many songs; on the list: the list; else nothing', () => {
+    assert.equal(artistLine(lib, list, 'Syd Barrett'), '1 song in your library')
     assert.equal(artistLine(lib, list, 'Wednesday'), LIST_MARK)
     assert.equal(artistLine(lib, list, 'Nobody'), null)
   })
@@ -87,5 +115,22 @@ describe('the Search tab draws the picture', () => {
     assert.match(song, /dl-song-dur/)
     assert.doesNotMatch(song, /dl-song-idx|dl-song-art/)
     assert.match(song, /renderAction\(qres, item\)/)
+  })
+})
+
+describe('the words and styles left behind (review of #492)', () => {
+  it('a song you own says "In your library" on the album page too, never "In library"', () => {
+    const page = src('renderer/views/DownloadStore/ShopAlbumPage.tsx')
+    assert.doesNotMatch(page, />In library</)
+    assert.match(page, /<span className="shop-own">In your library<\/span>/)
+  })
+  it('the facts line can end in an ellipsis (a block, not a flex row), and hi-res keeps its gold ring on the cover', () => {
+    const css = src('renderer/views/DownloadStore/download-store.css')
+    assert.match(css, /\.dl-rel-facts \{ display: block;[^}]*text-overflow: ellipsis;/)
+    assert.match(src('renderer/views/DownloadStore/shop-search.css'), /\.dl-rel-frame \.shop-dot--hires \{ box-shadow: [^}]*rgba\(201, 162, 39/)
+  })
+  it('no rule left for a class nothing draws', () => {
+    const css = src('renderer/views/DownloadStore/download-store.css')
+    for (const gone of ['dl-rel-owned', 'dl-rel-count', 'dl-rel-panel-head', 'dl-track-num', 'dl-song-idx', 'dl-song-art', 'dl-song-year', 'dl-inlib']) assert.doesNotMatch(css, new RegExp(`\\.${gone}\\b`), gone)
   })
 })

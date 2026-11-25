@@ -327,22 +327,40 @@ export interface LibraryMarks {
   /** album|artist (full name and base title) → songs Jake has from it */
   albums: Map<string, number>
   artists: Set<string>
-  /** artist (or album artist) → the records Jake has by them, by plain title (Phase 3: "You own 6 albums"). */
+  /** artist → the records of theirs Jake has whole, by plain title (Phase 3: "You own 6 albums"). */
   artistAlbums: Map<string, Set<string>>
+  /** artist (or album artist) → how many of their songs Jake has ("12 songs in your library"). */
+  artistSongs: Map<string, number>
+}
+
+/** A various-artists record: Apple's and the tags' ways of saying it. */
+const VARIOUS = /^(various( artists)?|va|v\.a\.|compilation|soundtrack|original soundtrack|various performers)$/i
+
+/**
+ * Which of an artist's records count as theirs, owned (review of #492): the
+ * card's own rule, all of its songs (have ≥ the record's size), and never a
+ * compilation. A record whose tags carry no size counts with 2 songs or more:
+ * one song from an album is a song, not the album ("Radiohead: 5" from five
+ * single songs). A record whose album artist is someone else (Various
+ * Artists on The Lion King) is never Elton John's. Pure.
+ */
+export function ownedRecord(o: { have: number; size: number; albumArtist: string; artist: string; compilation?: boolean }): boolean {
+  if (o.compilation) return false
+  const aa = o.albumArtist.trim()
+  if (aa && (VARIOUS.test(aa) || key(aa) !== key(o.artist))) return false
+  return o.size > 0 ? o.have >= o.size : o.have >= 2
 }
 
 /** The library, keyed the way results are marked. ⚠️ TWIN: DownloadView libIndex (same keys). */
-export function libraryMarks(tracks: ReadonlyArray<{ title?: string; artist?: string; album?: string; albumArtist?: string }>): LibraryMarks {
+export function libraryMarks(tracks: ReadonlyArray<{ title?: string; artist?: string; album?: string; albumArtist?: string; trackCount?: number | string; compilation?: boolean }>): LibraryMarks {
   const songs = new Set<string>()
   const albums = new Map<string, number>()
   const artists = new Set<string>()
   const artistAlbums = new Map<string, Set<string>>()
+  const artistSongs = new Map<string, number>()
   const bump = (k: string) => albums.set(k, (albums.get(k) ?? 0) + 1)
-  const record = (artist: string, album: string) => {
-    let set = artistAlbums.get(artist)
-    if (!set) artistAlbums.set(artist, (set = new Set()))
-    set.add(album)
-  }
+  // Each record as the artist's (artist|plain title): songs held, its size, and whether it is someone else's.
+  const records = new Map<string, { artist: string; plain: string; have: number; size: number; albumArtist: string; compilation: boolean }>()
   for (const t of tracks) {
     const a = key(t.artist || '')
     if (a) artists.add(a)
@@ -356,10 +374,27 @@ export function libraryMarks(tracks: ReadonlyArray<{ title?: string; artist?: st
       bump(base)
       if (aa && aa !== a) { bump(`${key(t.album)}|${aa}`); bump(`${baseKey(t.album)}|${aa}`) }
       const plain = baseKey(t.album)
-      if (plain) { if (a) record(a, plain); if (aa && aa !== a) record(aa, plain) }
+      const owner = aa || a
+      if (plain && owner) {
+        const k = `${owner}|${plain}`
+        const r = records.get(k) ?? { artist: t.albumArtist || t.artist || '', plain, have: 0, size: 0, albumArtist: t.albumArtist || '', compilation: false }
+        r.have++
+        const n = Number(t.trackCount)
+        if (Number.isFinite(n) && n > r.size) r.size = n
+        if (t.compilation) r.compilation = true
+        records.set(k, r)
+      }
     }
+    for (const who of new Set([a, aa].filter(Boolean))) artistSongs.set(who, (artistSongs.get(who) ?? 0) + 1)
   }
-  return { songs, albums, artists, artistAlbums }
+  for (const r of records.values()) {
+    if (!ownedRecord({ have: r.have, size: r.size, albumArtist: r.albumArtist, artist: r.artist, compilation: r.compilation })) continue
+    const who = key(r.artist)
+    let set = artistAlbums.get(who)
+    if (!set) artistAlbums.set(who, (set = new Set()))
+    set.add(r.plain)
+  }
+  return { songs, albums, artists, artistAlbums, artistSongs }
 }
 
 export type OwnedAlbum = { state: 'all' | 'some'; have: number } | null
@@ -390,6 +425,8 @@ export const ownedAlbumCount = (m: LibraryMarks, name: string): number => m.arti
 export function artistLine(m: LibraryMarks, list: ListMarks, name: string): string | null {
   const n = ownedAlbumCount(m, name)
   if (n > 0) return `You own ${n} album${n === 1 ? '' : 's'}`
+  const songs = m.artistSongs?.get(key(name)) ?? 0
+  if (songs > 0) return `${songs} song${songs === 1 ? '' : 's'} in your library`
   if (ownsArtist(m, name)) return 'In your library'
   if (listedArtist(list, name)) return LIST_MARK
   return null

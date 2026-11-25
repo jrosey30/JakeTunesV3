@@ -93,7 +93,9 @@
 
 /* The lossless dot on an album's cover: 9px, bottom right. */
 .dl-rel-frame .shop-dot { position: absolute; right: 6px; bottom: 6px; width: 9px; height: 9px; margin: 0; box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.85); }
-.dl-rel-facts { font-size: var(--font-11); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Hi-res keeps its gold ring, outside the white one. */
+.dl-rel-frame .shop-dot--hires { box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.85), 0 0 0 3px rgba(201, 162, 39, 0.45); }
+/* The facts line is one line of text (download-store.css), so a long one ends in an ellipsis. */
 
 /* A song: preview, the song — its artist, the record and year (quiet), length, Save. */
 .dl-song.dl-song--plain { grid-template-columns: 26px minmax(0, 1.6fr) minmax(0, 1fr) 48px 110px; }
