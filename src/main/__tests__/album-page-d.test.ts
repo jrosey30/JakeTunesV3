@@ -13,28 +13,32 @@ const css = readFileSync(join(root, 'styles', 'album-page.css'), 'utf-8')
 const dCss = css.slice(css.indexOf('Direction D'))
 
 describe('album page D — kept behaviours', () => {
-  it('rows still play on double-click, open the song menu, drag to the queue', () => {
-    assert.match(view, /onDoubleClick=\{\(\) => handleDoubleClick\(idx\)\}/)
-    assert.match(view, /onContextMenu=\{\(e\) => handleContextMenu\(e, track, idx\)\}/)
-    assert.match(view, /onDragStart=\{\(e\) => handleRowDragStart\(track, e\)\}/)
-    assert.match(view, /application\/jaketunes-tracks/)
+  // V7 (2026-11-24): the songs are the one song table (components/SongTable.tsx),
+  // inside the page's own scroll. Double-click, the song menu, dragging, the
+  // star, ⌘I and the arrow keys are the table's (song-table.test.ts).
+  const table = readFileSync(join(root, 'components', 'SongTable.tsx'), 'utf-8')
+  it('the songs are the one song table, in the page\'s own scroll', () => {
+    assert.match(view, /<SongTable\b/)
+    assert.match(view, /scroll="page"/)
+    assert.match(table, /onDoubleClick=\{\(\) => p\.onDoubleClick\(idx\)\}/)
+    assert.match(table, /onContextMenu=\{\(e\) => p\.onContextMenu\(e, idx\)\}/)
+    assert.match(table, /application\/jaketunes-tracks|TRACK_DRAG_TYPE/)
   })
-  it('the Star column toggles the same rating write as the Songs list', () => {
-    assert.match(view, /handleRatingChange\(track\.id, starred \? 0 : 5\)/)
+  it('the star after the name is the same star write as every list', () => {
+    assert.match(table, /<TitleStar track=\{track\}/)
   })
-  it('missing-audio badge, now-playing speaker and Cmd+I survive', () => {
-    assert.match(view, /songs-cell-missing-badge/)
-    assert.match(view, /isPlaying \? <SpeakerPlayingIcon \/>/)
-    assert.match(view, /'jaketunes-get-info'/)
+  it('missing-audio badge, now-playing speaker in the # column and Cmd+I survive', () => {
+    assert.match(table, /songs-cell-missing-badge/)
+    assert.match(view, /playing \? <SpeakerPlayingIcon \/> : \(track\.trackNumber \|\| idx \+ 1\)/)
+    assert.match(table, /'jaketunes-get-info'/)
   })
-  it('keyboard: ↑/↓ move the selection, Return plays, without nudging the volume', () => {
-    assert.match(view, /e\.key === 'ArrowDown' \|\| e\.key === 'ArrowUp'/)
-    assert.match(view, /e\.stopPropagation\(\)/)
-    assert.match(view, /window\.addEventListener\('keydown', onKey, true\)/)
+  it('keyboard: ↑/↓ move the selection, Return plays (the shared list keys)', () => {
+    assert.match(table, /useTrackListKeys\(\{/)
+    assert.doesNotMatch(view, /window\.addEventListener\('keydown', onKey, true\)/, 'no second copy of the keys')
   })
-  it('the Artist column appears only on multi-artist albums', () => {
+  it('the Artist column appears only on multi-artist albums; Album never', () => {
     assert.match(view, /const multiArtist = new Set\(tracks\.map/)
-    assert.match(view, /\{multiArtist && <div className="apd-th" role="columnheader">Artist<\/div>\}/)
+    assert.match(view, /omitColumns=\{multiArtist \? \['album'\] : \['album', 'artist'\]\}/)
   })
   it("the page shows no Music Man's take: he gives one when asked (2026-11-13)", () => {
     assert.doesNotMatch(view, /getAlbumTake|Music Man’s take|Music Man's take\b.*<h4|apd-take-text/)

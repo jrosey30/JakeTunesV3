@@ -4,6 +4,7 @@ import { lastPlayedEverywhere, playsEverywhere } from '../../common/plays-elsewh
 import { formatAppDateTime } from '../utils/formatDate'
 import { usePlaysElsewhere } from '../playsElsewhere'
 import '../styles/getinfo.css'
+import { formatDuration } from '../../common/format-duration'
 
 interface GetInfoModalProps {
   tracks: Track[]
@@ -34,13 +35,8 @@ const PAIRED_FIELDS = [
   { label: 'Disc', numKey: 'discNumber', ofKey: 'discCount' },
 ]
 
-function formatDuration(ms: number): string {
-  if (!ms || ms <= 0) return '\u2014'
-  const totalSecs = Math.floor(ms / 1000)
-  const mins = Math.floor(totalSecs / 60)
-  const secs = totalSecs % 60
-  return `${mins}:${secs.toString().padStart(2, '0')}`
-}
+/** Get Info shows a dash for no length (the lists leave the cell empty). */
+const lengthOrDash = (ms: number): string => formatDuration(ms) || '\u2014'
 
 export default function GetInfoModal({
   tracks,
@@ -376,7 +372,7 @@ export default function GetInfoModal({
                 <div className="getinfo-file-row">
                   <span className="getinfo-file-label">Duration</span>
                   <span className="getinfo-file-value">
-                    {formatDuration(currentTrack.duration)}
+                    {lengthOrDash(currentTrack.duration)}
                   </span>
                 </div>
                 <div className="getinfo-file-row">

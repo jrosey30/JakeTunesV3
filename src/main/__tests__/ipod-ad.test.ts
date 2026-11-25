@@ -588,7 +588,9 @@ describe('the page is wired', () => {
   it('the ad is the top of the list\'s own scroller, in list view, and Headline… sits beside Rename…', () => {
     const view = read('../../renderer/views/SmartPlaylistView.tsx')
     assert.match(view, /const showAd = adPage && viewMode === 'list'/)
-    assert.match(view, /\{showAd && adEl\}\s*\{showAd \? <div className="songs-pin">\{headerEl\}\{panelsEl\}\{columnsEl\}<\/div> : columnsEl\}/)
+    // V7: the list is the one song table — the ad above it, the bar pinned with its header.
+    assert.match(view, /above=\{showAd \? adEl : undefined\}\s*pinned=\{showAd \? <>\{headerEl\}\{panelsEl\}<\/> : undefined\}/)
+    assert.match(read('../../renderer/components/SongTable.tsx'), /<div className="songs-pin" ref=\{headRef\}>\{pinned\}\{header\}<\/div>/)
     assert.match(view, /Headline…\s*<\/button>\s*\)\}\s*<button className="top25-window-btn" onClick=\{\(\) => setRenaming\(true\)\}/)
     assert.match(view, /setTop1000Headline\(value\) : await setIpodListHeadline\(ipodList!\.id, value\)/)
     // never a native dialog (V3 CLAUDE.md): the box is the app's own

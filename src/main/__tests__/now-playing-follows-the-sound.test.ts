@@ -163,12 +163,17 @@ describe('useAudio: every song the engine starts is announced (source lock)', ()
 describe('edits elsewhere never move what is sounding out from under the screen', () => {
   test('removing from a playlist, and its Undo, never touch the play queue', () => {
     const pv = read('renderer/views/PlaylistView.tsx')
-    const rm = pv.slice(pv.indexOf('const removeFromPlaylist = useCallback'), pv.indexOf('const removeSelected = useCallback'))
+    // V7: the removal hands the song table its Undo (components/SongTable.tsx shows it).
+    const rm = pv.slice(pv.indexOf('const removeFromPlaylist = useCallback'), pv.indexOf('const reorder = useCallback'))
     assert.ok(rm.includes('REMOVE_TRACKS_FROM_PLAYLIST'))
     assert.doesNotMatch(rm, /pbDispatch|playTrack|QUEUE/)
-    const undo = pv.slice(pv.indexOf('<UndoToast'), pv.indexOf('onDismiss={() => setUndoState(null)}'))
+    const undo = rm.slice(rm.indexOf('undo:'))
     assert.ok(undo.includes('RESTORE_TRACKS_TO_PLAYLIST'))
     assert.doesNotMatch(undo, /pbDispatch|playTrack|QUEUE/)
+    const table = read('renderer/components/SongTable.tsx')
+    const toast = table.slice(table.indexOf('<UndoToast'), table.indexOf('onDismiss={() => setUndo(null)}'))
+    assert.match(toast, /onUndo=\{undo\.undo\}/)
+    assert.doesNotMatch(toast, /pbDispatch|playTrack|QUEUE/)
   })
 
   test('the queue panel can only remove songs AFTER the playing one', () => {

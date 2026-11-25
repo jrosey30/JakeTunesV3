@@ -9,6 +9,7 @@ import { createPortal } from 'react-dom'
 import { useAudio } from '../../hooks/useAudio'
 import { useHomeItemMenusHost } from '../HomeItemMenus'
 import { mergedTrackIndex } from '../../liveSets'
+import { shuffle } from '../../../common/shuffle'
 
 export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () => void }) {
   const { state } = usePlayback()
@@ -199,7 +200,7 @@ export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () =>
           disabled={libState.tracks.length === 0}
           onClick={() => {
             const count = Math.min(25, libState.tracks.length)
-            const shuffled = [...libState.tracks].sort(() => Math.random() - 0.5)
+            const shuffled = shuffle(libState.tracks)
             const picked = shuffled.slice(0, count)
             const playlist = {
               id: `pl-${Date.now()}`,

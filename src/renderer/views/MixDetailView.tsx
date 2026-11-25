@@ -33,13 +33,9 @@ import '../styles/album-page.css'
 import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
 import { addToIpodPlaylistEntries } from '../ipodPlaylistAdd'
 import { setTrackDragPayload } from '../utils/trackDrag'
+import { formatDuration } from '../../common/format-duration'
 
 const GRID = '44px minmax(0, 1.8fr) minmax(0, 1.2fr) 70px'
-const fmtDur = (ms?: number): string => {
-  if (!ms || ms <= 0) return ''
-  const totalSecs = Math.floor(ms / 1000)
-  return `${Math.floor(totalSecs / 60)}:${(totalSecs % 60).toString().padStart(2, '0')}`
-}
 
 export default function MixDetailView() {
   const { state: lib, dispatch } = useLibrary()
@@ -323,7 +319,7 @@ export default function MixDetailView() {
                 <div className="songs-cell songs-cell--icon">{isPlaying ? <SpeakerPlayingIcon /> : <span className="album-page-tracknum">{idx + 1}</span>}</div>
                 <div className="songs-cell songs-cell--title"><span className="title-row-text">{track.title || ''}</span></div>
                 <div className="songs-cell">{track.artist || ''}</div>
-                <div className="songs-cell songs-cell--time">{fmtDur(track.duration)}</div>
+                <div className="songs-cell songs-cell--time">{formatDuration(track.duration)}</div>
               </div>
             )
           })}

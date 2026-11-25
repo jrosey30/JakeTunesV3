@@ -14,6 +14,7 @@ import type { Track } from '../types'
 import '../styles/albums.css'
 import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
 import { addToIpodPlaylistEntries } from '../ipodPlaylistAdd'
+import { shuffle } from '../../common/shuffle'
 
 /// V5 facelift: Grid mode for the flat-table views (Songs / Playlist /
 /// Smart Playlist) — the iTunes-10 album-tile wall. This is a shared
@@ -66,7 +67,7 @@ export default function TrackGridView({ tracks, emptyNoun }: TrackGridViewProps)
     const ordered = album.tracks
     return [
       { label: `Play "${album.name}"`, onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true) } },
-      { label: 'Shuffle', onClick: () => { const s = [...ordered].sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
+      { label: 'Shuffle', onClick: () => { const s = shuffle(ordered); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
       { separator: true as const },
       ...queueMenuEntries(ordered, pbDispatch),
       addToPlaylistEntry(ordered, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),

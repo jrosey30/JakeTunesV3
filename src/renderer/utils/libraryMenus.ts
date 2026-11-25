@@ -9,12 +9,10 @@
  * copied) so the Home's shelves, launch page G and Today's pick get the very
  * same entries — and so the next change to either menu reaches every surface.
  *
- *   songMenuEntries   — SongsView's row menu (Play, Play Next / Add to Up
- *                       Next, Add to Playlist, iPod Pool, Go to Artist/Album,
- *                       Artist Radio, Star, Get Info, artwork, Download,
- *                       Cynthia!!, Delete). The host supplies what is
- *                       view-local: what "Play" plays, and the Get Info /
- *                       Delete / Cynthia surfaces it owns.
+ *   songMenuEntries   — every song list's row menu (components/SongTable.tsx)
+ *                       and the Home's song cards, in one order (V7). The
+ *                       host supplies what is its own: Get Info, Delete,
+ *                       its extra entries, and (cards only) what Play plays.
  *   albumMenuEntries  — AlbumsView's tile menu (Play front to back, Shuffle,
  *                       Live Concert Mode, queue, playlists, iPod Pool,
  *                       Island Albums, Go to Artist).
@@ -31,7 +29,7 @@ import type { Album } from './albumGroups'
 import { setNotice } from '../activity'
 import { getDeckState, layOnDeck } from '../mixtapes'
 import { ratingMenuEntries } from '../components/StarRating'
-import { isStreamingLibrary, isDownloaded, isDownloading, downloadPaths, removeDownloadPaths } from './downloadStore'
+import { downloadMenuEntries } from './downloadStore'
 import { canonicalArtist } from './artistAlias'
 import { albumKeyOf, albumKeyFromStrings } from './albumKey'
 import { toCynthiaTrack } from './cynthia'
@@ -44,6 +42,8 @@ import { verifyLiveSetCompleteness } from './liveSetCompleteness'
 import { islandMenuEntry } from '../components/IslandAlbumsShelf'
 import { getSyncedPicksSnapshot } from '../syncedPicks'
 import { openFriendShare } from '../components/FriendShareDialog'
+import { assembleSongMenu } from './songTableRules'
+import { shuffle } from '../../common/shuffle'
 
 type LibraryDispatch = ReturnType<typeof useLibrary>['dispatch']
 type PlaybackDispatch = ReturnType<typeof usePlayback>['dispatch']
@@ -54,10 +54,12 @@ export interface SongMenuOptions {
   /** The row that was right-clicked. */
   track: Track
   /** The songs the menu acts on — the multi-selection when the row is in
-   *  it (Songs view), else just [track]. */
+   *  it, else just [track]. */
   tracks: Track[]
-  /** What "Play" plays: the host's own list from this row. */
-  play: () => void
+  /** What "Play" plays. Only a surface with no double-click to play passes
+   *  it (the Home's cards); the song table's rows play on double-click and
+   *  Return, so its menu starts at Play Next. */
+  play?: () => void
   /** The whole library (Start <artist> Radio collects from it). */
   library: Track[]
   playlists: Playlist[]
@@ -65,13 +67,24 @@ export interface SongMenuOptions {
   pbDispatch: PlaybackDispatch
   /** The host's Get Info sheet / delete confirmation, for `tracks`. */
   openGetInfo: () => void
-  askDelete: () => void
-  /** Cynthia!! opens at the click. */
+  /** "Delete Song" (from the library). Absent = the page doesn't offer it
+   *  (a playlist: Remove from Playlist sits there instead, 4.4.10). */
+  askDelete?: () => void
+  /** The page's own entries (Remove from Playlist, Make a Mixtape…), after
+   *  the shared ones and before Delete. */
+  extras?: MenuEntry[]
+  /** Cynthia opens at the click. */
   openCynthia: OpenCynthia
   at: { x: number; y: number }
 }
 
-/** The song menu (moved verbatim from SongsView's getContextMenuItems). */
+/**
+ * The song menu — every song list's and the Home's (V7: one order everywhere,
+ * utils/songTableRules.ts assembleSongMenu): Play Next, Add to Up Next, Add to
+ * Playlist ▸, Add to iPod Playlist ▸, Go to Album, Go to Artist, Star,
+ * Download, Share…, Get Info; then radio, the tape, artwork, Cynthia; then
+ * the page's own; then Delete Song where the page offers it.
+ */
 export function songMenuEntries(o: SongMenuOptions): MenuEntry[] {
   const { track, tracks: selectedTracks, libDispatch, pbDispatch } = o
   const count = selectedTracks.length
@@ -166,73 +179,57 @@ export function songMenuEntries(o: SongMenuOptions): MenuEntry[] {
       })
     : []
 
-  return [
-    { label: `Play "${label}"`, onClick: o.play },
-    { separator: true as const },
-    ...queueMenuEntries(selectedTracks, pbDispatch),
-    addToPlaylistEntry(selectedTracks, o.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
-    ...addToIpodPlaylistEntries(selectedTracks, selectedTracks),
-    ...(getDeckState() ? [
-      {
-        label: `Add to Tape (${selectedTracks.length} song${selectedTracks.length === 1 ? '' : 's'})`,
-        onClick: () => {
-          void layOnDeck(selectedTracks.map(t => t.id), (id) => selectedTracks.find(t => t.id === id)?.duration || undefined)
-            .then(async (msg) => { const a = await import('../activity'); a.setNotice(msg) })
-        },
-      },
-    ] : []),
-    { separator: true as const },
-    { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },
-    { label: 'Go to Album', onClick: () => libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(track) }) },
-    ...(trackArtist && artistTracks.length > 0 ? [
-      { separator: true as const },
-      {
+  const star = ratingMenuEntries(selectedTracks, libDispatch).find((m) => !m.separator)!
+  const download = (downloadMenuEntries(selectedTracks).find((m) => !m.separator)) as MenuEntry | undefined
+
+  return assembleSongMenu({
+    play: o.play ? { label: `Play "${label}"`, onClick: o.play } : undefined,
+    queue: queueMenuEntries(selectedTracks, pbDispatch),
+    playlist: addToPlaylistEntry(selectedTracks, o.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
+    ipodPlaylist: addToIpodPlaylistEntries(selectedTracks, o.library)[0],
+    goAlbum: { label: 'Go to Album', onClick: () => libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(track) }) },
+    goArtist: { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },
+    star,
+    download,
+    // Friend share (2026-10-29): the message (signature + Spotify + Apple Music) and the iPod card. One song at a time.
+    share: count === 1
+      ? { label: 'Share…', onClick: () => openFriendShare({ kind: 'song', track }) }
+      : { label: 'Share…', disabled: true },
+    getInfo: { label: 'Get Info', onClick: o.openGetInfo },
+    more: [
+      ...(trackArtist && artistTracks.length > 0 ? [{
         label: `Start ${trackArtist} Radio`,
         onClick: () => {
           window.dispatchEvent(new CustomEvent('jaketunes-start-artist-radio', {
             detail: { tracks: artistTracks, label: trackArtist },
           }))
         },
+      }] : []),
+      ...(getDeckState() ? [{
+        label: `Add to Tape (${count} song${count === 1 ? '' : 's'})`,
+        onClick: () => {
+          void layOnDeck(selectedTracks.map(t => t.id), (id) => selectedTracks.find(t => t.id === id)?.duration || undefined)
+            .then(async (msg) => { const a = await import('../activity'); a.setNotice(msg) })
+        },
+      }] : []),
+      ...artworkItems.filter((m) => !m.separator),
+      {
+        label: 'Cynthia',
+        onClick: () => {
+          o.openCynthia({
+            x: o.at.x, y: o.at.y,
+            scope: {
+              type: 'tracks',
+              label: count > 1 ? `${count} songs` : track.title,
+              tracks: selectedTracks.map(toCynthiaTrack),
+            },
+          })
+        },
       },
-    ] : []),
-    ...ratingMenuEntries(selectedTracks, libDispatch),
-    { separator: true as const },
-    { label: 'Get Info', onClick: o.openGetInfo },
-    // Friend share (2026-10-29): the message (signature + Spotify + Apple Music) and the iPod card.
-    ...(count === 1 ? [{ label: 'Share Song…', onClick: () => openFriendShare({ kind: 'song', track }) }] : []),
-    ...artworkItems,
-    ...(isStreamingLibrary() ? (() => {
-      const dlPaths = selectedTracks.map((t) => t.path).filter(Boolean) as string[]
-      if (!dlPaths.length) return [] as MenuEntry[]
-      const anyDownloading = dlPaths.some((p) => isDownloading(p))
-      const allDownloaded = dlPaths.every((p) => isDownloaded(p))
-      const entry: MenuEntry = anyDownloading
-        ? { label: count > 1 ? `Downloading ${count}…` : 'Downloading…', onClick: () => {}, disabled: true }
-        : allDownloaded
-          ? { label: count > 1 ? `Remove ${count} Downloads` : 'Remove Download', onClick: () => { void removeDownloadPaths(dlPaths) } }
-          : { label: count > 1 ? `Download ${count} Songs` : 'Download', onClick: () => { void downloadPaths(dlPaths) } }
-      return [{ separator: true as const }, entry] as MenuEntry[]
-    })() : []),
-    { separator: true as const },
-    {
-      label: 'Cynthia',
-      onClick: () => {
-        o.openCynthia({
-          x: o.at.x, y: o.at.y,
-          scope: {
-            type: 'tracks',
-            label: count > 1 ? `${count} songs` : track.title,
-            tracks: selectedTracks.map(toCynthiaTrack),
-          },
-        })
-      },
-    },
-    { separator: true as const },
-    {
-      label: count > 1 ? `Delete ${count} Songs` : 'Delete Song',
-      onClick: o.askDelete,
-    },
-  ]
+    ],
+    extras: o.extras ?? [],
+    del: o.askDelete ? { label: count > 1 ? `Delete ${count} Songs` : 'Delete Song', onClick: o.askDelete } : undefined,
+  })
 }
 
 export interface AlbumMenuOptions {
@@ -290,7 +287,7 @@ export function albumMenuEntries(o: AlbumMenuOptions): MenuEntry[] {
       ? [{ label: 'Play Album — front to back', onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true, true) } }]
       : []),
     { label: `Play "${album.name}"`, onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true, /* running order is the record */ true) } },
-    { label: 'Shuffle', onClick: () => { const s = [...ordered].sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
+    { label: 'Shuffle', onClick: () => { const s = shuffle(ordered); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
     ...(liveEntries.length ? [{ separator: true as const }, ...liveEntries] : []),
     { separator: true as const },
     ...queueMenuEntries(ordered, pbDispatch),

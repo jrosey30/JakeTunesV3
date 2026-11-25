@@ -68,23 +68,3 @@ export function isTypingTarget(el: { tagName?: string; isContentEditable?: boole
   const tag = (el.tagName || '').toUpperCase()
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!el.isContentEditable
 }
-
-/**
- * Bring row `idx` of a plain (non-virtual) list into view, nearest edge,
- * below a header that sits inside the same scroller. Rows are the
- * `.songs-row` children of `.songs-body`.
- */
-export function scrollListRowIntoView(container: HTMLElement | null, idx: number): void {
-  if (!container || idx < 0) return
-  const rows = container.querySelectorAll<HTMLElement>(':scope > .songs-body > .songs-row')
-  const row = rows[idx]
-  if (!row) return
-  const box = container.getBoundingClientRect()
-  // An iPod's page pins its bar and the column header together (.songs-pin, styles/ipod-ad.css).
-  const header = container.querySelector<HTMLElement>(':scope > .songs-pin, :scope > .songs-header')
-  // Sticky or scrolled away, the header covers whatever is above its bottom edge.
-  const top = header ? Math.max(box.top, header.getBoundingClientRect().bottom) : box.top
-  const r = row.getBoundingClientRect()
-  if (r.top < top) container.scrollTop -= top - r.top
-  else if (r.bottom > box.bottom) container.scrollTop += r.bottom - box.bottom
-}

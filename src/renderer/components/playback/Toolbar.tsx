@@ -18,6 +18,7 @@ import SearchPill from './SearchPill'
 import { setNotice, setBroadcast, streamBroadcast, setBroadcastTimed, setRadio, getBroadcast } from '../../activity'
 import { askSubjectFor, askSubjectHint } from '../../musicManSubject'
 import { useIpodListsSnapshot } from '../../ipodLists'
+import { shuffle } from '../../../common/shuffle'
 
 // 4.5 radioV2 rebuild — when true, Radio Mode routes through the new RadioEngine
 // (src/renderer/radio/); false = the original V1 path. Lets us A/B the two.
@@ -495,7 +496,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     // shipping the whole thing every Radio toggle.
     const PLAN_TRACK_CAP = 600
     const tracksForPlanner = tracks.length > PLAN_TRACK_CAP
-      ? [...tracks].sort(() => Math.random() - 0.5).slice(0, PLAN_TRACK_CAP)
+      ? shuffle(tracks).slice(0, PLAN_TRACK_CAP)
       : tracks
     const planCompactTracks = tracksForPlanner.map(t => ({
       id: t.id, title: t.title, artist: t.artist, album: t.album,
@@ -537,15 +538,15 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
           }
         } else {
           console.warn(`[Radio] planner returned too few resolvable tracks (${planTracks.length}); falling back to shuffle`)
-          shuffled = [...tracks].sort(() => Math.random() - 0.5)
+          shuffled = shuffle(tracks)
         }
       } else {
         console.warn('[Radio] planner failed, falling back to shuffle:', result)
-        shuffled = [...tracks].sort(() => Math.random() - 0.5)
+        shuffled = shuffle(tracks)
       }
     } catch (err) {
       console.warn('[Radio] planner threw, falling back to shuffle:', err)
-      shuffled = [...tracks].sort(() => Math.random() - 0.5)
+      shuffled = shuffle(tracks)
     }
 
     // Superseded while planning (a second press, or DJ Mode started).
@@ -658,7 +659,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       // Mutually exclusive with DJ Mode — stop a DJ set (even one still
       // loading, which the manual-play cancel never saw) first.
       stopDjModeIfActiveRef.current()
-      const shuffled = [...tracks].sort(() => Math.random() - 0.5)
+      const shuffled = shuffle(tracks)
       // djTransition=true, for the toggle's 4.2.15 reason: with Radio
       // already on, a "manual" play dispatches musicman-dj-cancel, which
       // zeroes the module flag while radioMode stays true — the sync

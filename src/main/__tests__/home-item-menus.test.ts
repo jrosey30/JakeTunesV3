@@ -18,7 +18,8 @@ const R = join(import.meta.dirname, '..', '..', 'renderer')
 const src = (...p: string[]): string => readFileSync(join(R, ...p), 'utf8')
 
 const menus = src('utils', 'libraryMenus.ts')
-const songs = src('views', 'SongsView.tsx')
+// V7: every song list's menu, Get Info and delete prompt live in the one song table.
+const songs = src('components', 'SongTable.tsx')
 const albums = src('views', 'AlbumsView.tsx')
 const host = src('components', 'HomeItemMenus.tsx')
 const home = src('views', 'HomeView.tsx')
@@ -31,13 +32,13 @@ describe('one song menu, one album menu', () => {
     assert.match(menus, /export function songMenuEntries\(/)
     assert.match(menus, /export function albumMenuEntries\(/)
   })
-  it('the Songs view and the Albums view build theirs with it — no inline copy left behind', () => {
+  it('the song table and the Albums view build theirs with it — no inline copy left behind', () => {
     assert.match(songs, /songMenuEntries\(\{/)
     assert.doesNotMatch(songs, /'Fetch Artwork from Internet'|label: count > 1 \? `Delete \$\{count\} Songs`/)
     assert.match(albums, /albumMenuEntries\(\{/)
     assert.doesNotMatch(albums, /'Declare Live Concert Mode'/)
   })
-  it('the Home opens the same two, with the Songs view\'s Get Info and delete confirmation', () => {
+  it('the Home opens the same two, with the song table\'s Get Info and delete confirmation', () => {
     assert.match(host, /songMenuEntries\(\{/)
     assert.match(host, /albumMenuEntries\(\{/)
     assert.match(host, /<GetInfoModal/)
