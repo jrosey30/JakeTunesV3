@@ -109,3 +109,71 @@ model behavior. Suggest annotating score_log from the apply night forward
 Harness scoring code is not a queue item and not auto-lane; the nightly job
 only applies brain-file changes that pass the dual-run gate. This needs
 Jake's sign-off.
+
+## 2026-11-25 — SECOND failure class captured IN FULL (grd-005, v1): double-emission + self-correction
+
+Tonight grd-005 flaked again (v1 printed grounding 0.900; true ≈ 1.000) — the
+FIRST flake since the 11-23 raw_excerpt fix, so the raw reply was persisted.
+The 400-char excerpt showed clean fenced JSON, which looked like a fence bug —
+but `parse_json_obj` already strips fences and has a `{.*}` fallback, so the
+read-only ×3/×4 forensic (standing recipe, rebuilt context, claude-haiku-4-5,
+max_tokens=500) was run. 2 of 7 live calls failed; one FULL failing raw is
+preserved below the analysis (also at /tmp/grd005-fail-raw-20261125.txt on
+homemini, 1407 chars).
+
+**Anatomy of the failure (new class, not the 10-22 inner-quotes class):**
+1. The model emits a COMPLETE, VALID fenced JSON object — 5 cited tracks,
+   all real and in-context (would score 1.0).
+2. It then appends `Wait—I need to correct myself. Let me be precise:` and
+   starts a SECOND fenced JSON object.
+3. The second object hits the max_tokens=500 cap mid-`answer` string.
+4. Parser path: fence-strip OK → `json.loads` → `Extra data: char 743`
+   (trailing prose after a valid object) → greedy `\{.*\}` fallback matches
+   from obj1's first `{` to the LAST `}` in the TRUNCATED obj2 → invalid →
+   score 0.
+
+**This refines the fix recommendation:** option (a) stands, but the cleanest
+primary mechanism is `json.JSONDecoder().raw_decode(t)` after fence-strip —
+it parses the FIRST valid object and ignores all trailing data, which solves
+tonight's class exactly and costs one line. The 10-22 inner-quotes class
+still needs (a)'s bounded `"tracks"\s*:\s*\[...\]` regex as the second
+fallback (raw_decode can't fix invalid escaping). So: fence-strip →
+raw_decode → bounded tracks-array regex, raw_excerpt persisted on every
+fallback. Every cited track still passes the exists + predicate check, so
+the tolerant path can never hide a fabrication.
+
+Flake tally: 7 nights (10-14, 10-18, 10-22, 10-24, 11-22, 11-23, 11-25),
+four probes, both rulers. Two distinct mechanical classes now proven with
+raws: (1) unescaped inner double quotes (10-22), (2) double-emission +
+truncated self-correction (11-25). Both are transport/formatting, zero
+fabrication. Still Jake's call — not applied by the nightly job.
+
+### The full 11-25 failing raw (verbatim)
+
+```
+```json
+{
+  "tracks": [
+    {"title": "Come as You Are", "artist": "Nirvana"},
+    {"title": "Smells Like Teen Spirit", "artist": "Nirvana"},
+    {"title": "Heart-Shaped Box", "artist": "Nirvana"},
+    {"title": "All Apologies", "artist": "Nirvana"},
+    {"title": "Dumb", "artist": "Nirvana"}
+  ],
+  "answer": "You've got some essential Nirvana in your collection. 'Come as You Are', 'Heart-Shaped Box', 'All Apologies', and 'Dumb' are all killer tracks. You've also got deeper cuts like 'In Bloom', 'Serve The Servants', 'Sliver', and 'Dive'. Plus the MTV Unplugged full set and 'Jesus Doesn't Want Me For A Sunbeam (Live)' — solid acoustic material. That's 14 tracks of pure Seattle grunge gold spanning their early material through In Utero."
+}
+```
+
+Wait—I need to correct myself. Let me be precise:
+
+```json
+{
+  "tracks": [
+    {"title": "Come as You Are", "artist": "Nirvana"},
+    {"title": "Heart-Shaped Box", "artist": "Nirvana"},
+    {"title": "All Apologies", "artist": "Nirvana"},
+    {"title": "Dumb", "artist": "Nirvana"},
+    {"title": "In Bloom", "artist": "Nirvana"}
+  ],
+  "answer": "You've got 14 Nirvana tracks total. Essential ones include 'Come as You Are', 'Heart-Shaped Box', 'All Apologies', and 'Dumb'. You've also got deeper cuts like 'Sliver', 'Dive', 'Serve The Servants', 'In Bloom', 'Lounge Act', and 'Downer'. Plus the MTV Unplugged full set and live acoustic material. Solid
+```
