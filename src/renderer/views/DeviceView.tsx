@@ -699,7 +699,7 @@ export default function DeviceView() {
           {plan?.ok && renaming === null && (
             <button
               // V7 motion: the pulse (motion.css) only when there is something to sync (common/sync-due.ts).
-              className={`device-itunes-btn device-itunes-btn--sync${syncIsDue(plan.trackIds.length, lastSync) ? ' device-itunes-btn--due' : ''}`}
+              className={`device-itunes-btn device-itunes-btn--sync${syncIsDue(plan.trackIds, lastSync) ? ' device-itunes-btn--due' : ''}`}
               disabled={syncing}
               onClick={() => { void runOneSync() }}
               title={syncing ? 'Syncing…' : `Put these ${plan.trackIds.length.toLocaleString('en-US')} songs on ${plan.ipodName}`}

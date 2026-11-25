@@ -20,6 +20,7 @@
  */
 import { flushSync } from 'react-dom'
 import { prefersReducedMotion } from './motion'
+import { documentClickRescuer } from './clickRescue'
 
 export type PageSlideKind = 'in' | 'out'
 
@@ -87,43 +88,12 @@ export function runPageSlide(kind: PageSlideKind, release: () => void): void {
     done()
     return
   }
-  const stopRescue = rescueClicks(vt)
-  vt.finished.then(() => { stopRescue(); done() }, () => { stopRescue(); done() })
+  // A press during the slide ends it and its click is carried over (clickRescue.ts).
+  const rescuer = documentClickRescuer()
+  rescuer.arm(vt)
+  const end = (): void => { if (run === runSeq) rescuer.disarm(); done() }
+  vt.finished.then(end, end)
   vt.ready.catch(() => { /* skipped (window hidden, a newer transition): the swap stands */ })
   // A transition the browser never starts must not strand the old page.
   vt.updateCallbackDone.catch(() => doRelease())
-}
-
-/**
- * A click during the slide is never lost (Sidebar, toolbar, Pause). While a
- * View Transition runs, Chromium 124 (Electron 30) sends every pointer event
- * to <html>, whatever motion.css's `::view-transition { pointer-events: none }`
- * says (newer Chromium honours that rule; this covers the one we ship). So a
- * press ends the slide at once (the new page is already live underneath) and
- * the click it makes goes to what is actually under the pointer.
- */
-export function rescueClicks(vt: { skipTransition: () => void }): () => void {
-  const root = document.documentElement
-  let pressed = false
-  const onDown = (e: PointerEvent): void => {
-    if (e.target !== root) return
-    pressed = true
-    vt.skipTransition()
-  }
-  const onClick = (e: MouseEvent): void => {
-    if (!pressed || e.target !== root) return
-    pressed = false
-    const el = document.elementFromPoint(e.clientX, e.clientY)
-    if (el instanceof HTMLElement && el !== root) {
-      e.stopPropagation()
-      el.click()
-    }
-  }
-  root.addEventListener('pointerdown', onDown, true)
-  root.addEventListener('click', onClick, true)
-  // The click comes after the slide has ended: keep listening a moment longer.
-  return () => {
-    root.removeEventListener('pointerdown', onDown, true)
-    setTimeout(() => root.removeEventListener('click', onClick, true), 1000)
-  }
 }

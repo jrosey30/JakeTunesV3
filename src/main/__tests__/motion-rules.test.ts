@@ -358,10 +358,10 @@ describe('V7 motion — the app', () => {
     const css = blankComments(readFileSync(join(RENDERER, 'styles/motion.css'), 'utf-8'))
     assert.match(css, /:root\.jt-page-vt::view-transition \{[^}]*pointer-events:\s*none;/)
     // Electron 30's Chromium ignores that rule; a press ends the slide and the click goes to what's under it.
+    // (how it behaves: click-rescue.test.ts)
     const slide = readFileSync(join(RENDERER, 'pageSlide.ts'), 'utf-8')
-    assert.match(slide, /const stopRescue = rescueClicks\(vt\)/)
-    assert.match(slide, /vt\.skipTransition\(\)/)
-    assert.match(slide, /document\.elementFromPoint\(e\.clientX, e\.clientY\)[\s\S]{0,120}el\.click\(\)/)
+    assert.match(slide, /const rescuer = documentClickRescuer\(\)\s*rescuer\.arm\(vt\)/)
+    assert.match(slide, /rescuer\.disarm\(\)/)
   })
 
   test('the held page slides only if it still shows its own subject (a deleted playlist never slides a blank page)', () => {
@@ -375,6 +375,6 @@ describe('V7 motion — the app', () => {
     const css = blankComments(readFileSync(join(RENDERER, 'styles/motion.css'), 'utf-8'))
     assert.doesNotMatch(css, /\.device-itunes-btn--sync,/)
     assert.match(css, /\.device-itunes-btn--sync\.device-itunes-btn--due, \.confirm-btn--confirm\):not\(:disabled\)::after/)
-    assert.match(readFileSync(join(RENDERER, 'views/DeviceView.tsx'), 'utf-8'), /syncIsDue\(plan\.trackIds\.length, lastSync\) \? ' device-itunes-btn--due'/)
+    assert.match(readFileSync(join(RENDERER, 'views/DeviceView.tsx'), 'utf-8'), /syncIsDue\(plan\.trackIds, lastSync\) \? ' device-itunes-btn--due'/)
   })
 })
