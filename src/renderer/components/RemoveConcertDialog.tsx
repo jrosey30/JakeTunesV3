@@ -9,7 +9,7 @@
  */
 import ConfirmDialog from './ConfirmDialog'
 
-export const REMOVE_CONCERT_LABEL = 'Remove Concert'
+export const REMOVE_CONCERT_LABEL = 'Remove Live Album'
 
 export default function RemoveConcertDialog({ name, onConfirm, onCancel }: {
   name: string
@@ -18,7 +18,7 @@ export default function RemoveConcertDialog({ name, onConfirm, onCancel }: {
 }) {
   return (
     <ConfirmDialog
-      message={`Remove the concert “${name}”?`}
+      message={`Remove the live album “${name}”?`}
       detail="The full-show file is deleted. The songs stay in your library, exactly as they were."
       confirmLabel={REMOVE_CONCERT_LABEL}
       onConfirm={onConfirm}

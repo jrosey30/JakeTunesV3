@@ -332,7 +332,7 @@ export default function CynthiaPopover({ x, y, scope, onClose }: Props) {
     if (scope.type === 'artist') return `everything by ${scope.label}`
     if (scope.type === 'playlist') return `the playlist "${scope.label}"`
     if (scope.tracks.length === 1) return `"${scope.tracks[0].title}"`
-    return `${scope.tracks.length} tracks`
+    return `${scope.tracks.length} songs`
   })()
 
   return (
@@ -412,7 +412,7 @@ export default function CynthiaPopover({ x, y, scope, onClose }: Props) {
         {turns.length === 0 && (
           <div className="cynthia-empty-thread">
             <div className="cynthia-empty-thread-text">{deskFindings && deskFindings.length > 0 ? 'Had a look at this one already — the desk above is what I found.' : "Hey. What's up with this one?"}</div>
-            <div className="cynthia-empty-thread-sub">Try: <em>"check the disc count"</em>, <em>"find missing tracks"</em>, <em>"are the track numbers right?"</em></div>
+            <div className="cynthia-empty-thread-sub">Try: <em>"check the disc count"</em>, <em>"find missing songs"</em>, <em>"are the track numbers right?"</em></div>
           </div>
         )}
         {turns.map((t, ti) => t.role === 'user' ? (
@@ -560,7 +560,7 @@ function InvestigationCard({
         </div>
       )}
       {turn.applied && (
-        <div className="cynthia-applied-pill">Applied · ✓</div>
+        <div className="cynthia-applied-pill">Applied</div>
       )}
     </div>
   )

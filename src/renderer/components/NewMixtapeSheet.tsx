@@ -45,18 +45,18 @@ export default function NewMixtapeSheet({ onClose }: Props) {
         {stage === 'choose' && (
           <>
             <div className="activity-sheet-head">
-              <h2 className="activity-sheet-title">New mixtape</h2>
+              <h2 className="activity-sheet-title">New Mixtape</h2>
               <p className="activity-sheet-sub">Two ways to make a tape. Both end up on the same shelf.</p>
             </div>
             <div className="newmix-doors">
               <button type="button" className="newmix-door" onClick={() => setStage('blank')}>
-                <span className="newmix-door-title">Record it yourself</span>
+                <span className="newmix-door-title">Record It Yourself</span>
                 <span className="newmix-door-desc">
                   A blank tape goes in the deck. Press REC, play music, talk on the mic — the tape catches what you play, in order, until the sides run out.
                 </span>
               </button>
               <button type="button" className="newmix-door" onClick={() => setStage('source')}>
-                <span className="newmix-door-title">Music Man deals it</span>
+                <span className="newmix-door-title">The Music Man Deals It</span>
                 <span className="newmix-door-desc">
                   Hand him songs — a playlist, or whatever you've selected — and he sequences a finished tape with liner notes. You tweak it on the deck, then dub.
                 </span>
@@ -72,7 +72,7 @@ export default function NewMixtapeSheet({ onClose }: Props) {
           <>
             <div className="activity-sheet-head">
               <h2 className="activity-sheet-title">What does he get?</h2>
-              <p className="activity-sheet-sub">The songs Music Man makes the tape from.</p>
+              <p className="activity-sheet-sub">The songs the Music Man makes the tape from.</p>
             </div>
             <div className="newmix-sources">
               {selectedTracks.length >= 2 && (

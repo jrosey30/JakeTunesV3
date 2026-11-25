@@ -70,7 +70,7 @@ export default function BlankTapeSheet({ onClose }: Props) {
     <div className="activity-sheet-overlay" role="dialog" aria-modal="true" aria-label="New blank tape">
       <div className="activity-sheet mixsheet mixsheet--blank">
         <div className="activity-sheet-head">
-          <h2 className="activity-sheet-title">Blank tape</h2>
+          <h2 className="activity-sheet-title">Blank Tape</h2>
           <p className="activity-sheet-sub">
             It goes straight into the deck. Press REC, play music — whatever plays lands on the tape, in order, until the tape is full. TALK puts your voice down with the music.
           </p>

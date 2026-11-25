@@ -36,7 +36,7 @@ function num(v: number | string | undefined | null): number {
 }
 
 export function verifyLiveSetCompleteness(tracks: Track[]): CompletenessResult {
-  if (tracks.length === 0) return { complete: false, reason: 'no tracks found for this album' }
+  if (tracks.length === 0) return { complete: false, reason: 'no songs found for this album' }
 
   const unnumbered = tracks.filter(t => num(t.trackNumber) === 0)
   if (unnumbered.length > 0) {
@@ -45,7 +45,7 @@ export function verifyLiveSetCompleteness(tracks: Track[]): CompletenessResult {
       complete: false,
       reason: unnumbered.length === 1
         ? `"${name}" has no track number — can't verify the set is complete (fix via Get Info)`
-        : `${unnumbered.length} tracks have no track number — can't verify the set is complete (fix via Get Info)`,
+        : `${unnumbered.length} songs have no track number — can't verify the set is complete (fix via Get Info)`,
     }
   }
 
@@ -62,10 +62,10 @@ export function verifyLiveSetCompleteness(tracks: Track[]): CompletenessResult {
     }
     const declared = Math.max(0, ...tracks.map(t => num(t.trackCount)))
     if (declared > 0 && sorted.length < declared) {
-      return { complete: false, reason: `the files declare ${declared} tracks — the library has ${sorted.length}` }
+      return { complete: false, reason: `the files declare ${declared} songs — the library has ${sorted.length}` }
     }
     if (declared > 0 && sorted.length > declared) {
-      return { complete: false, reason: `more tracks than the files declare (${sorted.length} vs ${declared}) — check for a mixed edition` }
+      return { complete: false, reason: `more songs than the files declare (${sorted.length} vs ${declared}) — check for a mixed edition` }
     }
     return { complete: true, discs: 1, total: sorted.length, verifiedTotal: declared > 0 }
   }
@@ -99,7 +99,7 @@ export function verifyLiveSetCompleteness(tracks: Track[]): CompletenessResult {
 
     for (let i = 1; i < nums.length; i++) {
       if (nums[i] === nums[i - 1]) {
-        return { complete: false, reason: `two tracks claim #${nums[i]}${label} — resolve the duplicate first` }
+        return { complete: false, reason: `two songs claim #${nums[i]}${label} — resolve the duplicate first` }
       }
     }
     for (let i = 0; i < nums.length; i++) {
@@ -110,10 +110,10 @@ export function verifyLiveSetCompleteness(tracks: Track[]): CompletenessResult {
 
     const declared = Math.max(0, ...group.map(t => num(t.trackCount)))
     if (declared > 0 && nums.length < declared) {
-      return { complete: false, reason: `the files declare ${declared} tracks${label} — the library has ${nums.length}` }
+      return { complete: false, reason: `the files declare ${declared} songs${label} — the library has ${nums.length}` }
     }
     if (declared > 0 && nums.length > declared) {
-      return { complete: false, reason: `more tracks than the files declare (${nums.length} vs ${declared}${label}) — check for a mixed edition` }
+      return { complete: false, reason: `more songs than the files declare (${nums.length} vs ${declared}${label}) — check for a mixed edition` }
     }
     if (declared === 0) everyDiscDeclared = false
     total += nums.length

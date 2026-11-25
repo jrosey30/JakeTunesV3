@@ -23,7 +23,7 @@ const BACK_LABELS: Record<ViewName, string> = {
   'new-for-you': '← For You',
   discovery: '← Record Shop',
   'mix-detail': '← Mix',
-  concerts: '← Live Concerts',
+  concerts: '← Live Albums',
   'concert-detail': '← Concert',
   'mixtape-detail': '← Mixtape',
   dj: '← DJ',

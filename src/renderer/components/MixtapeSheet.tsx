@@ -110,7 +110,7 @@ export default function MixtapeSheet({ tracks, onClose, existing, keepOrder, ini
       }))
       const r = await window.electronAPI.buildMixtape?.(input, dedication.trim() || undefined, note.trim() || undefined)
       if (!r?.ok || !r.tracks) {
-        setError(r?.error || 'Music Man dropped the tape — try again.')
+        setError(r?.error || 'The Music Man dropped the tape — try again.')
         setStage('setup')
         return
       }
@@ -221,7 +221,7 @@ export default function MixtapeSheet({ tracks, onClose, existing, keepOrder, ini
         {stage === 'setup' && (
           <>
             <div className="activity-sheet-head">
-              <h2 className="activity-sheet-title">Make a mixtape</h2>
+              <h2 className="activity-sheet-title">Make a Mixtape</h2>
               <p className="activity-sheet-sub">
                 {tracks.length} songs · {fmt(totalMs)} of music. A tape holds {MAX_TAPE_SONGS} songs and plays start to finish as one gapless file. No undo — you can always tape over it.
               </p>
@@ -246,7 +246,7 @@ export default function MixtapeSheet({ tracks, onClose, existing, keepOrder, ini
             <div className="activity-sheet-actions">
               <button type="button" className="activity-btn activity-btn--ghost" onClick={onClose}>Cancel</button>
               <button type="button" className="activity-btn activity-btn--go" onClick={() => { void build() }}>
-                Have Music Man deal the tape
+                Have the Music Man deal the tape
               </button>
             </div>
           </>
@@ -255,7 +255,7 @@ export default function MixtapeSheet({ tracks, onClose, existing, keepOrder, ini
         {stage === 'building' && (
           <div className="mixsheet-building">
             <CassetteSpinner />
-            <p>Music Man is hunched over the deck, sequencing your tape…</p>
+            <p>The Music Man is hunched over the deck, sequencing your tape…</p>
           </div>
         )}
 

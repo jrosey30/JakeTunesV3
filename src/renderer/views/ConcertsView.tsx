@@ -75,7 +75,7 @@ export default function ConcertsView() {
   return (
     <div className="concerts-view albums-view" ref={concertsPageRef}>
       <div className="concerts-header">
-        <h2 className="concerts-title">Full Live Concerts</h2>
+        <h2 className="concerts-title">Live Albums</h2>
         <span className="concerts-count">
           {concerts.length} concert{concerts.length !== 1 ? 's' : ''}
         </span>
@@ -83,7 +83,7 @@ export default function ConcertsView() {
 
       {concerts.length === 0 ? (
         <div className="concerts-empty">
-          No live concerts yet. Open an album of a full show and choose
+          No live albums yet. Open an album of a full show and choose
           <span className="concerts-empty-em"> Declare Live Concert Mode</span> to add it here.
         </div>
       ) : (

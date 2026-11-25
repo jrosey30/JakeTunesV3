@@ -801,7 +801,7 @@ export default function ArtistDetailView() {
             </div>
             {record && (
               <div className="ad-yours-record">
-                <h2 className="ad-h2 ad-h2--spaced">Most played record</h2>
+                <h2 className="ad-h2 ad-h2--spaced">Most Played Record</h2>
                 <div className="ad-record ad-lift">
                   <button type="button" className="ad-record-art" onClick={() => openAlbum(recordPersona, record.group.name)} title={`Open ${record.group.name}`}>
                     {recordHash ? <AlbumArtImage hash={recordHash} alt={`${record.group.name} cover`} size={480} /> : <span className="ad-cover-blank" />}
@@ -939,7 +939,7 @@ export default function ArtistDetailView() {
         {/* Related artists — at the very bottom, so the page leads with the artist's own music. */}
         {(related.length > 0 || relatedLoadingShown) && (
           <section className="ad-related">
-            <h2 className="ad-h2">Related artists</h2>
+            <h2 className="ad-h2">Related Artists</h2>
             {relatedLoadingShown && related.length === 0 ? (
               <p className="ad-body ad-body--quiet">Finding connections…</p>
             ) : (

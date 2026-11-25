@@ -771,7 +771,7 @@ export default function PlaylistView() {
       ...addToIpodPlaylistEntries(selected, state.tracks),
       ...(getDeckState() ? [
         {
-          label: `Lay on the tape (${selected.length} song${selected.length === 1 ? '' : 's'})`,
+          label: `Add to Tape (${selected.length} song${selected.length === 1 ? '' : 's'})`,
           onClick: () => {
             void layOnDeck(selected.map(t => t.id), (id) => selected.find(t => t.id === id)?.duration || undefined)
               .then(async (msg) => { const a = await import('../activity'); a.setNotice(msg) })
@@ -791,14 +791,14 @@ export default function PlaylistView() {
       ...downloadMenuEntries(selected),
       { separator: true as const },
       {
-        label: 'Cynthia!!',
+        label: 'Cynthia',
         onClick: () => {
           if (!ctxMenu) return
           openCynthia({
             x: ctxMenu.x, y: ctxMenu.y,
             scope: {
               type: 'tracks',
-              label: count > 1 ? `${count} tracks` : track.title,
+              label: count > 1 ? `${count} songs` : track.title,
               tracks: selected.map(toCynthiaTrack),
             },
           })
@@ -938,7 +938,7 @@ export default function PlaylistView() {
       {playlist && (suggestions.length > 0 || allPlaylistTracks.length === 0) && (
         <div className="pl-suggest">
           <div className="pl-suggest-head">
-            <span className="pl-suggest-title">Suggested for this playlist</span>
+            <span className="pl-suggest-title">Suggested for This Playlist</span>
             {suggestions.length > 0 && <button
               className="pl-suggest-refresh"
               onClick={() => {
@@ -980,7 +980,7 @@ export default function PlaylistView() {
                         setLocalHidden((h) => new Set(h).add(s.id))
                         setStripMemTick((n) => n + 1)
                       }}
-                      title={`Not for this playlist — never suggest "${s.title}" here again`}
+                      title="Not for this playlist"
                       aria-label={`Not for this playlist: ${s.title}`}
                     ><CloseIcon size={12} /></button>
                   </div>

@@ -288,7 +288,7 @@ export default function SmartPlaylistView() {
       if (cancelled) return
       const existing = (r.ok && r.state) ? r.state : {}
       window.electronAPI.saveUiState({ ...existing, 'musicman-picks': mmPicks })
-    }).catch(() => { setNotice("Couldn't save Music Man's Picks.", { kind: 'error', durationMs: 4000 }) })
+    }).catch(() => { setNotice("Couldn't save the Music Man's picks.", { kind: 'error', durationMs: 4000 }) })
     return () => { cancelled = true }
   }, [mmPicks, picksStateLoaded])
   useEffect(() => {
@@ -1151,7 +1151,7 @@ export default function SmartPlaylistView() {
               hint={`The line at the top of this page, up to ${HEADLINE_MAX} characters. Empty goes back to ${playlistId === 'top-1000' ? 'the usual line' : 'the name'}.`}
               onSave={async (value) => {
                 const r = playlistId === 'top-1000' ? await setTop1000Headline(value) : await setIpodListHeadline(ipodList!.id, value)
-                if (r.ok && r.homemini === 'later') setNotice('Headline changed here. homemini and the phone get it when homemini has it.', { kind: 'info', durationMs: 5000 })
+                if (r.ok && r.homemini === 'later') setNotice('Headline changed.', { kind: 'info', durationMs: 5000 })
                 return r.ok ? { ok: true } : r
               }}
               onDone={() => setEditingHeadline(false)}
@@ -1166,7 +1166,7 @@ export default function SmartPlaylistView() {
               hint={ipodListsRole === 'hub' && (playlistId === 'top-1000' || ipodList?.registered) ? 'Renames the playlist. The iPod keeps its own name.' : null}
               onSave={async (name) => {
                 const r = playlistId === 'top-1000' ? await renameTop1000(name) : await renameIpodList(ipodList!.id, name)
-                if (r.ok && r.homemini === 'later') setNotice(`Renamed to ${r.name}. homemini will get it when it's back.`, { kind: 'info', durationMs: 5000 })
+                if (r.ok && r.homemini === 'later') setNotice(`Renamed to ${r.name}.`, { kind: 'info', durationMs: 5000 })
                 return r.ok ? { ok: true } : r
               }}
               onDone={() => setRenaming(false)}
@@ -1178,7 +1178,7 @@ export default function SmartPlaylistView() {
             {isPicksView && picksLoading ? loadingLabel : (
               <>
                 {sortedTracks.length} {sortedTracks.length === 1 ? 'song' : 'songs'}, {timeStr}
-                {playlistId === 'recently-played' && sortedTracks.length === 0 && ' — play some music!'}
+                {playlistId === 'recently-played' && sortedTracks.length === 0 && ' — play some music.'}
               </>
             )}
           </div>
@@ -1190,7 +1190,7 @@ export default function SmartPlaylistView() {
                 <button
                   className="top25-window-btn"
                   onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setIpodColorAt({ x: r.left, y: r.bottom + 4 }) }}
-                  title={`The colour of ${ipodList.name} on its cover`}
+                  title="Color"
                 >
                   iPod color…
                 </button>

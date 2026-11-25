@@ -203,7 +203,7 @@ export default function ConcertDetailView() {
   // the list, as before.
   const { canGoBack, goBack: navBack } = useNavigation()
   const navBackLabel = useBackLabel()
-  const backLabel = (canGoBack && navBackLabel) || '← Live Concerts'
+  const backLabel = (canGoBack && navBackLabel) || '← Live Albums'
   const goBack = useCallback(() => {
     if (canGoBack) navBack()
     else libDispatch({ type: 'SET_VIEW', view: 'concerts' })
@@ -213,7 +213,7 @@ export default function ConcertDetailView() {
     return (
       <div className="concert-detail cd-stage" ref={concertPageRef}>
         <BackButton label={backLabel} onClick={goBack} className="concert-back" />
-        <div className="concerts-empty">This concert is no longer available.</div>
+        <div className="concerts-empty">This live album is no longer available.</div>
       </div>
     )
   }
@@ -281,7 +281,6 @@ export default function ConcertDetailView() {
             <button
               className="cd-btn cd-btn--remove"
               onClick={() => setConfirmRemove(true)}
-              title="Remove this concert — the songs are unaffected"
             >{REMOVE_CONCERT_LABEL}</button>
           </div>
         </div>
@@ -316,7 +315,7 @@ export default function ConcertDetailView() {
         {/* The program: the same spine + rows the album page's setlist uses. */}
         <div className="concert-sheet">
           <div className="cs-head">
-            <span className="cs-head-title">Songs in this show</span>
+            <span className="cs-head-title">Songs in This Show</span>
             <span className="cs-head-rule" aria-hidden="true" />
           </div>
           <div className="cs-cols" aria-hidden="true">
@@ -372,7 +371,7 @@ export default function ConcertDetailView() {
                         </span>
                         <span className="cj-lane" aria-hidden="true"><span className="cj-lane-bar" style={{ width: `${Math.max(6, Math.round((cue.durationMs / maxDurMs) * 100))}%` }} /></span>
                         <span className="cj-len">{mmss(cue.durationMs)}</span>
-                        <span className="cj-at" title="Starts at this point in the show">{hms(cue.startMs)}</span>
+                        <span className="cj-at">{hms(cue.startMs)}</span>
                       </div>
                     )}
                   </div>
@@ -386,13 +385,13 @@ export default function ConcertDetailView() {
         <aside className="cd-side">
           {facts.length > 0 && (
             <div className="cd-card">
-              <h4>The night</h4>
+              <h4>The Night</h4>
               <ul className="cd-facts">{facts.map((f, i) => <li key={i}>{f}</li>)}</ul>
               {c.merchUrl && <a className="cd-merch" href={c.merchUrl} title="Find merch for this show">Merch table ↗</a>}
             </div>
           )}
           <div className="cd-card">
-            <h4>Your notes</h4>
+            <h4>Your Notes</h4>
             <textarea
               className="cd-notes"
               value={notesDraft}

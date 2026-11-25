@@ -221,7 +221,7 @@ export default function ArtistsView(): JSX.Element {
       for (const a of visible) { const k = key(a); m.set(k, [...(m.get(k) ?? []), a]) }
       return m
     }
-    if (sort === 'played') return [{ title: 'Most played', sub: 'all-time plays', items: [...visible].sort((a, b) => b.plays - a.plays || b.tracks.length - a.tracks.length), chip: (a) => (a.plays ? plural(a.plays, 'play') : '') }]
+    if (sort === 'played') return [{ title: 'Most Played', sub: 'all-time plays', items: [...visible].sort((a, b) => b.plays - a.plays || b.tracks.length - a.tracks.length), chip: (a) => (a.plays ? plural(a.plays, 'play') : '') }]
     if (sort === 'added') {
       return [...group((a) => monthOf(a.added)).entries()].sort((x, y) => (y[1][0].added || '').localeCompare(x[1][0].added || ''))
         .map(([k, v]) => ({ title: k, items: v.sort((a, b) => b.added.localeCompare(a.added)) }))
@@ -406,7 +406,7 @@ export default function ArtistsView(): JSX.Element {
       )}
       {shelves && shelves.fresh.length > 0 && (
         <section className="ag-shelf">
-          <h2 className="ag-h2">New in your library</h2>
+          <h2 className="ag-h2">New in Your Library</h2>
           <div className="ag-row">{shelves.fresh.map((a) => card(a, new Date(`${a.added}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), true))}</div>
         </section>
       )}
@@ -432,7 +432,7 @@ export default function ArtistsView(): JSX.Element {
               onChange={(e) => setListFilter(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setListFilter('') }} spellCheck={false} aria-label="Filter artists" />
             {listFilter && <button className="list-filter-clear" onClick={() => setListFilter('')} aria-label="Clear filter" title="Clear">×</button>}
           </div>
-          <button className="artists-group-btn" onClick={() => setGroupingOpen(true)} title="Let the Music Man group bands, side projects & aliases under one artist">✦ Group artists</button>
+          <button className="artists-group-btn" onClick={() => setGroupingOpen(true)}>Group Artists</button>
         </div>
       </div>
       <div className="ag-sorts" role="tablist" aria-label="Sort artists">

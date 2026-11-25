@@ -65,7 +65,7 @@ test('truncated tail fails via declared trackCount', () => {
   // alone cannot catch.
   const r = verifyLiveSetCompleteness(album(7, { trackCount: 23 }))
   assert.equal(r.complete, false)
-  if (!r.complete) assert.match(r.reason, /declare 23 tracks/)
+  if (!r.complete) assert.match(r.reason, /declare 23 songs/)
 })
 
 test('no declared trackCount → complete SHAPE but unverified total (confirm gate)', () => {
@@ -78,7 +78,7 @@ test('extra track beyond the declared count fails (edition mix)', () => {
   const tracks = album(10, { trackCount: 9 })
   const r = verifyLiveSetCompleteness(tracks)
   assert.equal(r.complete, false)
-  if (!r.complete) assert.match(r.reason, /more tracks/)
+  if (!r.complete) assert.match(r.reason, /more songs/)
 })
 
 test('missing track number on any track fails', () => {

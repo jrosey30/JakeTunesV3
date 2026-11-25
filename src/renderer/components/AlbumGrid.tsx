@@ -96,7 +96,7 @@ const AlbumGridCard = memo(function AlbumGridCard({ item, onOpen, onContextMenu,
           <button
             type="button"
             className="album-play-full"
-            title={`Play ${album.name} — front to back, in order, gapless`}
+            title={`Play ${album.name}`}
             onClick={(e) => { e.stopPropagation(); onPlayAlbum(ordered) }}
           >▶ Album</button>
         )}

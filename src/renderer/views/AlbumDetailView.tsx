@@ -248,9 +248,9 @@ export default function AlbumDetailView() {
     setMergeLabel('Preparing…')
     try {
       await declareLiveSet({ albumKey, name: albumName, artist: albumArtist, genre, year, tracks }, { confirmedComplete })
-      setNotice(`Live set ready — ${albumName}`)
+      setNotice(`Live album ready — ${albumName}`)
     } catch (err) {
-      setNotice(`Live set failed: ${err instanceof Error ? err.message : String(err)}`)
+      setNotice(`Live album failed: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setMergeBusy(false)
       setMergeLabel('')
@@ -270,7 +270,7 @@ export default function AlbumDetailView() {
     libDispatch({ type: 'DELETE_TRACKS', ids: [liveSet.mergedTrackId] })
     await unregisterLiveSet(albumKey)
     setUndeclareConfirm(false)
-    setNotice('Concert removed. The songs are unchanged.')
+    setNotice('Live album removed. The songs are unchanged.')
   }, [liveSet, albumKey, libDispatch])
   const setPlaying = !!(mergedTrack && pb.nowPlaying?.id === mergedTrack.id)
   const activeCue = liveSet && setPlaying ? cueAt(liveSet, pb.position * 1000) : null
@@ -541,8 +541,8 @@ export default function AlbumDetailView() {
       ...downloadMenuEntries(selectedTracks),
       { separator: true as const },
       {
-        label: 'Cynthia!!',
-        onClick: () => openCynthia({ x: ctxMenu.x, y: ctxMenu.y, scope: { type: 'tracks', label: count > 1 ? `${count} tracks` : track.title, tracks: selectedTracks.map(toCynthiaTrack) } }),
+        label: 'Cynthia',
+        onClick: () => openCynthia({ x: ctxMenu.x, y: ctxMenu.y, scope: { type: 'tracks', label: count > 1 ? `${count} songs` : track.title, tracks: selectedTracks.map(toCynthiaTrack) } }),
       },
       { separator: true as const },
       { label: count > 1 ? `Delete ${count} Songs` : 'Delete Song', onClick: () => setDeleteConfirm({ ids: selectedTracks.map((t) => t.id), count }) },
@@ -783,16 +783,15 @@ export default function AlbumDetailView() {
                 {!isLiveSetAlbumPage && <span className="apd-ctrls-gap" aria-hidden="true" />}
                 {!isLiveSetAlbumPage && (liveSet && mergedTrack ? (
                   <>
-                    <button type="button" className="apd-btn apd-btn--orange album-page-liveset-play" onClick={startShow} title="Play the whole show as one continuous set">{ICON_PLAY}Play Live Set</button>
+                    <button type="button" className="apd-btn apd-btn--orange album-page-liveset-play" onClick={startShow}>{ICON_PLAY}Play Live Album</button>
                     <button
                       type="button"
                       className={`apd-btn album-page-liveset-crowd${crowdOn ? ' album-page-liveset-crowd--on' : ''}`}
                       onClick={() => setConcertCrowdEnabled(!crowdOn)}
-                      title="Swell that night's crowd in the gaps between songs — off by default"
                     >
                       {crowdOn ? '◉ Crowd on' : '◎ Crowd'}
                     </button>
-                    <button type="button" className="apd-btn album-page-liveset-undeclare" onClick={() => setUndeclareConfirm(true)} title="Remove this concert — the songs are unaffected">{REMOVE_CONCERT_LABEL}</button>
+                    <button type="button" className="apd-btn album-page-liveset-undeclare" onClick={() => setUndeclareConfirm(true)}>{REMOVE_CONCERT_LABEL}</button>
                   </>
                 ) : (
                   <button
@@ -905,7 +904,7 @@ export default function AlbumDetailView() {
                 {/* "Songs in this show", not "Set List": Jake 2026-10-28 couldn't tell
                     what "Setlist" was, and setlist.fm's "What they've been
                     playing" / "What they played" now live on the concert cards. */}
-                <span className="cs-head-title">Songs in this show</span>
+                <span className="cs-head-title">Songs in This Show</span>
                 <span className="cs-head-rule" aria-hidden="true" />
                 <span className="cs-head-stat">
                   {liveSet.cues.length} songs · {formatTotalDuration(liveSet.totalDurationMs)}
@@ -934,7 +933,7 @@ export default function AlbumDetailView() {
                         className={`cj-song aps-row${state ? ` aps-row${state}` : ''}`}
                         onClick={startShow}
                         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCueCtx({ x: e.clientX, y: e.clientY, cue }) }}
-                        title={setPlaying ? 'Right-click a song to add it to your library' : 'Play the live set from the top — right-click a song to add it to your library'}
+                        title={setPlaying ? 'Right-click a song to add it to your library' : 'Play the live album from the top — right-click a song to add it to your library'}
                         role="button"
                       >
                         <span className="cj-num">{String(i + 1).padStart(2, '0')}</span>
@@ -945,7 +944,7 @@ export default function AlbumDetailView() {
                         </span>
                         <span className="cj-lane" aria-hidden="true"><span className="cj-lane-bar" style={{ width: `${Math.max(6, Math.round((cue.durationMs / maxDurMs) * 100))}%` }} /></span>
                         <span className="cj-len">{formatDuration(cue.durationMs)}</span>
-                        <span className="cj-at" title="Starts at this point in the show">{startClock(cue.startMs)}</span>
+                        <span className="cj-at">{startClock(cue.startMs)}</span>
                       </div>
                     </React.Fragment>
                   )
