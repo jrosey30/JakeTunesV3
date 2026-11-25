@@ -442,8 +442,6 @@ export function createUserEditsSync(host: UserEditsHost): UserEditsSync {
   }
 }
 
-/** The journal, read-only (the genre filer reads who set a genre). Never
- *  writes; null when absent or unreadable. */
 /**
  * The journal, strictly, for a writer that must not guess (common/jake-edits-stay.ts):
  * missing → null ("no edits yet"); unreadable or not a journal → throws, so an
@@ -460,6 +458,8 @@ export async function readUserEditsJournalStrict(dir: string, read: (p: string) 
   return doc
 }
 
+/** The journal, read-only (the genre filer reads who set a genre). Never
+ *  writes; null when absent or unreadable. */
 export async function readUserEditsJournal(dir: string): Promise<UserEditsDoc | null> {
   try { return parseUserEdits(JSON.parse(await readFile(join(dir, USER_EDITS_FILE), 'utf8'))) } catch { return null }
 }

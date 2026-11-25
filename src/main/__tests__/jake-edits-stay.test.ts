@@ -209,6 +209,22 @@ describe('the override merge keeps his other fields when he corrects a title', (
     mergeOverrideField(o, 9, 'bpm', '120', 'dirty work (remaster)|steely dan|188000')
     assert.deepEqual(o['9'], { fp: 'dirty work (remaster)|steely dan|188000', fields: { genre: 'Yacht Rock', year: '1972', bpm: '120' } })
   })
+  test('same length, a different title AND artist: another song (Peg never turns into Blue Monday)', () => {
+    // The tempo writer (persistOverrideFields → mergeOverrideField) saving a BPM for a song that now holds id 512.
+    const o: Record<string, unknown> = { '512': { fp: 'peg|steely dan|237000', fields: { title: 'Peg', artist: 'Steely Dan', year: '1977', album: 'Aja' } } }
+    mergeOverrideField(o, 512, 'bpm', '130', 'blue monday|new order|238400')
+    assert.deepEqual(o['512'], { fp: 'blue monday|new order|238400', fields: { bpm: '130' } }, 'nothing of Peg is shown on Blue Monday')
+  })
+  test('same length, both changed, but the new names are the ones his own override set: his correction, merged', () => {
+    const o: Record<string, unknown> = { '7': { fp: 'track 07|unknown artist|200000', fields: { title: 'Dirty Work', artist: 'Steely Dan', genre: 'Yacht Rock' } } }
+    mergeOverrideField(o, 7, 'bpm', '120', 'dirty work|steely dan|200000')
+    assert.deepEqual(o['7'], { fp: 'dirty work|steely dan|200000', fields: { title: 'Dirty Work', artist: 'Steely Dan', genre: 'Yacht Rock', bpm: '120' } })
+  })
+  test('a non-Jake writer hitting a mismatched fingerprint with no evidence never restamps his entry', () => {
+    const o: Record<string, unknown> = { '3': { fp: 'song a|band a|200000', fields: { genre: 'Jazz' } } }
+    mergeOverrideField(o, 3, 'bpm', '90', 'song b|band b|200500')
+    assert.deepEqual(o['3'], { fp: 'song b|band b|200500', fields: { bpm: '90' } })
+  })
   test('another length: the id names another song, start fresh (the re-parse safeguard)', () => {
     const o: Record<string, unknown> = { '9': { fp: 'dirty work|steely dan|188000', fields: { genre: 'Yacht Rock' } } }
     mergeOverrideField(o, 9, 'bpm', '120', 'other song|someone|301000')
