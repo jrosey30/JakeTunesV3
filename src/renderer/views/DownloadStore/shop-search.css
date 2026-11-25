@@ -82,3 +82,11 @@
 .shop-track-dot .shop-dot { margin-right: 0; }
 .shop-track-dur { font-size: 12px; color: var(--text-secondary, #6b655a); text-align: right; font-variant-numeric: tabular-nums; }
 .shop-track-act { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
+
+/* A song's title gives way before its mark, down to 5em of title: "On your
+   Listening List" is whole at every normal width, and only in a very narrow
+   window does it shorten too. */
+.dl-song-title { display: flex; align-items: center; min-width: 0; }
+.dl-song-name { flex: 0 1 auto; min-width: 5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-song-title .shop-dot { flex-shrink: 0; }
+.dl-song-title .shop-mark--inline { flex: 0 0 auto; max-width: calc(100% - 5em); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -2062,7 +2062,7 @@ async function withoutListed<L extends { cards: unknown[] }>(lanes: L[]): Promis
     lanes = dropVetoed(lanes, await sharedDiscoveryFeedback(), Date.now())
     return dropListed(lanes, listenListPredicate(await readRecommendationsFile()))
   } catch (err) {
-    console.warn('[discover] Listen List unreadable — serving the feed unguarded:', err)
+    console.warn('[discover] Listening List unreadable — serving the feed unguarded:', err)
     return lanes
   }
 }

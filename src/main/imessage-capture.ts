@@ -226,7 +226,7 @@ async function notifyFdaRegression(): Promise<void> {
     const r = await dialog.showMessageBox({
       type: 'warning',
       title: 'Texted songs are not being captured',
-      message: 'JakeTunes lost Full Disk Access — songs friends text you are NOT landing on your list.',
+      message: 'JakeTunes lost Full Disk Access — songs friends text you are NOT landing on your Listening List.',
       detail: 'This usually happens after the app is updated (macOS ties the permission to the app\'s signature). Nothing is lost: once access is restored, every missed text is captured retroactively.\n\nIn the list, remove JakeTunes with −, then re-add it with + from Applications.',
       buttons: ['Open Full Disk Access Settings', 'Later'],
       defaultId: 0,

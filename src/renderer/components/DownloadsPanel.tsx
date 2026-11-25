@@ -17,6 +17,7 @@ import { subscribeQueue, getQueue, cancel, retry, clearFinished, enqueue, type Q
 import { downloadsPanelRows, downloadsPanelSections, panelSummary, type PanelRow } from '../../common/downloads-panel-model'
 import NeedsYouSlot, { getNeedsYouFix, subscribeNeedsYouFix } from './NeedsYouSlot'
 import '../styles/downloads-panel.css'
+import { SHOP_WORDS } from '../../common/shop-names'
 
 export interface DownloadsPanelHandle { requestClose: () => void }
 
@@ -186,8 +187,8 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
               <div className="dlp-row-actions">
                 {row.actions.includes('cancel') && <button onClick={() => void cancel(row.key)}>Cancel</button>}
                 {row.actions.includes('retry') && <button onClick={() => retry(row.key)}>Retry</button>}
-                {row.actions.includes('chooseEdition') && <button className={row.offers.length ? undefined : 'dlp-primary-action'} onClick={() => chooseAgain(row)} disabled={!row.choose}>Choose edition</button>}
-                {row.actions.includes('chooseVersion') && <button className={row.offers.length ? undefined : 'dlp-primary-action'} onClick={() => chooseAgain(row)} disabled={!row.choose}>Choose version</button>}
+                {/* One button for a refused album or song (the approved picture: one word per action). */}
+                {(row.actions.includes('chooseEdition') || row.actions.includes('chooseVersion')) && <button className={row.offers.length ? undefined : 'dlp-primary-action'} onClick={() => chooseAgain(row)} disabled={!row.choose}>{SHOP_WORDS.chooseAnother}</button>}
                 {row.actions.includes('retryGroup') && <button onClick={() => retryGroup(row)} title="Retry only the tracks that failed or were canceled">Retry the {row.group ? row.group.failed + row.group.canceled : 0} that failed</button>}
                 {hasDetails && <button className="dlp-details-toggle" onClick={() => toggleDetails(row.key)} aria-expanded={showDetails}>{showDetails ? 'Hide details' : 'Details'}</button>}
               </div>

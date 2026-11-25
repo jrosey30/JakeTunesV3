@@ -15,6 +15,8 @@ export const SHOP_WORDS = {
   save: 'Save',
   saveAlbum: 'Save album',
   downloads: 'Downloads',
+  /** A refused save, album or song: Search opens on it to pick another. */
+  chooseAnother: 'Choose another…',
 } as const
 
 /** The shop's tabs, in order. */
@@ -37,6 +39,8 @@ export const RETIRED_SHOP_NAMES = [
   'Bandcamp Store',
   'Get all',
   'your list',
+  'Choose edition',
+  'Choose version',
 ] as const
 
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

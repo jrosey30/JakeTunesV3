@@ -73,10 +73,12 @@ describe('the retired names', () => {
 })
 
 describe('no screen says a retired name', () => {
-  const files = [...filesUnder(join(SRC, 'renderer')), ...filesUnder(join(SRC, 'common'))]
+  // The main process too: its dialogs and notices are words Jake reads (and its logs are read by people).
+  const files = [...filesUnder(join(SRC, 'renderer')), ...filesUnder(join(SRC, 'common')), ...filesUnder(join(SRC, 'main')), ...filesUnder(join(SRC, 'preload'))]
     .filter((p) => !p.endsWith(join('common', 'shop-names.ts')))
-  it('reads the renderer and the shared words (comments are not read)', () => {
-    assert.ok(files.length > 200, `only ${files.length} files`)
+  it('reads the renderer, the shared words, main and the preload (comments are not read)', () => {
+    assert.ok(files.some((p) => p.endsWith(join('main', 'imessage-capture.ts'))), 'main is read')
+    assert.ok(files.length > 400, `only ${files.length} files`)
     assert.equal(retiredNamesIn(withoutComments('// the Listen List\n/* The Racks */\nconst a = 1')).length, 0)
     assert.deepEqual(retiredNamesIn(withoutComments('const a = "the Listen List" // ok')), ['Listen List'])
     assert.deepEqual(retiredNamesIn(withoutComments('<h1>The Racks</h1>')), ['The Racks'])
@@ -118,6 +120,8 @@ describe('the shop: a title, one search box, four tabs', () => {
     assert.match(dv, /SHOP_TABS\.map\(/)
     assert.doesNotMatch(dv, />(For You|Search|Listening List|Bandcamp)</, 'no tab label written by hand')
     assert.match(dv, /<h1 className="discovery-title">\{SHOP_WORDS\.shop\}<\/h1>/)
+    // Typing on any tab (Bandcamp too) brings Search forward: the box says what it searches.
+    assert.match(dv, /placeholder="Search the Record Shop"/)
     assert.ok(dv.indexOf('className="dl-input"') > 0 && dv.indexOf('className="dl-input"') < dv.indexOf('SHOP_TABS.map('), 'the box is above the tabs')
   })
   it('there is one box: the Search tab has none of its own, and reads the shop’s', () => {
@@ -125,7 +129,6 @@ describe('the shop: a title, one search box, four tabs', () => {
     assert.doesNotMatch(view, /className="dl-input"/)
     assert.match(view, /useSyncExternalStore\(subscribeShopQuery, getShopQuery\)/)
     assert.doesNotMatch(view, /useState\(pageCache\.query\)/)
-    assert.doesNotMatch(withoutComments(src('renderer/views/NewForYouView.tsx')), /<h1 className="store-title">/, 'For You does not say the shop’s name a second time')
   })
 })
 

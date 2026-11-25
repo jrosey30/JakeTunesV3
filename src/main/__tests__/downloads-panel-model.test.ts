@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { downloadsPanelRows, panelRowFor, panelSummary, downloadsBadge } from '../../common/downloads-panel-model.ts'
+import { downloadsPanelRows, panelRowFor, panelSummary, downloadsBadge, downloadsDoor } from '../../common/downloads-panel-model.ts'
 import type { QueueItemLike } from '../../common/record-shop-live.ts'
 
 const NOW = Date.parse('2026-09-06T17:00:00Z')
@@ -76,5 +78,13 @@ describe('the Downloads panel rows', () => {
     assert.equal(refused.failed, 1)
     assert.equal(downloadsBadge(refused), '1')
     for (const s of [{ active: 3, queued: 9, done: 1, failed: 2, canceled: 1 }, { active: 0, queued: 0, done: 5, failed: 40, canceled: 0 }]) assert.match(downloadsBadge(s) ?? '', /^[\d,]+$/)
+  })
+  it('a failure is never only a number: red when it counts failures, and the tooltip says "N failed"', () => {
+    assert.deepEqual(downloadsDoor({ active: 0, queued: 0, done: 4, failed: 3, canceled: 0 }), { badge: '3', alert: true, title: '3 failed' })
+    assert.deepEqual(downloadsDoor({ active: 1, queued: 1, done: 0, failed: 3, canceled: 0 }), { badge: '2', alert: false, title: '2 saving · 3 failed' })
+    assert.deepEqual(downloadsDoor({ active: 1, queued: 0, done: 0, failed: 0, canceled: 0 }), { badge: '1', alert: false, title: '1 saving' })
+    assert.deepEqual(downloadsDoor({ active: 0, queued: 0, done: 2, failed: 0, canceled: 1 }), { alert: false, title: 'Show downloads' })
+    assert.match(readFileSync(join(import.meta.dirname, '..', '..', 'renderer/components/sidebar/Sidebar.tsx'), 'utf-8'), /alert: downloadsDoorNow\.alert,/)
+
   })
 })

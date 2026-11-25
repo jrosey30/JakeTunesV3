@@ -23,7 +23,7 @@ import type { Recommendation } from '../types.ts'
 import { friendOf, isLinkKind } from './friend.ts'
 import {
   enqueue, cancel, retry, subscribeQueue, getQueue, itemForRecommendation, itemFor, newestJob,
-  trackQueryId, albumQueryId, type QItem, type QResult, type QueueOrigin,
+  trackQueryId, albumQueryId, queueKey, type QItem, type QResult, type QueueOrigin,
 } from '../views/DownloadStore/downloadQueue.ts'
 import { albumJobFor, editionToSave } from '../views/DownloadStore/albumEditions.ts'
 import type { AlbumSaveSurface } from '../../common/album-preflight.ts'
@@ -219,17 +219,18 @@ export async function saveRecoAlbum(rec: Recommendation, surface: AlbumSaveSurfa
 
 /** Save album for a record named by artist and title, with or without a row
  *  behind it (a For You card not yet on the list). Same rules as saveRecoAlbum. */
-export async function saveAlbumNamed(artist: string, name: string, surface: AlbumSaveSurface, origin?: QueueOrigin, clickedAt = Date.now()): Promise<{ existingKey?: string }> {
+/** `key` is the job's key, either way, so a card with no row behind it can follow its own save (Phase 2). */
+export async function saveAlbumNamed(artist: string, name: string, surface: AlbumSaveSurface, origin?: QueueOrigin, clickedAt = Date.now()): Promise<{ existingKey?: string; key?: string }> {
   if (!artist || !name) return {}
   const { edition, from } = await editionToSave(artist, name)
   const job = albumJobFor({ artist, album: name, edition, editionFrom: from, surface, origin, clickedAt })
   const existing = itemFor(job)
   if (existing && existing.status !== 'failed' && existing.status !== 'canceled') {
     enqueue(job)   // adopts this row's origin onto the running job
-    return { existingKey: existing.key }
+    return { existingKey: existing.key, key: existing.key }
   }
   enqueue(job)
-  return {}
+  return { key: queueKey(job) }
 }
 
 export async function cancelRecoDownload(id: string): Promise<void> {
