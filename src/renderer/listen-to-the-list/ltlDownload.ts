@@ -23,7 +23,7 @@ import type { Recommendation } from '../types.ts'
 import { friendOf, isLinkKind } from './friend.ts'
 import {
   enqueue, cancel, retry, subscribeQueue, getQueue, itemForRecommendation, itemFor, newestJob,
-  trackQueryId, albumQueryId, type QItem, type QResult, type QueueOrigin,
+  trackQueryId, albumQueryId, queueKey, sameRecordKey, type QItem, type QResult, type QueueOrigin,
 } from '../views/DownloadStore/downloadQueue.ts'
 import { albumJobFor, editionToSave } from '../views/DownloadStore/albumEditions.ts'
 import type { AlbumSaveSurface } from '../../common/album-preflight.ts'
@@ -124,7 +124,7 @@ export function projectRecoStatus(queue: QItem[], rec: Pick<Recommendation, 'id'
   // (Brief 257) is a second job for the same jot, after the refused one.
   // Newest by when it was queued, never by place: a restart moves an interrupted job to the front.
   const it = newestJob(queue, (q) => Boolean(q.result.origin?.recommendationIds.includes(rec.id)))
-    ?? (rec.artist || rec.song || rec.album ? (() => { const k = jobKeyFor(rec as Recommendation); return k ? queue.find((q) => q.key === k) : undefined })() : undefined)
+    ?? (rec.artist || rec.song || rec.album ? (() => { const k = jobKeyFor(rec as Recommendation); return k ? queue.find((q) => sameRecordKey(q.key, k)) : undefined })() : undefined)
   if (!it) return { state: 'idle' }
   const base = { jobKey: it.key, matchDesc: it.matchDesc, completion: it.completion, primary: it.primary, detail: it.detail, outcome: it.outcome }
   switch (it.status) {
@@ -207,29 +207,30 @@ export function queueAllRecoDownloads(recs: Recommendation[]): { queued: number;
  * running or done, so the caller can show it in Downloads (Brief 253: Save
  * album never does nothing).
  */
-export async function saveRecoAlbum(rec: Recommendation, surface: AlbumSaveSurface): Promise<{ existingKey?: string }> {
+export async function saveRecoAlbum(rec: Recommendation, surface: AlbumSaveSurface): Promise<{ existingKey?: string; key?: string }> {
   const clickedAt = Date.now()
   const { artist, title, album } = recoFields(rec)
   const name = album || title
   if (!artist || !name) return {}
   const mine = itemForRecommendation(rec.id)
-  if (mine && mine.status !== 'failed' && mine.status !== 'canceled') return { existingKey: mine.key }
+  if (mine && mine.status !== 'failed' && mine.status !== 'canceled') return { existingKey: mine.key, key: mine.key }
   return saveAlbumNamed(artist, name, surface, recoOrigin(rec), clickedAt)
 }
 
 /** Save album for a record named by artist and title, with or without a row
  *  behind it (a For You card not yet on the list). Same rules as saveRecoAlbum. */
-export async function saveAlbumNamed(artist: string, name: string, surface: AlbumSaveSurface, origin?: QueueOrigin, clickedAt = Date.now()): Promise<{ existingKey?: string }> {
+/** `key` is the job's key, either way, so a card with no row behind it can follow its own save (Phase 2). */
+export async function saveAlbumNamed(artist: string, name: string, surface: AlbumSaveSurface, origin?: QueueOrigin, clickedAt = Date.now()): Promise<{ existingKey?: string; key?: string }> {
   if (!artist || !name) return {}
   const { edition, from } = await editionToSave(artist, name)
   const job = albumJobFor({ artist, album: name, edition, editionFrom: from, surface, origin, clickedAt })
   const existing = itemFor(job)
   if (existing && existing.status !== 'failed' && existing.status !== 'canceled') {
     enqueue(job)   // adopts this row's origin onto the running job
-    return { existingKey: existing.key }
+    return { existingKey: existing.key, key: existing.key }
   }
   enqueue(job)
-  return {}
+  return { key: queueKey(job) }
 }
 
 export async function cancelRecoDownload(id: string): Promise<void> {

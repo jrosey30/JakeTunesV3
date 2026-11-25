@@ -9,16 +9,19 @@ import { toggleDownloadsPanel, showDownload } from '../../components/DownloadsPa
 import { useLibrary } from '../../context/LibraryContext'
 import { scoreField, scoreResult, releaseKind, displayAlbumTitle, artistArtwork, isArtistQuery, ownedAlbum, ownsArtist, listedAlbum, listedArtist, listedSong, markLine, pickLibraryHits, type ShopAlbum, type ShopArtist } from '../../../common/shop-search'
 import { losslessOf, losslessTitle } from '../../../common/shop-lossless'
-import { LIST_MARK } from '../../../common/shop-names'
+import { LIST_MARK, SHOP_WORDS } from '../../../common/shop-names'
 import { askLossless, losslessFor, losslessVersion, notePlanRow, subscribeLossless } from './shopLossless'
 import { planIsSure, planRowOfJob, planTitle } from '../../../common/shop-qobuz-id'
 import { useShopMarks } from './useShopMarks'
 import ShopArtistPage from './ShopArtistPage'
 import ShopAlbumPage, { type ShopAlbumRef } from './ShopAlbumPage'
+import AlbumCardFoot, { editionsKeyName } from './AlbumCardFoot'
+import { askEditions } from './EditionMenu'
+import type { CardRecord } from '../../../common/shop-card-edition'
 import { albumKeyOf } from '../../utils/albumKey'
 import { buildIndex, search as searchLibrary, type AlbumRow as LibAlbumRow, type ArtistRow as LibArtistRow, type TrackRow as LibTrackRow } from '../../utils/searchIndex'
 import './shop-search.css'
-import { enqueue, itemFor, subscribeQueue, getQueue, retry, cancel, primaryFor, trackQueryId, albumQueryId, type QItem, type QResult, type QueueOrigin } from './downloadQueue'
+import { enqueue, itemFor, subscribeQueue, getQueue, retry, cancel, primaryFor, trackQueryId, editionQueryId, type QItem, type QResult, type QueueOrigin } from './downloadQueue'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
 import type { ItunesSuggestion } from '../../types'
 import { explicitWins } from '../../../common/explicit'
@@ -152,7 +155,7 @@ const songQ = (r: SongRow): QResult => ({
 })
 const albumQ = (r: AlbumRow): QResult => ({
   kind: 'query', source: 'qobuz', mediaType: 'album',
-  id: albumQueryId(r.artist, r.album),
+  id: editionQueryId(r.artist, r.album, r.collectionId),
   desc: `${displayAlbumTitle(r.album)} — ${r.artist} (album)`,
   artist: r.artist,
   // Search Qobuz without Apple's " - Single"/" - EP" stamp. Identity (id)
@@ -624,7 +627,7 @@ export default function DownloadView() {
       const refused = item?.outcome === 'exact-not-found' || item?.outcome === 'not-found' || item?.outcome === 'unverifiable'
       if (refused) {
         const near = item && item.result.mediaType === 'album' ? nearEditionOf(item.alternatives as import('../../../common/acquisition-identity').Alternative[] | undefined, item.result.trackCount ?? null) : null
-        const verb = near ? 'Details' : item?.result.mediaType === 'album' ? 'Choose edition…' : 'Choose version…'
+        const verb = near ? 'Details' : SHOP_WORDS.chooseAnother
         return <button className="download-retry download-retry--failed" onClick={() => toggleDownloadsPanel('open')} title={`${label} — open Downloads${near ? ' (the matching tracks can be taken from there)' : ' to choose another'}`}>{label} · {verb}</button>
       }
       return <button className="download-retry download-retry--failed" onClick={() => item && retry(item.key)} title={`${label} — Retry`}>{label} · Retry</button>
@@ -677,7 +680,7 @@ export default function DownloadView() {
           {s.previewUrl && previewBtn(pid, s.previewUrl, s.title, s.artist, 'dl-song-play')}
         </span>
         {artOr(s.artworkUrl, 'dl-song-art')}
-        <span className="dl-song-title" title={s.title}>{dotFor('song', s.artist, s.title, searchScope, qres)}{s.title}{listed ? <span className="shop-mark shop-mark--list shop-mark--inline">{LIST_MARK}</span> : null}</span>
+        <span className="dl-song-title" title={s.title}>{dotFor('song', s.artist, s.title, searchScope, qres)}<span className="dl-song-name">{s.title}</span>{listed ? <span className="shop-mark shop-mark--list shop-mark--inline">{LIST_MARK}</span> : null}</span>
         <span className="dl-song-artist" title={s.artist}>{s.artist}</span>
         <span className="dl-song-album" title={s.album || ''}>{s.album ? displayAlbumTitle(s.album) : ''}</span>
         {/* Year on songs too: iTunes returns original, remaster, live and comp
@@ -715,41 +718,34 @@ export default function DownloadView() {
     return { year: a.releaseYear, count, genre: a.genre, clean: a.explicitness === 'cleaned', kind: releaseKind(a.album, count) }
   }
 
-  /** A release, as a cover card. Clicking it opens the album's page (Brief 256);
-   *  Save album saves it from here. */
+  /** A release, as a cover card. Clicking it opens the album's page (Brief 256).
+   *  Under it, always (Phase 2, the approved picture): "In your library", or
+   *  Save album and the edition it saves (AlbumCardFoot). */
   const renderRelease = (a: AlbumRow, i = 0, scope: { words: string; limit: number } = searchScope) => {
     const qres = albumQ(a)
     const item = itemFor(qres)
     const { year, count, genre, clean, kind } = releaseFacts(a)
     const owned = ownedAlbum(marks.lib, a.artist, a.album, count)
-    const mark = markLine({ owned, listed: listedAlbum(marks.list, a.artist, a.album) })
-    // 'done' is already said by the green check; everything else needs a
-    // control (cancel / retry) that must stay reachable without hovering.
-    const busy = !!item && item.status !== 'done'
+    const ownsAll = owned?.state === 'all'
+    const mark = markLine({ owned: ownsAll ? null : owned, listed: listedAlbum(marks.list, a.artist, a.album) })
+    const card: CardRecord = { collectionId: a.collectionId, name: a.album, trackCount: a.trackCount, releaseYear: a.releaseYear, explicitness: a.explicitness }
+    const askAlbum = (): void => askEditions(a.artist, editionsKeyName(a.album))
     return (
       <div
         key={qres.id}
         className={`dl-rel${item ? ` is-${item.status}` : ''}`}
         style={{ '--i': i } as CSSProperties}
         onClick={() => openAlbum(a)}
+        onPointerEnter={askAlbum}
+        onFocus={askAlbum}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAlbum(a) } }}
       >
         <span className="dl-rel-frame">
           {artOr(a.artworkUrl, 'dl-rel-art')}
-          {/* A release that is DOING something says so on a strip along the
-              bottom, always visible. */}
-          {busy ? (
-            <span className="dl-rel-busy" onClick={(e) => e.stopPropagation()}>{renderAction(qres, item)}</span>
-          ) : (
-            <span className="dl-rel-hover">
-              <span className="dl-rel-get" onClick={(e) => e.stopPropagation()}>{renderAction(qres, item)}</span>
-              <span className="dl-rel-open">See songs</span>
-            </span>
-          )}
           {clean && <span className="dl-rel-clean" title="Censored edition — iTunes has no explicit version of this release">CLEAN</span>}
-          {owned?.state === 'all' && <span className="dl-rel-owned" title="In your library">✓</span>}
+          {ownsAll && <span className="dl-rel-owned" title="In your library">✓</span>}
         </span>
         <span className="dl-rel-title" title={a.album}>{dotFor('album', a.artist, a.album, scope, qres)}{displayAlbumTitle(a.album)}</span>
         <span className="dl-rel-facts">
@@ -760,6 +756,9 @@ export default function DownloadView() {
         </span>
         <span className="dl-rel-sub" title={a.artist}>{a.artist}{genre ? ` · ${genre}` : ''}</span>
         {mark ? <span className={`shop-mark${mark === LIST_MARK ? ' shop-mark--list' : ''}`}>{mark}</span> : null}
+        {ownsAll && !item
+          ? <span className="dl-rel-foot"><span className="shop-own">In your library</span></span>
+          : <AlbumCardFoot artist={a.artist} card={card} cardJob={qres} action={(job) => renderAction(job, itemFor(job))} />}
       </div>
     )
   }

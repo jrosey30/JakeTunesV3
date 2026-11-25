@@ -26,7 +26,7 @@ interface Props {
   /** A persistent trailing control on the row (its own click, never the
    *  row's). The Download row's door to the Downloads panel: always shown;
    *  `badge` inside it only while there is something to count. */
-  door?: { onClick: () => void; title: string; icon: ReactNode; badge?: string }
+  door?: { onClick: () => void; title: string; icon: ReactNode; badge?: string; /** The count is of failures: drawn red. */ alert?: boolean }
   /** 2026-09-02: make the row a DRAG SOURCE carrying this whole list —
    *  a playlist dragged onto another playlist brings every song. */
   dragTrackIds?: number[]
@@ -95,7 +95,7 @@ export default function SidebarItem({ label, icon, selected, indicator, highligh
       {badge && <span className="sidebar-item-badge">{badge}</span>}
       {door && (
         <button type="button" className={`sidebar-item-door${door.badge ? ' sidebar-item-door--counted' : ''}`} title={door.title} aria-label={door.title} onClick={(e) => { e.stopPropagation(); door.onClick() }}>
-          {door.badge && <span className="sidebar-item-badge sidebar-item-door-badge">{door.badge}</span>}
+          {door.badge && <span className={`sidebar-item-badge sidebar-item-door-badge${door.alert ? ' sidebar-item-door-badge--alert' : ''}`}>{door.badge}</span>}
           <span className="sidebar-item-door-icon" aria-hidden="true">{door.icon}</span>
         </button>
       )}

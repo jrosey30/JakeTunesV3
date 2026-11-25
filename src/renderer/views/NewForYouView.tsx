@@ -46,6 +46,7 @@ import EditionMenu, { askEditions } from './DownloadStore/EditionMenu'
 import AlbumTracklistSheet from './DownloadStore/AlbumTracklistSheet'
 import { showDownload } from '../components/DownloadsPanel'
 import { LIST_MARK } from '../../common/shop-names'
+import AlbumSaveButton from './DownloadStore/AlbumSaveButton'
 import '../styles/discover-feed.css'
 
 interface FeedCard {
@@ -383,6 +384,8 @@ export default function NewForYouView() {
             return (
               <>
                 {c.type === 'album' && <button type="button" className="store-songs store-songs--foot" onClick={() => setSongsOf(c)} title="See the songs and pick a few">Songs</button>}
+                {/* Phase 2: an album saves from its card in one click, on the list or not. */}
+                {c.type === 'album' && <AlbumSaveButton artist={c.artist} album={c.title} surface="for-you" className="store-add" offerClassName="store-offer" />}
                 <button type="button" className="store-add" onClick={() => void addToList(c)}>+ List</button>
               </>
             )
@@ -573,7 +576,7 @@ export default function NewForYouView() {
   return (
     <div className="df-view" ref={pageRef}>
       <div className="store-head">
-        {/* The shop's name is its header's (DiscoveryView), above the tabs. */}
+        {/* One heading: the shop's own, above the tabs (DiscoveryView, SHOP_WORDS.shop). */}
         <div>
           <span className="store-sub">WJLR Records · Greenpoint{generatedAt ? ` · restocked ${new Date(generatedAt).toLocaleDateString()}` : ''}</span>
         </div>

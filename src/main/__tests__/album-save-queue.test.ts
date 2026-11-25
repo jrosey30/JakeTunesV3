@@ -179,10 +179,13 @@ describe('Save album from a Listen List row, in one click', () => {
     let release!: () => void
     walk.set('Remain in Light', () => new Promise<Answer>((res) => { release = () => res({ ok: true, imported: 8 }) }))
     const r = rec({ kind: 'album', artist: 'Talking Heads', album: 'Remain in Light' })
-    assert.deepEqual(await saveRecoAlbum(r, 'listen-list'), {})
+    const first = await saveRecoAlbum(r, 'listen-list')
+    assert.equal(first.existingKey, undefined, 'a new save, not one already running')
+    assert.ok(first.key, 'it hands back its own job (Phase 2: a card follows its save)')
     await sleep(20)
     const again = await saveRecoAlbum(r, 'listen-list')
     assert.ok(again.existingKey)
+    assert.equal(again.existingKey, first.key)
     assert.equal(getQueue().filter((q) => q.result.album === 'Remain in Light').length, 1)
     release()
     await settle()
@@ -191,7 +194,7 @@ describe('Save album from a Listen List row, in one click', () => {
   it('albumJobFor: the Search tab’s album job for that edition', () => {
     const q = albumJobFor({ artist: 'Wire', album: 'Pink Flag', edition: { collectionId: 9, name: 'Pink Flag - EP', label: 'Standard', trackCount: 21, explicitness: 'explicit' }, editionFrom: 'picked', surface: 'for-you', clickedAt: 5 })
     assert.equal(q.album, 'Pink Flag'); assert.equal(q.collectionId, 9); assert.equal(q.explicitSource, true); assert.equal(q.cleanedSource, false)
-    assert.equal(q.id, albumQueryId('Wire', 'Pink Flag - EP')); assert.equal(q.editionFrom, 'picked'); assert.equal(q.mediaType, 'album')
+    assert.equal(q.id, `${albumQueryId('Wire', 'Pink Flag - EP')}|9`, 'the edition named is in the id (review of #486)'); assert.equal(q.editionFrom, 'picked'); assert.equal(q.mediaType, 'album')
   })
 })
 

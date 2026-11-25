@@ -385,7 +385,8 @@ export default function ListenToTheListView() {
           ) : isAlbum ? (
             r.kind === 'concert' ? (
               // A concert is browsed in Search, as before; it has no editions to name.
-              <button type="button" className="ltl-tri-get" onClick={() => openDownloadForReco(r)} title="Find it in Search">Save album</button>
+              // The button says what it does: it searches (Phase 2: "Save album" only ever saves).
+              <button type="button" className="ltl-tri-get" onClick={() => openDownloadForReco(r)} title="Find it in Search">Search</button>
             ) : (
               <>
                 {/* First in the column: appearing, it moves nothing to its right. */}

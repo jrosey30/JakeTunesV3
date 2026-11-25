@@ -58,7 +58,7 @@ export default function DiscoveryView({ initialTab }: { initialTab?: DiscoveryTa
             value={query}
             onChange={(e) => type(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && query.trim() && tab !== 'browse') select('browse') }}
-            placeholder="Search a song, album or artist"
+            placeholder="Search the Record Shop"
             aria-label="Search the Record Shop"
             spellCheck={false}
           />

@@ -827,35 +827,6 @@
 }
 .dl-rel:hover .dl-rel-art { transform: translateY(-3px); box-shadow: 0 2px 5px rgba(0,0,0,0.2), 0 16px 26px -12px rgba(0,0,0,0.5); }
 .dl-rel.is-open .dl-rel-art { box-shadow: 0 0 0 2px var(--brand-orange), 0 10px 20px -12px rgba(0,0,0,0.45); }
-.dl-rel-hover {
-  position: absolute; inset: 0; border-radius: var(--radius-md);
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px;
-  /* Darker than it was: album art is a PHOTOGRAPH as often as not, and white
-     type over a light cover at 0.12 scrim was unreadable. */
-  background: linear-gradient(180deg, rgba(18,12,8,0.30), rgba(18,12,8,0.76));
-  opacity: 0; transition: opacity var(--motion-fast) var(--ease-out);
-}
-
-/* The busy strip — always visible, along the bottom edge, out of the art's way. */
-.dl-rel-busy {
-  position: absolute; left: 0; right: 0; bottom: 0;
-  display: flex; align-items: center; justify-content: center; gap: var(--space-3);
-  padding: var(--space-3) var(--space-3) var(--space-2);
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
-  background: linear-gradient(180deg, rgba(18,12,8,0), rgba(18,12,8,0.88) 45%);
-}
-.dl-rel-busy .dl-actions { display: flex; align-items: center; gap: var(--space-3); }
-.dl-rel-busy .dl-state { font-size: var(--font-10); color: rgba(255,255,255,0.94); }
-.dl-rel-busy .download-cancel,
-.dl-rel-busy .download-retry {
-  font-size: var(--font-10); font-weight: var(--fw-bold);
-  color: #fff; background: rgba(255,255,255,0.18);
-  border: 1px solid rgba(255,255,255,0.34); border-radius: var(--radius-pill);
-  padding: 1px var(--space-3);
-}
-.dl-rel-busy .download-cancel:hover, .dl-rel-busy .download-retry:hover { background: rgba(255,255,255,0.30); }
-.dl-rel:hover .dl-rel-hover, .dl-rel:focus-visible .dl-rel-hover { opacity: 1; }
-.dl-rel-open { font-size: var(--font-10); font-weight: var(--fw-bold); letter-spacing: 0.04em; text-transform: uppercase; color: rgba(255,255,255,0.9); line-height: 1; }
 .dl-rel-owned {
   position: absolute; top: 5px; right: 5px;
   width: 17px; height: 17px; border-radius: 50%;
@@ -1063,3 +1034,17 @@
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
+
+/* The card's foot (Phase 2, the approved picture): Save album, or the job's
+   state, beside the edition it saves; "In your library" in green when owned.
+   Always shown, never only on hover. */
+.dl-rel-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 5px; margin-top: var(--space-3); min-width: 0; min-height: var(--control-h-sm); }
+.dl-rel-foot .download-result-btn { padding: 0 8px; font-size: var(--font-11); border-color: var(--brand-orange); color: var(--brand-orange-dark); background: #fff; }
+.dl-rel-foot .dl-actions { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.dl-rel-foot .download-retry { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-rel-ed { position: relative; font-size: var(--font-11); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.dl-rel-ed--menu { cursor: pointer; color: var(--text-secondary, #5d5650); }
+.dl-rel-ed--menu:hover { color: var(--brand-orange-dark); }
+/* The real <select> sits over the words, invisible: the system menu opens on a click. */
+.dl-rel-ed--menu select { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; font-size: var(--font-12); }
+.shop-own { font-size: var(--font-11); font-weight: var(--fw-semibold); color: #2c7a4b; }

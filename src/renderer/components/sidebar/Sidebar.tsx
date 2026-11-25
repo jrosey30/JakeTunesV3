@@ -11,7 +11,7 @@ import { parseIpodListPlaylistId } from '../../../common/ipod-list-doc'
 import { entryColor } from '../../ipodLists'
 import { useLibrary } from '../../context/LibraryContext'
 import { subscribeQueue, getQueue } from '../../views/DownloadStore/downloadQueue'
-import { downloadsPanelRows, panelSummary, downloadsBadge } from '../../../common/downloads-panel-model'
+import { downloadsPanelRows, panelSummary, downloadsDoor } from '../../../common/downloads-panel-model'
 import { toggleDownloadsPanel, subscribeDownloadsPanelOpen, getDownloadsPanelOpen } from '../DownloadsPanel'
 import { deviceFixtureRequested } from '../../syncTimeline'
 import { usePlayback } from '../../context/PlaybackContext'
@@ -430,7 +430,7 @@ export default function Sidebar() {
   // Step 5 slice 3 — the row carries a persistent door to the Downloads
   // panel; the count inside it reads in-flight while jobs move, "N done"
   // once they settle, and is hidden when the queue is empty.
-  const downloadsBadgeText = downloadsBadge(panelSummary(downloadsPanelRows(downloadQueue, Date.now())))
+  const downloadsDoorNow = downloadsDoor(panelSummary(downloadsPanelRows(downloadQueue, Date.now())))
   const downloadsPanelOpen = useSyncExternalStore(subscribeDownloadsPanelOpen, getDownloadsPanelOpen)
   // Section order (2026-11-07, Jake: "i want to be able to have the side bar categories
   // customizeable as to where i place them, click and drag and drop"). Per machine, in
@@ -742,9 +742,10 @@ export default function Sidebar() {
           className={downloadsPanelOpen ? 'sidebar-item--panel-open' : undefined}
           onClick={() => toggleDownloadsPanel('toggle')}
           door={{
-            title: 'Show downloads',
+            title: downloadsDoorNow.title,
             onClick: () => toggleDownloadsPanel('toggle'),
-            badge: downloadsBadgeText,
+            badge: downloadsDoorNow.badge,
+            alert: downloadsDoorNow.alert,
             icon: (
               <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="1.5" y="2" width="9" height="8" rx="1.2" />

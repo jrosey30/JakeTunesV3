@@ -175,6 +175,8 @@
 .sidebar-item-door:hover { background: rgba(0,0,0,0.08); color: #4a4841; }
 .sidebar-item-door-icon { display: inline-flex; }
 .sidebar-item-door-badge { margin-left: 0; }
+/* The Downloads count when it counts failures: red (#c0392b), white figures. */
+.sidebar-item-door-badge--alert { background: #c0392b; color: #fff; }
 .sidebar-item--selected .sidebar-item-door { color: rgba(255,255,255,0.85); }
 .sidebar-item--selected .sidebar-item-door:hover { background: rgba(255,255,255,0.18); color: #fff; }
 

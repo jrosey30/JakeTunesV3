@@ -278,8 +278,18 @@ export function panelSummary(rows: readonly PanelRow[]): PanelSummary {
  * What is on its way, else what needs Jake; a finished save is not news.
  */
 export function downloadsBadge(s: PanelSummary): string | undefined {
+  return downloadsDoor(s).badge
+}
+
+/**
+ * The whole door: the number, whether it is the failed count (drawn red), and
+ * the tooltip, which always says when something failed ("3 failed", "2 saving
+ * · 3 failed"), so a failure is never only a number.
+ */
+export function downloadsDoor(s: PanelSummary): { badge?: string; alert: boolean; title: string } {
   const inFlight = s.active + s.queued
-  if (inFlight > 0) return inFlight.toLocaleString()
-  if (s.failed > 0) return s.failed.toLocaleString()
-  return undefined
+  const failed = s.failed > 0 ? `${s.failed.toLocaleString()} failed` : null
+  if (inFlight > 0) return { badge: inFlight.toLocaleString(), alert: false, title: failed ? `${inFlight.toLocaleString()} saving · ${failed}` : `${inFlight.toLocaleString()} saving` }
+  if (failed) return { badge: s.failed.toLocaleString(), alert: true, title: failed }
+  return { alert: false, title: 'Show downloads' }
 }
