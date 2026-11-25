@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  rankMovement, rotateRankSnap, weekKeyOf, isRankedPlaylist, RANK_SNAPSHOT_KEYS, WEEK_MS,
+  rankMovement, rotateRankSnap, top1000Movement, weekKeyOf, isRankedPlaylist, RANK_SNAPSHOT_KEYS, WEEK_MS,
 } from '../../common/rank-movement.ts'
 
 describe('rankMovement', () => {
@@ -71,5 +71,33 @@ describe('each ranked list keeps its own snapshot', () => {
     assert.match(view, /rotateRankSnap\(existing\[key\]/)
     assert.match(view, /\[key\]: next/)
     assert.doesNotMatch(view, /topRankSnapshot/, 'no hard-coded snapshot key in the view')
+  })
+})
+
+describe('Top 1000: homemini\'s weekly movement (2026-11-24)', () => {
+  const at = '2026-11-20T11:00:00.000Z'
+  test('a normal week: green up, red down by the places moved; a song that held shows nothing', () => {
+    assert.equal(top1000Movement(3, { lastWeekRank: 10, isNew: false }, at)?.arrow, '▲7')
+    assert.equal(top1000Movement(3, { lastWeekRank: 10, isNew: false }, at)?.arrowClass, 'rank-arrow rank-arrow--up')
+    assert.equal(top1000Movement(12, { lastWeekRank: 4, isNew: false }, at)?.arrow, '▼8')
+    assert.equal(top1000Movement(12, { lastWeekRank: 4, isNew: false }, at)?.arrowClass, 'rank-arrow rank-arrow--down')
+    assert.equal(top1000Movement(5, { lastWeekRank: 5, isNew: false }, at), null)
+  })
+  test('NEW only when homemini says so', () => {
+    assert.equal(top1000Movement(40, { lastWeekRank: null, isNew: true }, at)?.arrow, 'NEW')
+    assert.equal(top1000Movement(40, { lastWeekRank: null, isNew: false }, at), null)
+  })
+  test('a fresh-start week (no comparedTo), an older homemini or an unknown song: no arrow', () => {
+    assert.equal(top1000Movement(3, { lastWeekRank: 10, isNew: false }, null), null)
+    assert.equal(top1000Movement(3, { lastWeekRank: null, isNew: true }, null), null)
+    assert.equal(top1000Movement(3, {}, undefined), null)
+    assert.equal(top1000Movement(3, undefined, at), null)
+  })
+  test('the view never feeds the Top 1000 into the local snapshot; its arrows are homemini\'s', () => {
+    const view = readFileSync(join(import.meta.dirname, '../../renderer/views/SmartPlaylistView.tsx'), 'utf8')
+    const memo = view.slice(view.indexOf('const currentRanks = useMemo'), view.indexOf('useEffect(', view.indexOf('const currentRanks = useMemo')))
+    assert.ok(memo.length > 0)
+    assert.doesNotMatch(memo, /top-1000|top1000Ranks/, 'the Top 1000 went back into the local snapshot')
+    assert.match(view, /top1000Movement\(rank, top1000Moves\.movement\?\.\[String\(track\.id\)\], top1000Moves\.comparedTo\)/)
   })
 })

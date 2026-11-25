@@ -210,9 +210,14 @@ export interface QuizAnswerInput {
   quota?: number
 }
 
-export interface QuizListEntry { id: number; rank: number; pIn: number }
+/**
+ * One song of the list. `lastWeekRank` / `isNew` (homemini 2026-11-24) are the weekly movement of
+ * the PUBLISHED list against the one it replaced by the same rules: absent from an older homemini
+ * or on ?live=1; null / false on a fresh-start week (first publish, or new rules).
+ */
+export interface QuizListEntry { id: number; rank: number; pIn: number; lastWeekRank?: number | null; isNew?: boolean }
 
-export function parseQuizList(raw: unknown): { progress: QuizProgress; list: QuizListEntry[] } | null {
+export function parseQuizList(raw: unknown): { progress: QuizProgress; list: QuizListEntry[]; comparedTo?: string | null } | null {
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
   const progress = parseProgress(r.progress)
@@ -223,7 +228,16 @@ export function parseQuizList(raw: unknown): { progress: QuizProgress; list: Qui
     const rank = num((e as { rank?: unknown })?.rank)
     const pIn = num((e as { pIn?: unknown })?.pIn)
     if (id === null || rank === null || pIn === null) continue
-    list.push({ id, rank, pIn })
+    const entry: QuizListEntry = { id, rank, pIn }
+    const lw = (e as { lastWeekRank?: unknown }).lastWeekRank
+    if (lw === null) entry.lastWeekRank = null
+    else { const n = num(lw); if (n !== null && Number.isInteger(n) && n > 0) entry.lastWeekRank = n }
+    const isNew = (e as { isNew?: unknown }).isNew
+    if (typeof isNew === 'boolean') entry.isNew = isNew
+    list.push(entry)
   }
-  return { progress, list }
+  // When last week's list was published (homemini 2026-11-24); null on a fresh-start week; absent
+  // from an older homemini.
+  if (!('comparedTo' in r)) return { progress, list }
+  return { progress, list, comparedTo: typeof r.comparedTo === 'string' ? r.comparedTo : null }
 }

@@ -16,10 +16,15 @@ export interface Top1000ListState {
   /** the quiz's rank per song id (String(id) → rank), every song on the list,
    *  in the library here or not; null until homemini has answered once */
   ranks: Record<string, number> | null
+  /** each song's weekly movement from homemini (String(id) → lastWeekRank / isNew), and when
+   *  last week's list was published (null: a fresh-start week or an older homemini: no arrows).
+   *  src/common/rank-movement.ts top1000Movement reads both. */
+  movement: Record<string, { lastWeekRank?: number | null; isNew?: boolean }> | null
+  comparedTo: string | null
   fetchedAt: number | null
 }
 
-let snap: Top1000ListState = { ids: null, ranks: null, fetchedAt: null }
+let snap: Top1000ListState = { ids: null, ranks: null, movement: null, comparedTo: null, fetchedAt: null }
 let inFlight: Promise<void> | null = null
 const listeners = new Set<() => void>()
 
@@ -29,8 +34,8 @@ function subscribe(cb: () => void): () => void {
 }
 const getSnapshot = (): Top1000ListState => snap
 
-function put(ids: number[], ranks: Record<string, number>): void {
-  snap = { ids, ranks, fetchedAt: Date.now() }
+function put(ids: number[], ranks: Record<string, number>, movement: Top1000ListState['movement'], comparedTo: string | null): void {
+  snap = { ids, ranks, movement, comparedTo, fetchedAt: Date.now() }
   for (const l of listeners) l()
 }
 
@@ -43,11 +48,15 @@ export function refreshTop1000List(): Promise<void> {
       if (!r.ok) { console.warn('[top1000-list] unavailable:', r.error); return }
       const rows = [...r.value.list]
         .sort((a, b) => a.rank - b.rank)
-        .map((e) => ({ id: Number(e.id), rank: Number(e.rank) }))
+        .map((e) => ({ id: Number(e.id), rank: Number(e.rank), lastWeekRank: e.lastWeekRank, isNew: e.isNew }))
         .filter((e) => Number.isInteger(e.id) && e.id > 0)
       const ranks: Record<string, number> = {}
-      for (const e of rows) if (Number.isFinite(e.rank) && e.rank > 0) ranks[String(e.id)] = e.rank
-      put(rows.map((e) => e.id), ranks)
+      const movement: NonNullable<Top1000ListState['movement']> = {}
+      for (const e of rows) {
+        if (Number.isFinite(e.rank) && e.rank > 0) ranks[String(e.id)] = e.rank
+        movement[String(e.id)] = { lastWeekRank: e.lastWeekRank, isNew: e.isNew }
+      }
+      put(rows.map((e) => e.id), ranks, movement, r.value.comparedTo ?? null)
     })
     .catch((err: unknown) => { console.warn('[top1000-list] read failed:', err instanceof Error ? err.message : err) })
     .finally(() => { inFlight = null })
@@ -67,4 +76,10 @@ export function useTop1000List(): number[] | null {
  *  when homemini has never answered. Shares the list's fetch. */
 export function useTop1000Ranks(): Record<string, number> | null {
   return useSyncExternalStore(subscribe, getSnapshot).ranks
+}
+
+/** The Top 1000's weekly movement from homemini (shares the list's fetch). */
+export function useTop1000Movement(): { movement: Top1000ListState['movement']; comparedTo: string | null } {
+  const s = useSyncExternalStore(subscribe, getSnapshot)
+  return { movement: s.movement, comparedTo: s.comparedTo }
 }
