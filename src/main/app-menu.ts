@@ -10,8 +10,8 @@
  * keymap.test.ts builds this with stubs and checks that no key is wired twice.
  *
  * Built from deps so it can be tested without Electron: index.ts passes the
- * About item (it writes its window from main's own state), the menu-action
- * sender and the offload runner.
+ * About item (it writes its window from main's own state) and the menu-action
+ * sender.
  */
 import type { MenuItemConstructorOptions } from 'electron'
 import { menuKeys, shortcut } from '../common/keymap.ts'
@@ -19,7 +19,6 @@ import { menuKeys, shortcut } from '../common/keymap.ts'
 export interface AppMenuDeps {
   about: MenuItemConstructorOptions
   send: (action: string) => void
-  hubOffload: (mode: 'dry-run' | 'start' | 'rehydrate') => void
 }
 
 /** A menu item for a keymap shortcut: its label, its keys, its one wiring. */
@@ -77,33 +76,12 @@ export function buildAppMenu(d: AppMenuDeps): MenuItemConstructorOptions[] {
         sep,
         {
           label: 'Library',
+          // V7: the rest of the old tools run by themselves in the nightly
+          // check (self-care.ts); offload is Settings › Storage. Only Jake's
+          // own decisions are here.
           submenu: [
-            // (V7 steady: "Fix iPod Compatibility…" is gone. It re-encoded the
-            // library's own hi-res ALAC masters down to 16-bit, in place.
-            // Sync already makes iPod-safe copies in its cache
-            // (buildIpodSafeAlacMirror), so the tool could only damage
-            // masters. master-never-reencoded.test.ts keeps it gone.)
-            // 4.1: ALAC play-cache management. Replaces the launch-time
-            // prewarm scanner with explicit user actions.
-            { label: 'Prepare ALAC Songs for Instant Play…', click: () => d.send('prepare-alac-cache') },
-            { label: 'Prune Play-Cache…', click: () => d.send('prune-alac-cache') },
-            { label: 'Clean Orphan Files…', click: () => d.send('clean-orphan-files') },
-            // Surface library entries that share artist+title+album so the
-            // user can pick which copies to remove. Per-row delete only —
-            // never bulk, never auto.
+            { label: 'Needs You…', click: () => d.send('show-needs-you') },
             { label: 'Show Duplicates…', click: () => d.send('show-duplicates') },
-            sep,
-            // Brief 020: push the user-edited override fields into the audio
-            // files' embedded tags (the one-shot backfill; per-edit
-            // write-back fires inside save-metadata-override).
-            { label: 'Apply Overrides to Files…', click: () => d.send('apply-overrides-to-files') },
-            // Brief 016 commit 2: one-shot retrofit of stale library.json
-            // fileSize values. Audio files themselves are NOT modified.
-            { label: 'Refresh File Sizes…', click: () => d.send('refresh-file-sizes') },
-            sep,
-            { label: 'Offload Audio — Dry Run', click: () => d.hubOffload('dry-run') },
-            { label: 'Offload Audio — Start', click: () => d.hubOffload('start') },
-            { label: 'Undo Offload (pull audio back)', click: () => d.hubOffload('rehydrate') },
           ],
         },
         sep,

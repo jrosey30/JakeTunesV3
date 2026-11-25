@@ -207,7 +207,7 @@ describe('the Keyboard Shortcuts sheet (⌘/) is generated from the keymap', () 
 
 describe('the Mac menu bar — one wiring per shortcut', () => {
   const sent: string[] = []
-  const menu = buildAppMenu({ about: { label: 'About JakeTunes' }, send: (a) => sent.push(a), hubOffload: () => {} })
+  const menu = buildAppMenu({ about: { label: 'About JakeTunes' }, send: (a) => sent.push(a) })
   const all: { item: MenuItemConstructorOptions; path: string }[] = []
   const walk = (items: MenuItemConstructorOptions[], path: string): void => {
     for (const it of items) {

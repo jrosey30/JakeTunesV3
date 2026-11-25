@@ -5,7 +5,7 @@
  * resumes only when offload-migration.json says a start already happened,
  * or when argv is --offload-dry-run / --offload-start.
  *
- * Registered through the IPC registrar. Menu clicks call the same functions.
+ * Registered through the IPC registrar. Settings › Storage calls them (V7).
  */
 import { dialog } from 'electron'
 import { mkdir, readFile, writeFile, lstat, statfs, rename, unlink } from 'fs/promises'
@@ -347,17 +347,21 @@ async function runRehydrate(interactive: boolean): Promise<{ ok: boolean; restor
   return { ok: !result.stoppedBecause, restored: result.restored, error: result.stoppedBecause ?? undefined }
 }
 
+/** The setting reader caches for 5 s (createCachedOffloadReader): a start sent right after Save waits it out. */
+export const SETTING_CACHE_WAIT_MS = 5_500
+
 export function registerOffloadIpc(ipc: IpcRegistrar, h: OffloadIpcHost): void {
   host = h
-  ipc.handle('offload-audio-dry-run', async () => runDry(true), { refuse: REFUSED_SENDER })
-  ipc.handle('offload-audio-start', async () => runStart(true), { refuse: REFUSED_SENDER })
-  ipc.handle('offload-audio-rehydrate', async () => runRehydrate(true), { refuse: REFUSED_SENDER })
-}
-
-export function menuHubOffload(action: 'dry-run' | 'start' | 'rehydrate'): void {
-  if (action === 'dry-run') void runDry(true)
-  else if (action === 'start') void runStart(true)
-  else void runRehydrate(true)
+  // V7: Settings › Storage is the one place (the File menu's three items are
+  // gone). Settings asks Jake first with its own confirm, so these show no
+  // dialogs of their own. Every refusal rule is runStart's and the convert
+  // pass's, unchanged (hubOffloadActive here; dropAudioRefusal per file).
+  ipc.handle('offload-audio-dry-run', async () => runDry(false), { refuse: REFUSED_SENDER })
+  ipc.handle('offload-audio-start', async (_e, opts?: { settingJustSaved?: boolean }) => {
+    if (opts?.settingJustSaved) await new Promise((resolve) => setTimeout(resolve, SETTING_CACHE_WAIT_MS))
+    return runStart(false)
+  }, { refuse: REFUSED_SENDER })
+  ipc.handle('offload-audio-rehydrate', async () => runRehydrate(false), { refuse: REFUSED_SENDER })
 }
 
 /** Called once after the library path is resolved. Does not scan unless a start is on record or argv asks. */

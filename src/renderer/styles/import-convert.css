@@ -40,6 +40,9 @@
 .imp-close {
   width: 22px;
   height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   font-size: 20px;

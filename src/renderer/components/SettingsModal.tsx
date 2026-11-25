@@ -4,16 +4,17 @@ import { AppSettings, DEFAULT_APP_SETTINGS, ImportFormatChoice } from '../types'
 import { IMPORT_FORMATS, IMPORT_FORMAT_LABELS } from '../../common/import-format'
 import { EQ_BAND_FREQUENCIES, EQ_PRESETS } from '../audio/eq'
 import { getCorrelation, setEnhanceConfig } from '../audio/audioEnhance'
-import { getCaptionsOn, setCaptionsOn } from '../activity'
+import { getCaptionsOn, setCaptionsOn, setNotice } from '../activity'
 import '../styles/import-convert.css'
 import MusicSourcesPanel from './MusicSourcesPanel'
-import GenreCheckList from './GenreCheckList'
+import ConfirmDialog from './ConfirmDialog'
 import LibraryStatsSection from './LibraryStatsSection'
+import CloseButton from './CloseButton'
 
 /**
- * App-level user preferences. Tabbed layout (Playback / Library / Sync /
- * AI / About) so we can keep adding settings without ballooning a single
- * pane. Reuses the import-convert.css modal shell so we don't grow a
+ * App-level user preferences. Tabbed layout (Playback / EQ / Library /
+ * Music Sources / Backups / Storage / Audio / AI). Words are for Jake, not
+ * for engineers: settings-plain-words.test.ts keeps the internal names out. Reuses the import-convert.css modal shell so we don't grow a
  * second visual vocabulary.
  *
  * Save flow: edits live in local state until user clicks Save. Cancel
@@ -30,9 +31,12 @@ interface Props {
   initialTab?: Tab
 }
 
-export type SettingsTab = 'Playback' | 'EQ' | 'Library' | 'Music Sources' | 'Sync' | 'Audio' | 'AI'
+// V7: Sync was only ever about backups, so it says so; Storage holds the one
+// offload switch and, folded away under Advanced, the few engineer controls
+// still worth having.
+export type SettingsTab = 'Playback' | 'EQ' | 'Library' | 'Music Sources' | 'Backups' | 'Storage' | 'Audio' | 'AI'
 type Tab = SettingsTab
-const TABS: Tab[] = ['Playback', 'EQ', 'Library', 'Music Sources', 'Sync', 'Audio', 'AI']
+const TABS: Tab[] = ['Playback', 'EQ', 'Library', 'Music Sources', 'Backups', 'Storage', 'Audio', 'AI']
 
 // Pretty Hz labels for the band frequencies (31, 62, 125, 250, 500,
 // 1000, 2000, 4000, 8000, 16000). Anything ≥1k becomes "1k" / "16k".
@@ -71,11 +75,6 @@ function bandLabel(hz: number): string {
   return hz >= 1000 ? `${hz / 1000}k` : String(hz)
 }
 
-function formatStateBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`
-}
 
 // 4.4.51: short transport suffix for the call-route speaker picker, so
 // the user can tell an AirPlay speaker apart from a Bluetooth one at a
@@ -117,7 +116,7 @@ function reasonLabel(reason: string | null): string {
     case 'startup':       return 'Catch-up after launch'
     case 'taste':         return 'Taste choices'
     case 'manual':        return 'Manual'
-    default:              return reason || 'Sync'
+    default:              return reason || 'Backup'
   }
 }
 
@@ -168,10 +167,9 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
   // 4.5.0-117 — local library snapshots (Phase 0 backup/restore).
   const [backups, setBackups] = useState<Array<{ file: string; date: string; trackCount: number; sizeBytes: number; reason: string }>>([])
   const [backupBusy, setBackupBusy] = useState(false)
-  const [restoreFile, setRestoreFile] = useState<string | null>(null)
   const [backupMsg, setBackupMsg] = useState<string | null>(null)
   useEffect(() => {
-    if (tab !== 'Sync') return
+    if (tab !== 'Backups') return
     window.electronAPI.listBackups?.().then((r) => { if (r?.ok) setBackups(r.backups) }).catch(() => { /* leave list */ })
   }, [tab])
   const loadBackups = () => window.electronAPI.listBackups?.().then((r) => { if (r?.ok) setBackups(r.backups) }).catch(() => {})
@@ -179,14 +177,14 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
     setBackupBusy(true); setBackupMsg(null)
     try {
       const r = await window.electronAPI.createBackup?.()
-      if (r?.ok) { setBackupMsg('Backed up ✓'); await loadBackups() } else setBackupMsg(r?.error || "Couldn't back up.")
+      if (r?.ok) { setBackupMsg('Backed up.'); await loadBackups() } else setBackupMsg("Couldn't back up.")
     } finally { setBackupBusy(false) }
   }
   const handleRestore = async (file: string) => {
-    setBackupBusy(true); setRestoreFile(null); setBackupMsg(null)
+    setBackupBusy(true); setBackupMsg(null)
     try {
       const r = await window.electronAPI.restoreBackup?.(file)
-      setBackupMsg(r?.ok ? `Restored ${r.trackCount} tracks — your library is reloading.` : (r?.error || "Couldn't restore."))
+      setBackupMsg(r?.ok ? `Restored ${(r.trackCount ?? 0).toLocaleString()} songs. Your library is reloading.` : "Couldn't restore.")
     } finally { setBackupBusy(false) }
   }
   // 4.4.51: audio output devices for the call-route speaker picker. The
@@ -195,38 +193,29 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
   const [audioDevices, setAudioDevices] = useState<
     { id: number; name: string; transport: string; isDefault: boolean }[]
   >([])
-  // 4.5.0-83 — locked-artwork count for the Library tab. Refreshed
-  // every time the modal opens (cheap — one disk read of a small
-  // JSON file). Gives a verifiable count of hand-set covers that
-  // are protected from auto-fetch / re-import overwrite.
+  // Storage › Advanced: covers Jake set by hand (one small read).
   const [artworkLockCount, setArtworkLockCount] = useState<number | null>(null)
-  // 4.5.0-87 — RAG status + backfill button. configured=false when
-  // OPENAI_API_KEY isn't set in .env; UI shows that explicitly so the
-  // user knows what's missing. count/total drive the indexed-of-total
-  // display. running flag locks the button + shows progress.
+  // Storage › Advanced: Music Man's song index. The nightly check keeps it
+  // current; "Update now" is the same run.
   const [embedStatus, setEmbedStatus] = useState<{ configured: boolean; count: number; total: number; stale: number } | null>(null)
   const [embedRunning, setEmbedRunning] = useState(false)
   const [embedProgress, setEmbedProgress] = useState<{ done: number; total: number } | null>(null)
-  // 4.5.0-91 Phase 2.5 — storage-mode display + orphaned-edit
-  // reconciliation. State conflicts are local-userData state files
-  // newer than NAS, meaning the user edited offline and those
-  // changes haven't reached NAS yet. The button pushes them.
+  // Storage › Advanced: changes on this Mac not yet in the backup copy, and
+  // the button that copies them.
   const [stateConflictInfo, setStateConflictInfo] = useState<{
-    mode: 'NAS' | 'local-primary'
+    mode: string
     nasDir: string
     localDir: string
     nasMounted: boolean
     conflicts: Array<{ file: string; localMtimeMs: number; nasMtimeMs: number; localPath: string; nasPath: string; localSizeBytes: number }>
   } | null>(null)
   const [reconcileRunning, setReconcileRunning] = useState(false)
-  const [reconcileProgress, setReconcileProgress] = useState<{
-    phase: 'backup' | 'push' | 'verify'
-    file: string
-    index: number
-    total: number
-    localSizeBytes?: number
-    totalBytes: number
-  } | null>(null)
+
+  // Storage: the offload switch asks first, and starts after Save.
+  const [confirmOffload, setConfirmOffload] = useState(false)
+  const [confirmBringBack, setConfirmBringBack] = useState(false)
+  const [bringBackMsg, setBringBackMsg] = useState<string | null>(null)
+  const [confirmRestore, setConfirmRestore] = useState<{ file: string; date: string; trackCount: number } | null>(null)
 
   // Tab-scoped IPC: only fetch when the user opens that tab so Preferences
   // paints immediately (default Playback tab has no main-process work).
@@ -242,13 +231,19 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
       window.electronAPI.getDefaultInboxPath?.().then(r => {
         if (r?.ok && r.path) setDefaultInboxPath(r.path)
       }).catch(() => { /* fall back to empty placeholder */ })
-      window.electronAPI.getArtworkLockCount?.().then(r => {
-        if (r?.ok) setArtworkLockCount(r.count)
-      }).catch(() => { /* leave null */ })
-      window.electronAPI.getStateConflicts?.().then(setStateConflictInfo).catch(() => { /* leave null */ })
-      window.electronAPI.embeddingStatus?.().then(setEmbedStatus).catch(() => { /* leave null */ })
     }, 0)
     return () => window.clearTimeout(t)
+  }, [tab])
+
+  const storageDataLoaded = useRef(false)
+  useEffect(() => {
+    if (tab !== 'Storage' || storageDataLoaded.current) return
+    storageDataLoaded.current = true
+    window.electronAPI.getArtworkLockCount?.().then(r => {
+      if (r?.ok) setArtworkLockCount(r.count)
+    }).catch(() => { /* leave null */ })
+    window.electronAPI.getStateConflicts?.().then(setStateConflictInfo).catch(() => { /* leave null */ })
+    window.electronAPI.embeddingStatus?.().then(setEmbedStatus).catch(() => { /* leave null */ })
   }, [tab])
 
   useEffect(() => {
@@ -263,7 +258,7 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
   }, [tab])
 
   useEffect(() => {
-    if (tab !== 'Sync') return
+    if (tab !== 'Backups') return
     const fetchSnap = () => {
       window.electronAPI.getLastLibrarySync?.().then(r => setLastSync(r)).catch(() => { /* leave null */ })
     }
@@ -276,27 +271,19 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
   }, [tab])
 
   useEffect(() => {
-    if (tab !== 'Library') return
+    if (tab !== 'Storage') return
     const unsub = window.electronAPI.onEmbeddingBackfillProgress?.((p) => setEmbedProgress(p))
-    return () => { if (unsub) unsub() }
-  }, [tab])
-
-  useEffect(() => {
-    if (tab !== 'Library') return
-    const unsub = window.electronAPI.onReconcileStateProgress?.((p) => setReconcileProgress(p))
     return () => { if (unsub) unsub() }
   }, [tab])
 
   const reconcileStateNow = useCallback(async () => {
     setReconcileRunning(true)
-    setReconcileProgress(null)
     try {
       await window.electronAPI.reconcileStateConflicts?.()
       const fresh = await window.electronAPI.getStateConflicts?.()
       if (fresh) setStateConflictInfo(fresh)
     } finally {
       setReconcileRunning(false)
-      setReconcileProgress(null)
     }
   }, [])
 
@@ -327,6 +314,12 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
         try {
           await window.electronAPI.setClaudeDailyCeiling?.(draft.ai.claudeDailyCeiling)
         } catch { /* non-fatal */ }
+        // The switch was turned on: start moving songs now that the setting is saved.
+        if (draft.library.offloadAudioToHomemini === true && initial.library.offloadAudioToHomemini !== true) {
+          void window.electronAPI.offloadStart({ settingJustSaved: true }).then((r) => {
+            setNotice(r.ok ? 'Moving songs to the home server, in the background.' : 'Couldn’t start. Nothing was moved.', { kind: r.ok ? 'info' : 'error' })
+          }).catch(() => setNotice('Couldn’t start. Nothing was moved.', { kind: 'error' }))
+        }
         onSaved(draft)
       } else {
         setError(result.error || 'Failed to save settings.')
@@ -343,7 +336,7 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
       <div className="imp-modal" role="dialog" aria-modal="true" style={{ minWidth: 460 }}>
         <div className="imp-header">
           <h2>Preferences</h2>
-          <button className="imp-close" onClick={closeAndRevertAudio} title="Close">×</button>
+          <CloseButton onClick={closeAndRevertAudio} />
         </div>
 
         {/* Tab strip */}
@@ -357,7 +350,7 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                 padding: '8px 0',
                 border: 'none',
                 background: tab === t ? '#f5f5f5' : 'transparent',
-                borderBottom: tab === t ? '2px solid #4a7fbf' : '2px solid transparent',
+                borderBottom: tab === t ? '2px solid var(--brand-orange, #FC5501)' : '2px solid transparent',
                 fontSize: 12,
                 fontWeight: tab === t ? 600 : 400,
                 color: tab === t ? '#222' : '#555',
@@ -711,148 +704,6 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
               <p className="imp-help" style={{ marginTop: 10 }}>
                 Used for every import: drag and drop, Import and Convert, and CDs. Lossless sources (FLAC, WAV, AIFF) convert to this format. MP3 and AAC are copied unchanged. Tracks already in the library are left alone.
               </p>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16 }}>
-                <input
-                  type="checkbox"
-                  checked={draft.library.offloadAudioToHomemini === true}
-                  onChange={(e) => setDraft({
-                    ...draft,
-                    library: { ...draft.library, offloadAudioToHomemini: e.target.checked },
-                  })}
-                />
-                <span>Offload Audio</span>
-              </label>
-              <p className="imp-help" style={{ marginTop: 8 }}>
-                This Mac stays the hub and keeps publishing the library. New imports stream once homemini has the same bytes, and a symlink plays from homemini. Files already on this Mac stay put until File → Library → Offload Audio — Dry Run, then Start. Do not set the stream source to homemini.
-              </p>
-
-              <GenreCheckList />
-
-              {/* 4.5.0-83 — locked-artwork visibility. Surfaces the
-                  count of covers you've hand-set so you can verify
-                  protection at a glance. The four-layer protection
-                  story: locked.json + sidecar self-heal + locked-
-                  backup/ + force-confirm on remove. */}
-              <div style={{ borderTop: '1px solid #d0d0d0', margin: '20px 0 14px' }} />
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 13 }}>
-                <span style={{ color: '#3a3a3a', fontWeight: 600 }}>Locked artwork covers:</span>
-                <span style={{ color: '#3a3520', fontFamily: 'var(--font-mono, monospace)' }}>
-                  {artworkLockCount === null ? '—' : artworkLockCount.toLocaleString()}
-                </span>
-              </div>
-              <p className="imp-help" style={{ marginTop: 0, marginBottom: 14 }}>
-                Hand-set covers protected from auto-fetch + re-import overwrite. Backed up to <code>locked-backup/</code> and self-healed from sidecars on every launch.
-              </p>
-
-              {/* 4.5.0-91 Phase 2.5 — Storage Mode + conflict surface.
-                  Renders the canonical state-storage location (NAS vs
-                  local-fallback) plus a reconciliation button when
-                  there are offline edits that haven't reached NAS yet. */}
-              <div style={{ borderTop: '1px solid #d0d0d0', margin: '20px 0 14px' }} />
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 13 }}>
-                <span style={{ color: '#3a3a3a', fontWeight: 600 }}>State storage:</span>
-                <span style={{ color: stateConflictInfo?.nasMounted ? '#2a6e2a' : '#a23a2a', fontFamily: 'var(--font-mono, monospace)' }}>
-                  {!stateConflictInfo ? '—'
-                    : stateConflictInfo.mode === 'NAS'
-                      ? `NAS canonical (${stateConflictInfo.nasDir})`
-                      : stateConflictInfo.nasMounted
-                        ? `Local SSD canonical (${stateConflictInfo.localDir}) — NAS backup mounted`
-                        : `Local SSD canonical (${stateConflictInfo.localDir}) — NAS backup unavailable`}
-                </span>
-              </div>
-              <p className="imp-help" style={{ marginTop: 0, marginBottom: 10 }}>
-                Since 4.5.0-114, library.json and other state files live on this Mac&apos;s SSD for reliability. The Synology at <code>{stateConflictInfo?.nasDir ?? '/Volumes/JakeShared/JakeTunesState'}</code> receives an async backup mirror after each save — it is not read at boot. Audio files are separate: playback reads from your local JakeTunesLibrary folder, not streamed from the NAS.
-              </p>
-              {stateConflictInfo && stateConflictInfo.conflicts.length > 0 && (() => {
-                const pushTotalBytes = stateConflictInfo.conflicts.reduce((n, c) => n + (c.localSizeBytes ?? 0), 0)
-                const reconcileLabel = reconcileRunning && reconcileProgress
-                  ? reconcileProgress.phase === 'verify'
-                    ? 'Verifying on NAS…'
-                    : reconcileProgress.phase === 'backup'
-                      ? `Backing up ${reconcileProgress.file} (${reconcileProgress.index}/${reconcileProgress.total})…`
-                      : `Copying ${reconcileProgress.file}${reconcileProgress.localSizeBytes ? ` (${formatStateBytes(reconcileProgress.localSizeBytes)})` : ''} (${reconcileProgress.index}/${reconcileProgress.total})…`
-                  : reconcileRunning
-                    ? 'Pushing…'
-                    : 'Push local state to NAS backup'
-                return (
-                <div style={{ background: '#fff5e0', border: '1px solid #d6b34e', borderRadius: 6, padding: '10px 12px', marginBottom: 12, fontSize: 12 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 6, color: '#7a5a10' }}>
-                    {stateConflictInfo.conflicts.length} local file{stateConflictInfo.conflicts.length === 1 ? '' : 's'} newer than NAS backup — not yet mirrored
-                    {pushTotalBytes > 0 ? ` (~${formatStateBytes(pushTotalBytes)} to copy)` : ''}:
-                  </div>
-                  <ul style={{ margin: '0 0 8px 18px', padding: 0, color: '#3a3a3a' }}>
-                    {stateConflictInfo.conflicts.map(c => (
-                      <li key={c.file}>
-                        <code>{c.file}</code>
-                        {c.localSizeBytes > 0 ? ` (${formatStateBytes(c.localSizeBytes)})` : ''}
-                        {' '}— local +{Math.round((c.localMtimeMs - c.nasMtimeMs) / 1000)}s newer
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="imp-help" style={{ marginTop: 0, marginBottom: 8, fontSize: 11, color: '#7a5a10' }}>
-                    Copies run one file at a time over SMB to the Synology; large files (especially <code>embeddings.bin</code>) dominate wait time. The UI stays responsive — this runs in the main process, not the renderer.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={reconcileStateNow}
-                    disabled={reconcileRunning}
-                    style={{
-                      padding: '5px 12px', fontSize: 12,
-                      cursor: reconcileRunning ? 'default' : 'pointer',
-                    }}
-                  >
-                    {reconcileLabel}
-                  </button>
-                  <span style={{ marginLeft: 10, color: '#7a5a10', fontSize: 11 }}>
-                    (Files ≥64 KB: NAS copy saved to <code>.reconcile-bak/</code> first.)
-                  </span>
-                </div>
-                )
-              })()}
-
-              {/* 4.5.0-87 — RAG (per-track embeddings) status + manual
-                  backfill. First Phase 1 hook is musicman-chat (replaces
-                  the giant pre-computed digest with retrieval-grounded
-                  context). Indexing costs ≈ $0.50 one-time at OpenAI's
-                  text-embedding-3-small rate. Per-query embedding cost
-                  is sub-penny. */}
-              <div style={{ borderTop: '1px solid #d0d0d0', margin: '20px 0 14px' }} />
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 13 }}>
-                <span style={{ color: '#3a3a3a', fontWeight: 600 }}>AI library index (RAG):</span>
-                <span style={{ color: '#3a3520', fontFamily: 'var(--font-mono, monospace)' }}>
-                  {!embedStatus ? '—'
-                    : !embedStatus.configured ? 'OPENAI_API_KEY not set'
-                    : embedRunning && embedProgress
-                      ? `embedding ${embedProgress.done.toLocaleString()} / ${embedProgress.total.toLocaleString()}…`
-                      : embedStatus.stale > 0
-                        ? `${Math.min(embedStatus.count, embedStatus.total).toLocaleString()} / ${embedStatus.total.toLocaleString()} indexed (${embedStatus.stale.toLocaleString()} stale — re-index to prune)`
-                        : `${embedStatus.count.toLocaleString()} / ${embedStatus.total.toLocaleString()} tracks indexed`}
-                </span>
-              </div>
-              <p className="imp-help" style={{ marginTop: 0, marginBottom: 10 }}>
-                Per-track semantic index that lets Music Man retrieve the actually-relevant tracks per question instead of guessing from a summary. One-time embedding ≈ $0.50 (OpenAI text-embedding-3-small); per-query cost is negligible.
-              </p>
-              <button
-                type="button"
-                onClick={runEmbeddingBackfill}
-                disabled={embedRunning || !embedStatus?.configured}
-                style={{
-                  padding: '6px 14px',
-                  fontSize: 13,
-                  marginBottom: 14,
-                  cursor: embedRunning || !embedStatus?.configured ? 'default' : 'pointer',
-                  opacity: !embedStatus?.configured ? 0.5 : 1,
-                }}
-              >
-                {embedRunning
-                  ? 'Indexing…'
-                  : embedStatus && embedStatus.stale > 0
-                    ? `Re-index library (${embedStatus.stale.toLocaleString()} stale)`
-                    : embedStatus && embedStatus.count < embedStatus.total
-                      ? `Index ${(embedStatus.total - embedStatus.count).toLocaleString()} missing tracks`
-                      : 'Re-index library'}
-              </button>
-
               {/* 4.4.13 — Inbox auto-import. Lets users point Qobuz (or any
                   other downloader) at a folder and have JakeTunes pick up
                   new files automatically, eliminating the manual drag step. */}
@@ -895,43 +746,128 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
             </>
           )}
 
-          {tab === 'Sync' && (
+          {tab === 'Storage' && (
             <>
-              <p className="imp-help" style={{ marginBottom: 12 }}>
-                iPod writes happen only when you click Sync or Full Sync.
-                Plug-in no longer auto-repairs — that second writer is how a sealed
-                500 became 492 on the Mini. After a Sync, TSA inspects every
-                song by identity and the set stays until you sync again.
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={draft.library.offloadAudioToHomemini === true}
+                  onChange={(e) => {
+                    if (e.target.checked && initial.library.offloadAudioToHomemini !== true) { setConfirmOffload(true); return }
+                    setDraft({ ...draft, library: { ...draft.library, offloadAudioToHomemini: e.target.checked } })
+                  }}
+                />
+                <span>Keep songs on the home server</span>
+              </label>
+              <p className="imp-help" style={{ marginTop: 8 }}>
+                Frees space on this Mac. A song leaves this Mac only once the home server has the exact same file, and it plays the same. Turning this off stops moving songs; the ones already moved keep playing.
               </p>
-              {/* The two retired auto-sync checkboxes were removed 2026-09-06
-                  (placement audit): no UI consumer remained. Their settings keys
-                  stay on disk, forced false by settings-ipc, because main still
-                  reads them as guards. */}
+              {confirmOffload && (
+                <ConfirmDialog
+                  message="Keep songs on the home server?"
+                  detail="Songs move a few at a time, in the background, starting after you press Save. Each one is checked first."
+                  confirmLabel="OK"
+                  destructive={false}
+                  onCancel={() => setConfirmOffload(false)}
+                  onConfirm={() => {
+                    setConfirmOffload(false)
+                    setDraft({ ...draft, library: { ...draft.library, offloadAudioToHomemini: true } })
+                  }}
+                />
+              )}
 
-              {/* 4.5 — Library backups to homemini. Pulled out of the
-                  now-playing pill (was a chirp on every import / metadata
-                  / playlist save, became visual noise). Lives here as a
-                  passive read-out: last time, what it was for, whether
-                  it succeeded. Failures still chirp the pill in real time. */}
+              {/* V7: the engineer controls, folded away in plain words. */}
+              <details className="settings-advanced" style={{ marginTop: 18, borderTop: '1px solid #d0d0d0', paddingTop: 12 }}>
+                <summary style={{ cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#3a3a3a' }}>Advanced</summary>
+
+                <div style={{ marginTop: 12, fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                  <span>
+                    <span style={{ fontWeight: 600 }}>Backup copy: </span>
+                    {!stateConflictInfo ? '—'
+                      : stateConflictInfo.conflicts.length === 0 ? 'up to date.'
+                      : stateConflictInfo.conflicts.length === 1 ? 'one recent change isn’t in it yet.'
+                      : `${stateConflictInfo.conflicts.length} recent changes aren’t in it yet.`}
+                  </span>
+                  {stateConflictInfo && stateConflictInfo.conflicts.length > 0 && (
+                    <button type="button" className="imp-btn" onClick={reconcileStateNow} disabled={reconcileRunning}>
+                      {reconcileRunning ? 'Copying…' : 'Copy now'}
+                    </button>
+                  )}
+                </div>
+
+                <div style={{ marginTop: 12, fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                  <span>
+                    <span style={{ fontWeight: 600 }}>Music Man’s song index: </span>
+                    {!embedStatus ? '—'
+                      : !embedStatus.configured ? 'not set up on this Mac.'
+                      : embedRunning && embedProgress && embedProgress.total > 0
+                        ? `adding ${embedProgress.done.toLocaleString()} of ${embedProgress.total.toLocaleString()}…`
+                        : `${Math.min(embedStatus.count, embedStatus.total).toLocaleString()} of ${embedStatus.total.toLocaleString()} songs.`}
+                  </span>
+                  {embedStatus?.configured && (
+                    <button type="button" className="imp-btn" onClick={runEmbeddingBackfill} disabled={embedRunning}>
+                      {embedRunning ? 'Updating…' : 'Update now'}
+                    </button>
+                  )}
+                </div>
+                <p className="imp-help" style={{ marginTop: 4 }}>It lets the Music Man find the right songs when you ask him. It updates by itself every night.</p>
+
+                <div style={{ marginTop: 12, fontSize: 13 }}>
+                  <span style={{ fontWeight: 600 }}>Covers you set by hand: </span>
+                  {artworkLockCount === null ? '—' : artworkLockCount.toLocaleString()}
+                </div>
+                <p className="imp-help" style={{ marginTop: 4 }}>These are never replaced when covers are looked up again.</p>
+
+                <div style={{ marginTop: 12, fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                  <span>{bringBackMsg ?? 'Bring every moved song back to this Mac.'}</span>
+                  <button type="button" className="imp-btn" onClick={() => setConfirmBringBack(true)} disabled={bringBackMsg === 'Bringing songs back…'}>Bring back…</button>
+                </div>
+                {confirmBringBack && (
+                  <ConfirmDialog
+                    message="Bring every moved song back to this Mac?"
+                    detail="They download from the home server, one at a time. It stops by itself if this Mac runs low on space."
+                    confirmLabel="Bring back"
+                    destructive={false}
+                    onCancel={() => setConfirmBringBack(false)}
+                    onConfirm={() => {
+                      setConfirmBringBack(false)
+                      setBringBackMsg('Bringing songs back…')
+                      void window.electronAPI.offloadBringBack().then((r) => {
+                        const n = r.restored ?? 0
+                        const songs = n === 1 ? 'one song' : `${n.toLocaleString()} songs`
+                        setBringBackMsg(r.ok ? `Brought back ${songs}.` : n > 0 ? `Brought back ${songs}, then stopped. Try again later.` : 'Nothing to bring back.')
+                      }).catch(() => setBringBackMsg('Couldn’t bring them back. Try again later.'))
+                    }}
+                  />
+                )}
+              </details>
+            </>
+          )}
+
+          {tab === 'Backups' && (
+            <>
+              {/* A passive read-out of the last backup to the home server:
+                  when, and what it was for. Failures still show in the
+                  now-playing pill as they happen. */}
               <div style={{
-                marginTop: 22,
+                marginTop: 4,
                 padding: '12px 14px',
                 background: '#f5f1e2',
                 border: '1px solid #d8cda8',
                 borderRadius: 6,
               }}>
                 <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
-                  Library backups to homemini
+                  Backups to the home server
                 </div>
                 {!lastSync ? (
                   <div style={{ fontSize: 12, color: '#7a7560' }}>Loading…</div>
                 ) : !lastSync.scriptPresent ? (
                   <div style={{ fontSize: 12, color: '#7a7560' }}>
-                    Homemini sync is not configured on this machine.
+                    Backups to the home server aren’t set up on this Mac.
                   </div>
                 ) : lastSync.at === null ? (
                   <div style={{ fontSize: 12, color: '#7a7560' }}>
-                    No backup yet this session — runs automatically when imports, edits, or playlists change (and every 10 min as a safety net).
+                    No backup since the app opened. It backs up by itself when your library changes, and every 10 minutes.
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#3a3520' }}>
@@ -947,28 +883,23 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                       }} />
                       Last backup <strong>{formatRelative(lastSync.at)}</strong>
                       <span style={{ color: '#7a7560' }}> · {reasonLabel(lastSync.reason)}</span>
-                      {lastSync.durationMs !== null && (
-                        <span style={{ color: '#9a9580' }}> · {(lastSync.durationMs / 1000).toFixed(1)}s</span>
-                      )}
                     </div>
-                    {!lastSync.ok && lastSync.error && (
-                      <div style={{ color: '#a23a2a', fontSize: 11 }}>{lastSync.error}</div>
+                    {!lastSync.ok && (
+                      <div style={{ color: '#a23a2a', fontSize: 11 }}>The last backup didn’t finish. It tries again by itself.</div>
                     )}
                     {lastSync.deferredAt != null && (
                       <div style={{ color: '#8a6a1a', fontSize: 11 }}>
-                        Waiting for the NAS since {formatRelative(lastSync.deferredAt)}
-                        {lastSync.remote ? ' — away from home (over Tailscale); it catches up on its own, full pass when you’re back.' : ' — it retries on its own.'}
+                        Waiting since {formatRelative(lastSync.deferredAt)}. It catches up by itself.
                       </div>
                     )}
                   </div>
                 )}
               </div>
 
-              {/* 4.5.0-117 — Local snapshots & restore (Phase 0). The manual
-                  .smbdelete rescue from the 2026-05-29 incident, now a button. */}
+              {/* Snapshots of the library on this Mac, and restoring one. */}
               <div style={{ marginTop: 18, padding: '12px 14px', background: '#eef2f6', border: '1px solid #c5d2dd', borderRadius: 6 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                  <span style={{ fontWeight: 600, fontSize: 13 }}>Local snapshots &amp; restore</span>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>Snapshots on this Mac</span>
                   <button
                     disabled={backupBusy}
                     onClick={handleCreateBackup}
@@ -976,35 +907,36 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                   >Back up now</button>
                 </div>
                 <p className="imp-help" style={{ marginTop: 0, marginBottom: 8, fontSize: 11 }}>
-                  Verified snapshots of your library, kept locally (newest 20), taken on launch and as it changes. Restoring backs up the current state first — it's reversible.
+                  Your library is saved here as it changes (the newest 20). Restoring one saves today’s library first, so you can undo it.
                 </p>
                 {backupMsg && (
                   <div style={{ fontSize: 12, marginBottom: 8, color: backupMsg.startsWith("Couldn't") ? '#a23a2a' : '#2a7a2a' }}>{backupMsg}</div>
                 )}
                 {backups.length === 0 ? (
-                  <div style={{ fontSize: 12, color: '#7a8590' }}>No snapshots yet — they appear automatically as your library changes.</div>
+                  <div style={{ fontSize: 12, color: '#7a8590' }}>No snapshots yet. They appear as your library changes.</div>
                 ) : (
                   <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid #d5dee6', borderRadius: 4, background: '#fff' }}>
                     {backups.map((b) => (
                       <div key={b.file} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', borderBottom: '1px solid #eef2f5', fontSize: 12 }}>
                         <div style={{ minWidth: 0 }}>
-                          <div style={{ color: '#2a2a2a' }}>{new Date(b.date).toLocaleString()} · <strong>{b.trackCount.toLocaleString()}</strong> tracks</div>
-                          <div style={{ color: '#9aa5af', fontSize: 10 }}>{b.reason}</div>
+                          <div style={{ color: '#2a2a2a' }}>{new Date(b.date).toLocaleString()} · <strong>{b.trackCount.toLocaleString()}</strong> songs</div>
                         </div>
-                        {restoreFile === b.file ? (
-                          <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-                            <span style={{ color: '#a23a2a', fontSize: 11 }}>Restore?</span>
-                            <button disabled={backupBusy} onClick={() => handleRestore(b.file)} style={{ fontSize: 11, padding: '2px 9px', border: '1px solid #c0392b', borderRadius: 4, background: '#fff', color: '#c0392b', cursor: 'pointer' }}>Yes</button>
-                            <button onClick={() => setRestoreFile(null)} style={{ fontSize: 11, padding: '2px 9px', border: '1px solid #b0b0b0', borderRadius: 4, background: '#fff', cursor: 'pointer' }}>No</button>
-                          </span>
-                        ) : (
-                          <button disabled={backupBusy} onClick={() => setRestoreFile(b.file)} style={{ fontSize: 11, padding: '2px 10px', border: '1px solid #b0b0b0', borderRadius: 4, background: '#fff', cursor: 'pointer', flexShrink: 0 }}>Restore</button>
-                        )}
+                        <button disabled={backupBusy} onClick={() => setConfirmRestore({ file: b.file, date: b.date, trackCount: b.trackCount })} style={{ fontSize: 11, padding: '2px 10px', border: '1px solid #b0b0b0', borderRadius: 4, background: '#fff', cursor: 'pointer', flexShrink: 0 }}>Restore…</button>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
+              {/* The standard confirm: Cancel on the left, Restore on the right. */}
+              {confirmRestore && (
+                <ConfirmDialog
+                  message="Restore this snapshot?"
+                  detail={`Your library goes back to ${new Date(confirmRestore.date).toLocaleString()} (${confirmRestore.trackCount.toLocaleString()} songs). Today’s library is saved first, so you can undo it.`}
+                  confirmLabel="Restore"
+                  onCancel={() => setConfirmRestore(null)}
+                  onConfirm={() => { const f = confirmRestore.file; setConfirmRestore(null); void handleRestore(f) }}
+                />
+              )}
             </>
           )}
 
@@ -1167,11 +1099,10 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                 </button>
               )}
               <p className="imp-help" style={{ marginTop: 0, marginBottom: 16 }}>
-                When set, Music Man / Larry / Stephen / chat all get
-                richer per-track facts via Exa semantic search (Pitchfork,
-                Stereogum, AllMusic, music press generally). 7-day cache,
-                ~$0.005 per artist lookup. The key stays in the main
-                process (.env) — it is not kept in renderer settings JSON.
+                When set, the Music Man, Larry and Stephen get more facts
+                about each artist from music writing on the web (Pitchfork,
+                Stereogum, AllMusic). About half a cent per artist, kept for
+                a week. The key stays on this Mac.
               </p>
 
               <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#3a3a3a' }}>

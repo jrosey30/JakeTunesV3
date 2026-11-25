@@ -5,6 +5,7 @@ import { setNotice } from '../activity'
 import { Track } from '../types'
 import '../styles/import-convert.css'
 import '../styles/show-duplicates.css'
+import CloseButton from './CloseButton'
 
 interface Props {
   tracks: Track[]
@@ -206,7 +207,7 @@ export default function ShowDuplicatesModal({ tracks, onClose, onDelete }: Props
       <div className="imp-modal dup-modal" role="dialog" aria-modal="true">
         <div className="imp-header">
           <h2>Possible Duplicates</h2>
-          <button className="imp-close" onClick={onClose} title="Close">×</button>
+          <CloseButton onClick={onClose} />
         </div>
 
         <div className="imp-body">

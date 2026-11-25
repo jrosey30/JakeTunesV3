@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { enqueueFiles } from '../importQueue'
 import { IMPORT_FORMAT_LABELS, importFormatFromSettings, type ImportFormat } from '../../common/import-format'
 import '../styles/import-convert.css'
+import CloseButton from './CloseButton'
 
 interface Props {
   onClose: () => void
@@ -102,7 +103,7 @@ export default function ImportConvertModal({ onClose }: Props) {
       <div className="imp-modal" role="dialog" aria-modal="true">
         <div className="imp-header">
           <h2>Import and Convert</h2>
-          <button className="imp-close" onClick={onClose} title="Close">×</button>
+          <CloseButton onClick={onClose} />
         </div>
 
         <div className="imp-body">

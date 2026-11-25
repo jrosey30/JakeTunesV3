@@ -470,7 +470,7 @@ describe('one bad write does not hold the line', () => {
   })
 })
 
-describe('"Apply Overrides to Files…": an entry still names its song after the song was corrected', () => {
+describe('the nightly tag job (once "Apply Overrides to Files…"): an entry still names its song after the song was corrected', () => {
   const row = { id: 1, title: 'Marionette', artist: 'Twisted Teens', duration: 181919 }
   const cases: Array<[string, { fp?: string; fields?: Record<string, unknown> } | undefined, boolean]> = [
     ['no fingerprint recorded', { fields: { genre: 'Rock' } }, true],
@@ -534,7 +534,8 @@ describe('a tag writer that hangs is stopped by its own clock', () => {
 describe('index.ts goes through the queue', () => {
   const src = readFileSync(join(import.meta.dirname, '..', 'index.ts'), 'utf8')
   const start = src.indexOf("ipc.handle('save-metadata-override'")
-  const end = src.indexOf('ipc.handle(', start + 10)
+  // The handler's own close (V7 removed the handler that used to follow it).
+  const end = src.indexOf('\n}, { refuse: REFUSED_SENDER })', start)
   const handler = src.slice(start, end)
   const at = src.indexOf('const tagWritebackPendingPath = ')
   const wiring = src.slice(at, start)
@@ -580,20 +581,20 @@ describe('index.ts goes through the queue', () => {
     assert.match(quit, /flush,\s*\/\/[^\n]*\n\s*tagWriteback\.stop\(2000\)\.catch\(\(\) => undefined\),/)
   })
 
-  test('"Apply Overrides to Files…" asks whether the entry names the song, not whether the song is unedited', () => {
-    const batch = src.slice(src.indexOf("ipc.handle('apply-overrides-batch'"), src.indexOf('const result = await writeTagsBatch('))
-    assert.match(batch, /if \(!overrideNamesTrack\(entry, track\)\) \{\s*skippedFpMismatch\+\+\s*continue/)
-    assert.doesNotMatch(batch, /entry\.fp !== trackFp/)
+  // V7: the menu tool is gone; the nightly check's tag job (self-care-overrides.ts) keeps both guards.
+  const job = readFileSync(join(import.meta.dirname, '..', 'self-care-overrides.ts'), 'utf8')
+  test('the nightly tag job asks whether the entry names the song, not whether the song is unedited', () => {
+    assert.match(job, /if \(!overrideNamesTrack\(entry, track\)\) \{ notThisSong\+\+; continue \}/)
+    assert.doesNotMatch(job, /entry\.fp !== trackFp/)
   })
 
-  test('"Apply Overrides to Files…" sends a song the player is using to the per-edit line, which waits for it', () => {
-    const batch = src.slice(src.indexOf("ipc.handle('apply-overrides-batch'"), src.indexOf('const result = await writeTagsBatch('))
-    const asks = batch.indexOf('if (playerUsing(colonPath, Number(track.duration) || 0)) {')
-    assert.ok(asks > 0, 'the batch never asks whether the song is playing')
-    assert.ok(asks > batch.indexOf('if (!overrideNamesTrack(entry, track))'), 'asked after the identity guard, so only the right song is queued')
-    const branch = batch.slice(asks, batch.indexOf('requests.push(', asks))
-    assert.match(branch, /for \(const \[field, value\] of Object\.entries\(writable\)\) await tagWriteback\.edit\(\{ trackId, field, value: String\(value\) \}\)\s*continue/, 'queued and NOT also written now')
-    assert.match(src, /waitingForPlayback,\n\s*fileSizesRefreshed:/, 'the result says how many wait')
+  test('the nightly tag job sends a song the player is using to the per-edit line, which waits for it', () => {
+    const asks = job.indexOf('if (host.playerUsing(colonPath, Number(track.duration) || 0)) {')
+    assert.ok(asks > 0, 'the job never asks whether the song is playing')
+    assert.ok(asks > job.indexOf('if (!overrideNamesTrack(entry, track))'), 'asked after the identity guard, so only the right song is queued')
+    const branch = job.slice(asks, job.indexOf('const r = await host.writeTags(', asks))
+    assert.match(branch, /for \(const f of fields\) await host\.queueEdit\(\{ trackId, field: f, value: String\(wanted\[f\]\) \}\)\s*continue/, 'queued and NOT also written now')
+    assert.match(src, /playerUsing, queueEdit: \(e\) => tagWriteback\.edit\(e\)/, 'index.ts wires the real player check and the per-edit line')
   })
 })
 

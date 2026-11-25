@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Track } from '../types'
 import { useLibrary } from '../context/LibraryContext'
 import '../styles/import-convert.css'
+import CloseButton from './CloseButton'
 
 interface Props {
   onClose: () => void
@@ -160,7 +161,7 @@ export default function IpodLibraryModal({ onClose }: Props) {
       <div className="imp-modal" role="dialog" aria-modal="true" style={{ width: 820, maxHeight: '85vh' }}>
         <div className="imp-header">
           <h2>On This iPod</h2>
-          <button className="imp-close" onClick={onClose} title="Close">×</button>
+          <CloseButton onClick={onClose} />
         </div>
 
         <div className="imp-body" style={{ gap: 10 }}>

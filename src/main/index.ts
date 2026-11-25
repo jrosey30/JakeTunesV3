@@ -56,6 +56,7 @@ import { atBackgroundPriority } from './background-priority.ts'
 import { startSyncConvertCache } from './ipc/sync-cache-ipc.ts'
 import { touchUsed } from './sync-convert-cache.ts'
 import { AacEncoderMissingError, IPOD_ALAC_MIRROR_TOKEN, MP3_MIRROR_TOKEN, aacMirrorCacheName, afconvertAacArgs, createAfconvertCheck, pcmDecodeArgs } from './aac-mirror-recipe.ts'
+import { startSelfCare } from './self-care.ts'; import { analysisCandidates, pruneBrake } from './self-care-core.ts'; import { runTagJob } from './self-care-overrides.ts'; import { removeAppTempFiles } from './self-care-files.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
 import { mergeQueuedDuringPass, runConvertPass, type ConvertOutcome, type QueueTrack, type StreamConvertItem } from './stream-convert-pass.ts'; import { confirmHomeminiHoldsFile, keptLocalMessage, USER_PENDING_RETRIES, type RefusalMemo } from './offload-confirm.ts'
@@ -65,7 +66,7 @@ import {
   appendOffloadReplacement, createCachedOffloadReader, hubOffloadActive,
 localAudioDropRefused,   libraryRootFromMusicDir, OFFLOAD_CONVERT_BATCH, serveHubOffloadSymlink, streamConvertRuns,
 } from './offload-audio.ts'
-import { bootHubOffload, keepWindowStore, menuHubOffload, registerOffloadIpc, returnedHold, returnRecentToDisk } from './ipc/offload-ipc.ts'
+import { bootHubOffload, keepWindowStore, registerOffloadIpc, returnedHold, returnRecentToDisk } from './ipc/offload-ipc.ts'
 import { createServePin } from './play-cache-serve-pin.ts'
 import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
 import { startUsageLog } from './usage-log-start.ts'
@@ -377,10 +378,9 @@ import { libraryPublishTargets } from '../common/replica-library-push'
 import {
   WRITABLE_FIELDS,
   writeTagsToFile,
-  writeTagsBatch,
+  readWritableTags,
   colonPathToAbsolute,
   augmentPairFields,
-  type TagWriteRequest,
 } from './tag-writer'
 
 const isDev = !app.isPackaged
@@ -683,6 +683,7 @@ async function loadQueueFromDisk(): Promise<void> {
 // a "broken record" stutter on output. Defer everything heavy until
 // playback stops.
 let playbackActive = false
+let musicSeenAt = Date.now()
 // 4.2.13: powerSaveBlocker to defeat macOS App Nap during playback.
 // HTMLAudio buffers ~30 seconds ahead via Range requests against our
 // `ipod-audio://` protocol handler. Once that initial buffer is filled
@@ -752,6 +753,7 @@ function stopLifetimeSuspensionBlocker(): void {
 
 ipcMain.on('set-playback-active', (_e, active: boolean) => {
   playbackActive = !!active
+  musicSeenAt = Date.now()   // the nightly check waits for ten quiet minutes (self-care-core.ts)
   if (active) {
     startPowerSaveBlocker()
   } else {
@@ -831,7 +833,8 @@ function runAudioAnalysisBatch(paths: string[]): Promise<Map<string, AudioAnalys
     const out = new Map<string, AudioAnalysisResult>()
     if (paths.length === 0) { resolve(out); return }
     const scriptPath = getAudioAnalysisScriptPath()
-    const py = spawn(PYTHON_CMD ?? 'python3', [scriptPath, ...paths], {
+    // Background priority: it runs behind imports and the nightly check, never ahead of the music.
+    const py = spawn(...atBackgroundPriority(PYTHON_CMD ?? 'python3', [scriptPath, ...paths]), {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let stdout = ''
@@ -2640,7 +2643,6 @@ async function createWindow(): Promise<void> {
 // one wiring per shortcut. The About window is main's own, so it's passed in.
 const menuTemplate: Electron.MenuItemConstructorOptions[] = buildAppMenu({
   send: sendMenuAction,
-  hubOffload: menuHubOffload,
   about: {
     label: 'About JakeTunes',
     click: async () => {
@@ -3475,6 +3477,9 @@ let prewarmAlacCache: (paths: string[]) => Promise<void> = async () => { /* not 
 // bypass ffprobe entirely on the next access. Wired up alongside
 // prewarmAlacCache when the audio protocol handler initialises.
 let registerKnownCodec: (path: string, mtime: number, codec: string) => void = () => {}
+let selfCare: ReturnType<typeof startSelfCare> | null = null
+ipc.handle('self-care-status', async () => (selfCare ? selfCare.status() : null), { public: true })
+let prunePlayCache: (brake: boolean) => Promise<{ ok: boolean; pruned?: number; bytesFreed?: number; held?: string; error?: string }> = async () => ({ ok: false, error: 'not ready' })
 
 // Read directly from iPod database (used for sync only).
 // If the mount hasn't been detected yet (e.g. load-tracks fires before
@@ -5961,7 +5966,7 @@ ipc.handle('analyze-track', async (_e, trackId: number, colonPath: string, finge
 // persistent queue (Phase 2) then handle pause/resume + survive-restart
 // for free. Renderer sends colon-path; main resolves to absolute path
 // using the same logic the analyze-track handler uses.
-ipc.handle('audio-analysis:enqueue-many', async (_e, jobs: Array<{ trackId: number; colonPath: string; fingerprint: string }>) => {
+async function enqueueAnalysisMany(jobs: Array<{ trackId: number; colonPath: string; fingerprint: string }>): Promise<{ ok: boolean; enqueued: number; totalQueued: number }> {
   const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
   const pathSep = IS_WINDOWS ? '\\' : '/'
   // Dedupe against a Set instead of re-scanning the array per job, and persist
@@ -5979,7 +5984,8 @@ ipc.handle('audio-analysis:enqueue-many', async (_e, jobs: Array<{ trackId: numb
   await persistQueue()
   kickAudioAnalysisWorker()
   return { ok: true, enqueued, totalQueued: audioAnalysisQueue.length }
-}, { refuse: REFUSED_SENDER })
+}
+ipc.handle('audio-analysis:enqueue-many', async (_e, jobs: Array<{ trackId: number; colonPath: string; fingerprint: string }>) => enqueueAnalysisMany(jobs), { refuse: REFUSED_SENDER })
 
 ipc.handle('audio-analysis:status', async () => {
   return {
@@ -8782,9 +8788,10 @@ ipc.handle('embedding-status', async (): Promise<{
   return value
 }, { public: true })
 
-ipc.handle('embedding-backfill', async (event, opts?: { force?: boolean }): Promise<{ ok: boolean; embedded: number; total: number; error?: string }> => {
+// Shared by Settings' "Update now" and the nightly check (self-care.ts): only songs with no vector are sent.
+async function runEmbeddingBackfill(opts: { force?: boolean; progress?: (p: { done: number; total: number }) => void; stillQuiet?: () => boolean } = {}): Promise<{ ok: boolean; embedded: number; total: number; error?: string }> {
   if (!ragIsConfigured()) {
-    return { ok: false, embedded: 0, total: 0, error: 'OPENAI_API_KEY not set. Add to .env to enable RAG.' }
+    return { ok: false, embedded: 0, total: 0, error: 'not set up on this Mac' }
   }
   try {
     const raw = await readFile(LIBRARY_PATH, 'utf-8')
@@ -8794,17 +8801,18 @@ ipc.handle('embedding-backfill', async (event, opts?: { force?: boolean }): Prom
     await ragPruneStaleEmbeddings(validIds).catch(() => 0)
     await pruneStaleMoodVectors(validIds).catch(() => 0)
     const existing = await ragGetEmbeddingsMap()
-    const todo = opts?.force
+    const todo = opts.force
       ? tracks
       : tracks.filter(t => !existing.has(t.id))
     if (todo.length === 0) {
       return { ok: true, embedded: 0, total: tracks.length }
     }
     // Send progress before kickoff so the UI flips to "embedding…" immediately.
-    event.sender.send('embedding-backfill-progress', { done: 0, total: todo.length })
+    opts.progress?.({ done: 0, total: todo.length })
     const BATCH = 100
     let done = 0
     for (let i = 0; i < todo.length; i += BATCH) {
+      if (opts.stillQuiet && !opts.stillQuiet()) break
       const slice = todo.slice(i, i + BATCH)
       const texts = slice.map(ragBuildEmbedText)
       try {
@@ -8817,7 +8825,7 @@ ipc.handle('embedding-backfill', async (event, opts?: { force?: boolean }): Prom
         // in-memory map mirrors it.
         await ragPersistEmbeddings()
         done += slice.length
-        event.sender.send('embedding-backfill-progress', { done, total: todo.length })
+        opts.progress?.({ done, total: todo.length })
       } catch (err) {
         console.warn('[embedding-backfill] batch failed (continuing with next):', err instanceof Error ? err.message : err)
       }
@@ -8829,7 +8837,8 @@ ipc.handle('embedding-backfill', async (event, opts?: { force?: boolean }): Prom
   } catch (err) {
     return { ok: false, embedded: 0, total: 0, error: safeIpcError(err, 'api-failed') }
   }
-}, { refuse: REFUSED_SENDER })
+}
+ipc.handle('embedding-backfill', async (event, opts?: { force?: boolean }) => runEmbeddingBackfill({ force: opts?.force, progress: (p) => event.sender.send('embedding-backfill-progress', p) }), { refuse: REFUSED_SENDER })
 
 // 4.5: auto-index new songs into RAG. Jake wants EVERY imported track embedded
 // automatically — not only when the nightly brain-trainer runs. This embeds any
@@ -9399,139 +9408,6 @@ ipc.handle('save-metadata-override', async (_event, trackId: number, field: stri
   return { ok: true }
 }, { refuse: REFUSED_SENDER })
 
-// Brief 020: batch backfill — push every existing override's writable
-// fields into the corresponding audio files. Invoked from the
-// "Library → Apply Overrides to Files…" menu after the user confirms.
-//
-// Process:
-//   1. Read library.json + metadata-overrides.json from disk
-//   2. For each override entry: validate fingerprint match against
-//      the current library track; if mismatched, skip (track identity
-//      changed). For each WRITABLE_FIELDS value present, build the
-//      payload (with pair augmentation for trackNumber/discNumber).
-//   3. Hand the list to writeTagsBatch which chunks at concurrency=8
-//      and emits progress events.
-//   4. Progress events relay to the renderer via
-//      'tag-writeback:progress' so the UI can show a live counter.
-//
-// Returns a summary the renderer can show in the result toast/dialog.
-ipc.handle('apply-overrides-batch', async (event) => {
-  try {
-    // 4.5.0-106: cached reads.
-    const lib = await libraryCache.get() as { tracks?: Array<Record<string, unknown>> }
-    const overrides = await overridesCache.get() as Record<string, { fp?: string; fields?: Record<string, string> }>
-    const tracksById = new Map<number, Record<string, unknown>>()
-    for (const t of lib.tracks || []) {
-      if (typeof t.id === 'number') tracksById.set(t.id, t)
-    }
-
-    // Build the work list. Skip entries with:
-    //   - no matching track in library
-    //   - fingerprint mismatch (track identity changed since override)
-    //   - no writable fields (analysis-only entries are the bulk
-    //     of metadata-overrides.json; nothing to push to files)
-    const requests: TagWriteRequest[] = []
-    let skippedNoTrack = 0
-    let skippedFpMismatch = 0
-    let skippedNoWritable = 0
-    let waitingForPlayback = 0
-    for (const [keyStr, entry] of Object.entries(overrides)) {
-      const trackId = Number(keyStr)
-      if (!Number.isFinite(trackId)) continue
-      const track = tracksById.get(trackId)
-      if (!track) { skippedNoTrack++; continue }
-      const fields = entry?.fields || {}
-      // Filter to writable fields, augment pairs.
-      const writable: Record<string, string | number> = {}
-      for (const [fname, fval] of Object.entries(fields)) {
-        if (WRITABLE_FIELDS.has(fname) && fval !== undefined && fval !== null && fval !== '') {
-          writable[fname] = fval
-        }
-      }
-      if (Object.keys(writable).length === 0) { skippedNoWritable++; continue }
-      // Pair augmentation — preserve N/M format for trackNumber+trackCount
-      // and discNumber+discCount when only one side is in overrides.
-      if (writable.trackNumber && !writable.trackCount && track.trackCount) {
-        writable.trackCount = String(track.trackCount)
-      }
-      if (writable.discNumber && !writable.discCount && track.discCount) {
-        writable.discCount = String(track.discCount)
-      }
-      // Identity guard. The entry's fingerprint is the song BEFORE its first
-      // edit, so a corrected title or artist is allowed when the row carries
-      // exactly what the entry set (tag-writeback-queue.ts overrideNamesTrack).
-      if (!overrideNamesTrack(entry, track)) {
-        skippedFpMismatch++
-        continue
-      }
-      const colonPath = String(track.path || '')
-      if (!colonPath) { skippedNoTrack++; continue }
-      // A song the player is using goes on the per-edit line instead, which
-      // writes it once the player is done with it (the 2026-11-14 splice).
-      if (playerUsing(colonPath, Number(track.duration) || 0)) {
-        waitingForPlayback++
-        for (const [field, value] of Object.entries(writable)) await tagWriteback.edit({ trackId, field, value: String(value) })
-        continue
-      }
-      const absPath = colonPathToAbsolute(colonPath, MUSIC_DIR)
-      requests.push({ audioFilePath: absPath, overrides: writable })
-    }
-
-    console.log(`[tag-writeback] batch: ${requests.length} files to update (skipped: ${skippedNoTrack} no-track, ${skippedFpMismatch} fp-mismatch, ${skippedNoWritable} no-writable; ${waitingForPlayback} playing, written when the player is done)`)
-
-    const result = await writeTagsBatch(requests, (p) => {
-      // Relay progress to the renderer for the live counter. Best-
-      // effort — webContents may be null during shutdown / blur.
-      try {
-        event.sender.send('tag-writeback:progress', p)
-      } catch { /* ignore */ }
-    })
-
-    // Brief 016 commit 2: tag writes can change the on-disk file size
-    // (mutagen pads/shrinks the tag region by a few bytes to KB). If
-    // we don't refresh library.json's cached fileSize, the mobile
-    // probe v2 sees a fileSize mismatch and reports drift.
-    //
-    // Refresh only the tracks we just wrote. The wider library-wide
-    // refresh (for pre-existing drift from other causes — likely the
-    // historical "Fix iPod Compatibility" re-encode pass which cuts
-    // ~515KB per track) is the separate `refresh-file-sizes` IPC.
-    const refreshedPaths = new Set(
-      result.results.filter(r => r.ok && r.fieldsWritten.length > 0).map(r => r.filePath)
-    )
-    // Measured here, applied by the renderer (UPDATE_TRACKS), written by
-    // its save-library like any other edit.
-    const sizeScan = refreshedPaths.size > 0
-      ? await measureFileSizesOnDisk((absPath) => refreshedPaths.has(absPath), undefined, true)
-      : null
-
-    return {
-      ok: true,
-      total: result.total,
-      succeeded: result.succeeded,
-      failed: result.failed,
-      skippedNoTrack,
-      skippedFpMismatch,
-      skippedNoWritable,
-      waitingForPlayback,
-      fileSizesRefreshed: sizeScan?.stale ?? 0,
-      fileSizes: sizeScan?.measured ?? [],
-      // Don't ship the full per-file results array (could be 6k entries) —
-      // the summary is enough for the UI. First 10 failures are useful
-      // for diagnosis though.
-      failures: result.results
-        .filter(r => !r.ok)
-        .slice(0, 10)
-        .map(r => ({ filePath: r.filePath, error: r.error })),
-    }
-  } catch (err) {
-    return {
-      ok: false,
-      error: safeIpcError(err, 'io-failed'),
-    }
-  }
-}, { refuse: REFUSED_SENDER })
-
 // Brief 016 commit 2: measure `fileSize` for every track whose absolute
 // audio path satisfies the predicate. Main measures; the renderer applies
 // the differences (UPDATE_TRACKS) and its save-library writes them. When
@@ -9551,28 +9427,6 @@ async function measureFileSizesOnDisk(
   }
   return measureLibraryFileSizes(tracks, (p) => colonPathToAbsolute(p, MUSIC_DIR), shouldMeasure, lstat, onProgress, withFingerprints ? computeAudioFingerprint : undefined)
 }
-
-// Brief 016 commit 2: full-library fileSize refresh. Measures every
-// track's local file and returns the sizes; the renderer applies the
-// ones that differ. Surfaced via the Library menu
-// for one-shot retrofit of pre-existing drift (the 29.7% scan finding
-// from Brief 016's diagnostic phase — likely from a historical "Fix
-// iPod Compatibility" re-encode pass that cut ~515KB per track).
-ipc.handle('refresh-file-sizes', async (event) => {
-  try {
-    const scan = await measureFileSizesOnDisk(
-      () => true,
-      (p) => {
-        try { event.sender.send('refresh-file-sizes:progress', p) } catch { /* ignore */ }
-      },
-    )
-    if (!scan) return { ok: false, error: 'library.json could not be read' }
-    return { ok: true, refreshed: scan.stale, measured: scan.measured, streamed: scan.streamed, missing: scan.missing }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'unknown') }
-  }
-}, { refuse: REFUSED_SENDER })
-
 
 // ── V5 Live Concert Mode ── (extracted to ipc/live-sets-ipc.ts, 6.0 Phase 1)
 registerLiveSetsIpc(ipc, {
@@ -9768,6 +9622,55 @@ app.whenReady().then(async () => {
   // Thin links only (workmini): overnight, pre-load the songs most likely to play into the stream spool — see overnight-preload.ts.
   void startOvernightPreload({ userData: app.getPath('userData'), audioBase: HOMEMINI_AUDIO_BASE, isPlaying: () => playbackActive, streamCompressed: readStreamCompressedCached, isStreamingClient: isHomeminiPlaybackClientCached,
     library: () => libraryCache.get(), playlists: () => playlistsCache.get(), playEventsPath: getPlayEventsPath(), liveSets: () => liveSetsCache.get() }).catch((err) => console.warn('[preload] schedule failed:', err instanceof Error ? err.message : err))
+  // V7: the library looks after itself — one quiet check a night (self-care.ts; rules in self-care-core.ts).
+  const selfCareFile = join(app.getPath('userData'), 'self-care.json'), tagLedgerFile = join(app.getPath('userData'), 'self-care-tags.json')
+  const libRows = async (): Promise<Array<Record<string, unknown>>> => ((await libraryCache.get()) as CachedLibrary).tracks as Array<Record<string, unknown>> ?? []
+  selfCare = startSelfCare({
+    now: () => Date.now(), hour: () => new Date().getHours(), playing: () => playbackActive, lastMusicAt: () => musicSeenAt,
+    syncInFlight: () => syncEngine.isSyncInFlight(), isReplica: isHomeminiPlaybackClientCached,
+    readStatus: () => readFile(selfCareFile, 'utf-8').catch(() => null), writeStatus: (st) => writeJsonAtomic(selfCareFile, st),
+    log: (m) => console.log(m),
+    jobs: {
+      'play-cache': async () => {
+        const r = await prunePlayCache(true)
+        return { ok: r.ok, note: r.held ? `held: ${r.held}` : r.ok ? `${r.pruned ?? 0} removed (${((r.bytesFreed ?? 0) / 1e6).toFixed(0)} MB)` : String(r.error) }
+      },
+      orphans: async (ctx) => {
+        const scan = await scanLibraryOrphans()
+        const refused = await localAudioDropRefused(MUSIC_DIR)
+        const temp = refused ? null : await removeAppTempFiles(MUSIC_DIR, { now: Date.now(), stillQuiet: ctx.stillQuiet, log: (m) => console.log(m) })
+        return { ok: true, interrupted: temp?.stopped, needsYou: { orphanFiles: scan.orphanCount, orphanBytes: scan.orphanBytes },
+          note: `${scan.orphanCount} song files not in the library (shown to Jake); ${refused ? `no leftovers removed: ${refused}` : `${temp!.removed} leftovers removed`}` }
+      },
+      'file-sizes': async () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, note: 'no window to save the sizes' }
+        const scan = await measureFileSizesOnDisk(() => true)
+        if (!scan) return { ok: false, note: 'library could not be read' }
+        sendToRenderer('self-care:measured', scan.measured)   // the renderer applies the differences and saves (common/library-file-sizes.ts)
+        return { ok: true, note: `${scan.stale} sizes out of date, ${scan.missing} missing, ${scan.streamed} streamed` }
+      },
+      overrides: (ctx) => runTagJob({
+        tracks: libRows, overrides: async () => (await overridesCache.get()) as Record<string, { fp?: string; fields?: Record<string, string> }>,
+        playerUsing, queueEdit: (e) => tagWriteback.edit(e), toAbs: (c) => colonPathToAbsolute(c, MUSIC_DIR), readTags: readWritableTags,
+        writeTags: async (abs, fields) => { const r = await writeTagsToFile({ audioFilePath: abs, overrides: fields }, { background: true }); return { ok: r.ok, written: r.fieldsWritten.length, error: r.error } },
+        remeasure: async (paths) => { const m = await measureFileSizesOnDisk((a) => paths.has(a), undefined, true); if (m?.measured.length) sendToRenderer('self-care:measured', m.measured) },
+        readLedger: async () => JSON.parse(await readFile(tagLedgerFile, 'utf-8').catch(() => '{}')) as Record<string, string>,
+        writeLedger: (l) => writeJsonAtomic(tagLedgerFile, l),
+      }, ctx),
+      'ai-index': async (ctx) => {
+        if (!ragIsConfigured()) return { ok: true, note: 'not set up on this Mac' }
+        const r = await runEmbeddingBackfill({ stillQuiet: ctx.stillQuiet })
+        return { ok: r.ok, note: r.ok ? `${r.embedded} songs added, ${r.total} indexed` : String(r.error), interrupted: !ctx.stillQuiet() }
+      },
+      analysis: async () => {
+        const over = (await overridesCache.get()) as Record<string, { fields?: Record<string, string> }>
+        const rows = (await libRows()).map((t) => ({ ...t, ...(over[String(t.id)]?.fields ?? {}) })) as Array<{ id: number; path?: string; title?: string; artist?: string; duration?: number }>
+        const todo = analysisCandidates(rows, Date.now()) as typeof rows
+        const r = await enqueueAnalysisMany(todo.map((t) => ({ trackId: t.id, colonPath: String(t.path), fingerprint: `${String(t.title || '').toLowerCase().trim()}|${String(t.artist || '').toLowerCase().trim()}|${t.duration || 0}` })))
+        return { ok: true, note: `${r.enqueued} songs queued for tempo and key (they wait for quiet, at background priority)` }
+      },
+    },
+  })
   // 4.5.0-114 — local SSD is canonical; NAS is async backup mirror only.
   const nasUp = await nasAvailable()
   console.log(`[state] storage mode: ${STATE_IS_NAS ? 'NAS' : 'local-primary'} — dir=${STATE_DIR}${nasUp ? ` (NAS backup mirror at ${NAS_STATE_DIR_PATH})` : ` (NAS backup unavailable — ${NAS_STATE_DIR_PATH} not mounted)`}`)
@@ -10293,7 +10196,8 @@ app.whenReady().then(async () => {
     }
   }, { refuse: REFUSED_SENDER })
 
-  ipc.handle('prune-alac-cache', async () => {
+  // The nightly check calls the same prune with its brake on (self-care-core.ts pruneBrake).
+  prunePlayCache = async (brake: boolean) => {
     // Delete cache entries whose hashed source path doesn't match any
     // current library track. After 4.0.x rounds of import / dedup /
     // path-collision-cleanup, the cache typically has hundreds of
@@ -10342,11 +10246,13 @@ app.whenReady().then(async () => {
       return { ok: true, pruned: 0, bytesFreed: 0 }
     }
 
+    const cached = entries.filter((f) => f.endsWith('.m4a') || f.endsWith('.flac'))   // cache holds both eras
+    const unclaimed = cached.filter((f) => ![...expected].some((h) => isEntryFor(f, h)))
+    const held = brake ? pruneBrake({ libraryTracks: (lib.tracks || []).length, entries: cached.length, unclaimed: unclaimed.length }) : null
+    if (held) return { ok: true, pruned: 0, bytesFreed: 0, held }
     let pruned = 0
     let bytesFreed = 0
-    for (const f of entries) {
-      if (!f.endsWith('.m4a') && !f.endsWith('.flac')) continue   // cache holds both eras
-      if ([...expected].some((h) => isEntryFor(f, h))) continue
+    for (const f of unclaimed) {
       const fp = join(PLAY_CACHE, f)
       const s = await stat(fp).catch(() => null)
       if (s) bytesFreed += s.size
@@ -10354,7 +10260,8 @@ app.whenReady().then(async () => {
       pruned++
     }
     return { ok: true, pruned, bytesFreed }
-  }, { refuse: REFUSED_SENDER })
+  }
+  ipc.handle('prune-alac-cache', async () => prunePlayCache(false), { refuse: REFUSED_SENDER })
 
   // Streaming migration helpers (trackIdForAbsPath / fetchAudioFromHomemini /
   // HOMEMINI_AUDIO_BASE) were hoisted to module scope (near trackFarmPath) so

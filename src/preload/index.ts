@@ -630,26 +630,6 @@ const electronAPI = {
     ipcRenderer.on('artwork-backfill-progress', handler)
     return () => { ipcRenderer.removeListener('artwork-backfill-progress', handler) }
   },
-  // Brief 020: batch backfill of writable overrides into embedded file
-  // tags so Plex sees user edits. Invoked from the
-  // "Library → Apply Overrides to Files…" menu. Per-edit write-back
-  // happens automatically inside save-metadata-override; no renderer-
-  // side IPC for that case.
-  applyOverridesBatch: (): Promise<{
-    ok: boolean
-    total?: number
-    succeeded?: number
-    failed?: number
-    skippedNoTrack?: number
-    skippedFpMismatch?: number
-    skippedNoWritable?: number
-    fileSizesRefreshed?: number
-    fileSizes?: Array<{ id: number; fileSize: number; audioFingerprint?: string; fileVersion?: string }>
-    waitingForPlayback?: number
-    failures?: Array<{ filePath: string; error?: string }>
-    error?: string
-  }> =>
-    ipcRenderer.invoke('apply-overrides-batch'),
   // Brief 020 per-edit write-back: the tag write rewrote this track's
   // file. New size and fingerprint, for the renderer to apply and save.
   onTagWritebackFileChanged: (callback: (m: { id: number; fileSize: number; audioFingerprint?: string; fileVersion?: string }) => void) => {
@@ -657,22 +637,20 @@ const electronAPI = {
     ipcRenderer.on('tag-writeback:file-changed', handler)
     return () => { ipcRenderer.removeListener('tag-writeback:file-changed', handler) }
   },
-  onTagWritebackProgress: (callback: (p: { done: number; total: number; succeeded: number; failed: number; currentPath?: string }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, p: { done: number; total: number; succeeded: number; failed: number; currentPath?: string }) => callback(p)
-    ipcRenderer.on('tag-writeback:progress', handler)
-    return () => { ipcRenderer.removeListener('tag-writeback:progress', handler) }
+  // V7 nightly check (main/self-care.ts): sizes measured on disk, for the
+  // renderer to apply (UPDATE_TRACKS) and save like any edit.
+  onSelfCareMeasured: (callback: (measured: Array<{ id: number; fileSize: number; audioFingerprint?: string; fileVersion?: string }>) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, m: Array<{ id: number; fileSize: number; audioFingerprint?: string; fileVersion?: string }>) => callback(m)
+    ipcRenderer.on('self-care:measured', handler)
+    return () => { ipcRenderer.removeListener('self-care:measured', handler) }
   },
-  // Brief 016 commit 2: full-library fileSize refresh. Main measures
-  // every local file and returns the sizes; the renderer applies the
-  // ones that differ (UPDATE_TRACKS) and saves them like any edit.
-  // Streamed (symlinked) and missing files are counted, not measured.
-  refreshFileSizes: (): Promise<{ ok: boolean; refreshed?: number; measured?: Array<{ id: number; fileSize: number }>; streamed?: number; missing?: number; error?: string }> =>
-    ipcRenderer.invoke('refresh-file-sizes'),
-  onRefreshFileSizesProgress: (callback: (p: { scanned: number; refreshed: number; total: number }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, p: { scanned: number; refreshed: number; total: number }) => callback(p)
-    ipcRenderer.on('refresh-file-sizes:progress', handler)
-    return () => { ipcRenderer.removeListener('refresh-file-sizes:progress', handler) }
-  },
+  selfCareStatus: (): Promise<{ lastRunAt: number | null; needsYou: { orphanFiles: number; orphanBytes: number } } | null> =>
+    ipcRenderer.invoke('self-care-status'),
+  // Settings › Storage (V7): the one switch, and bringing songs back.
+  offloadStart: (opts?: { settingJustSaved?: boolean }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('offload-audio-start', opts),
+  offloadBringBack: (): Promise<{ ok: boolean; restored?: number; error?: string }> =>
+    ipcRenderer.invoke('offload-audio-rehydrate'),
   // Resolve folders + glob filtering on the main side; renderer only
   // ever sees individual audio file paths in the queue.
   importResolvePaths: (paths: string[]): Promise<{ ok: boolean; paths?: string[]; error?: string }> =>

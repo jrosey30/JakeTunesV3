@@ -316,10 +316,10 @@ describe('locks', () => {
     for (const g of ['Midwest Rap', 'Club Rap', 'Math Rock', 'Electro Swing', 'Space Rock', 'Geordie Jazz', 'Israeli Hip-Hop', 'Indie Sleaze', 'Plunderphonics']) assert.ok(GENRE_NAMES.has(g), g)
     for (const g of ['Samba', 'Soul Rock', 'Emo', 'Funk Metal', 'World', 'Electronic', 'Dance', 'Rap', 'Hip-Hop']) assert.ok(!GENRE_NAMES.has(g), `${g} was cut`)
   })
-  it('wired: index.ts starts it, App.tsx mirrors it, Settings shows the check list', () => {
+  it('wired: index.ts starts it, App.tsx mirrors it, Needs You shows the check list', () => {
     const src = (p: string) => readFileSync(join(import.meta.dirname, '..', '..', p), 'utf8')
     assert.match(src('main/index.ts'), /registerGenreFilerIpc\(ipc, \{/)
     assert.match(src('renderer/App.tsx'), /onGenreFilerApplied\(\(p\) => \{/)
-    assert.match(src('renderer/components/SettingsModal.tsx'), /<GenreCheckList \/>/)
+    assert.match(src('renderer/components/NeedsYouSheet.tsx'), /<GenreCheckList \/>/)
   })
 })
