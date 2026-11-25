@@ -38,6 +38,18 @@ export function aacMirrorCacheName(srcPath: string, targetKbps: number): string 
   return `${hash}.m4a`
 }
 
+/** The MP3 mirror's cache name (Gen 1): sha1(src|kbps|token)[:16].mp3 */
+export function mp3MirrorCacheName(srcPath: string, kbps: number): string {
+  const hash = createHash('sha1').update(`${srcPath}|${kbps}|${MP3_MIRROR_TOKEN}`).digest('hex').slice(0, 16)
+  return `${hash}.mp3`
+}
+
+/** The iPod-safe 16-bit / 44.1 kHz ALAC mirror's cache name: sha1(src|token)[:16].m4a */
+export function ipodAlacMirrorCacheName(srcPath: string): string {
+  const hash = createHash('sha1').update(`${srcPath}|${IPOD_ALAC_MIRROR_TOKEN}`).digest('hex').slice(0, 16)
+  return `${hash}.m4a`
+}
+
 /** Stage 1: ffmpeg decodes any source (FLAC/ALAC/WAV/AIFF, hi-res too) to 44.1 kHz / 16-bit / stereo WAV. */
 export function pcmDecodeArgs(srcPath: string, pcmPath: string): string[] {
   return ['-nostdin', '-y', '-i', srcPath, '-vn', '-ar', '44100', '-ac', '2', '-c:a', 'pcm_s16le', '-f', 'wav', pcmPath]

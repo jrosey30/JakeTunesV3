@@ -19,6 +19,8 @@ import {
 export interface SyncCacheHost {
   userData: string
   syncInFlight: () => boolean
+  /** The cache names a size limit may never take: the copies the songs on the iPods were made from. */
+  protectedNames?: () => Promise<ReadonlySet<string>>
 }
 
 const PRUNE_EVERY_MS = 10 * 60 * 1000
@@ -29,7 +31,7 @@ export function startSyncConvertCache(ipc: IpcRegistrar, host: SyncCacheHost): {
   const inFlight = host.syncInFlight
 
   const prune = async (why: string): Promise<void> => {
-    const r = await pruneToCap(dir, await readCapGb(settings), { syncInFlight: inFlight })
+    const r = await pruneToCap(dir, await readCapGb(settings), { syncInFlight: inFlight, protect: host.protectedNames })
     if (r.pruned) console.log(`[sync-cache] ${why}: pruned ${r.removed} least-recently-used file(s), ${(r.freedBytes / 1e9).toFixed(2)} GB freed, ${(r.leftBytes / 1e9).toFixed(2)} GB left`)
   }
 

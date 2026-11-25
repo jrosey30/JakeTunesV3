@@ -824,6 +824,12 @@ const electronAPI = {
   },
   loadUiState: (): Promise<{ ok: boolean; state: Record<string, unknown> | null }> =>
     ipcRenderer.invoke('load-ui-state'),
+  // Brief 265: the format of the iPod plugged in (stored per iPod), and the convert cache.
+  getIpodAudioProfile: (): Promise<unknown> => ipcRenderer.invoke('ipod-audio-profile:get'),
+  setIpodAudioProfile: (change: unknown): Promise<unknown> => ipcRenderer.invoke('ipod-audio-profile:set', change),
+  getConvertCacheStatus: (): Promise<unknown> => ipcRenderer.invoke('sync-convert-cache:status'),
+  setConvertCacheCap: (capGb: number | null): Promise<unknown> => ipcRenderer.invoke('sync-convert-cache:set-cap', { capGb }),
+  clearConvertCache: (): Promise<unknown> => ipcRenderer.invoke('sync-convert-cache:clear'),
   saveUiState: (state: Record<string, unknown>): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('save-ui-state', state),
   // Spotify connect (PKCE) + Discover Weekly pull.

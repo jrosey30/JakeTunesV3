@@ -58,12 +58,16 @@ export async function sweepPartials(dir: string, opts: { now?: number; minAgeMs?
   return removed
 }
 
-/** Which files go to bring the cache under capBytes: least recently used first; partials are never picked. */
-export function planPrune(files: readonly CacheFile[], capBytes: number): CacheFile[] {
+/**
+ * Which files go to bring the cache under capBytes: least recently used first. Partials are never
+ * picked, and neither is a protected name (a copy a song on an iPod was made from), even if that
+ * leaves the cache over the cap.
+ */
+export function planPrune(files: readonly CacheFile[], capBytes: number, protect: ReadonlySet<string> = new Set()): CacheFile[] {
   const whole = files.filter((f) => !isPartial(f.name))
   let total = whole.reduce((n, f) => n + f.size, 0)
   const out: CacheFile[] = []
-  for (const f of [...whole].sort((a, b) => a.usedMs - b.usedMs || a.name.localeCompare(b.name))) {
+  for (const f of [...whole].filter((x) => !protect.has(x.name)).sort((a, b) => a.usedMs - b.usedMs || a.name.localeCompare(b.name))) {
     if (total <= capBytes) break
     out.push(f)
     total -= f.size
@@ -76,12 +80,19 @@ export type PruneResult =
   | { pruned: true; removed: number; freedBytes: number; leftBytes: number }
 
 /** Prune to the cap. No cap (the default) = nothing is ever deleted. */
-export async function pruneToCap(dir: string, capGb: number | null, opts: { syncInFlight: () => boolean }): Promise<PruneResult> {
+export async function pruneToCap(dir: string, capGb: number | null, opts: { syncInFlight: () => boolean; protect?: () => Promise<ReadonlySet<string>> }): Promise<PruneResult> {
   if (capGb === null || !(capGb > 0)) return { pruned: false, why: 'no cap set' }
   if (opts.syncInFlight()) return { pruned: false, why: 'a sync is running' }
   const files = await listCache(dir)
   const cap = capGb * 1e9
-  const victims = planPrune(files, cap)
+  // The copies the songs on the iPods were made from: never taken. If they can't be worked out,
+  // nothing is taken (a limit must never cost a re-conversion of a song already on an iPod).
+  let protect: ReadonlySet<string>
+  try { protect = opts.protect ? await opts.protect() : new Set() } catch (err) {
+    console.warn('[sync-cache] could not tell which copies the iPods use — nothing pruned:', err instanceof Error ? err.message : err)
+    return { pruned: false, why: 'under the cap' }
+  }
+  const victims = planPrune(files, cap, protect)
   if (victims.length === 0) return { pruned: false, why: 'under the cap' }
   let freed = 0
   let removed = 0
