@@ -1,7 +1,8 @@
 /**
  * The three Home rows right under launch page "G" (Jake, 2026-10-20: "you
  * should listen to more, songs you've been listening to a lot, and recently
- * added. 5 each. With a see all option bringing it to 10."):
+ * added. 5 each. With a see all option bringing it to 10."). V7 (2026-11-24)
+ * named them as the approved plan does: Listen More, On Repeat, Recently Added.
  *
  *   You Should Listen To More       hidden gems you own — the taste score's
  *                                   picks you've barely played, each with a
@@ -205,11 +206,11 @@ export default function HomeShelves({ tracks, regularTracks, artworkMap, artInde
   return (
     <>
       {gems.length > 0 && (
-        <SongRow title="You Should Listen To More" scrollKey="home-row-listen-more" cards={gems} artFor={artFor} playTrack={playTrack}
+        <SongRow title="Listen More" scrollKey="home-row-listen-more" cards={gems} artFor={artFor} playTrack={playTrack}
           fullQueue={gemsQueue} openAll={weekly ? () => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'listen-more-weekly' }) : undefined} />
       )}
       {heavy.length > 0 && (
-        <SongRow title="You’ve Been Listening To A Lot" scrollKey="home-row-listening-a-lot" cards={heavy} artFor={artFor} playTrack={playTrack}
+        <SongRow title="On Repeat" scrollKey="home-row-listening-a-lot" cards={heavy} artFor={artFor} playTrack={playTrack}
           fullQueue={heavyQueue} openAll={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'on-repeat' })} />
       )}
       {recent.length > 0 && (

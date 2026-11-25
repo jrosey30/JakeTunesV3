@@ -578,7 +578,8 @@ export default function MixtapeView() {
             setConfirmDelete(false)
             void window.electronAPI.deleteMixtape?.(tape.id)
               .then(() => refreshMixtapes())
-              .then(() => libDispatch({ type: 'SET_VIEW', view: 'home' }))
+              // V7: tapes live on Made for You now, so a thrown-out tape lands there.
+              .then(() => libDispatch({ type: 'SET_VIEW', view: 'made-for-you' }))
           }}
           onCancel={() => setConfirmDelete(false)}
         />

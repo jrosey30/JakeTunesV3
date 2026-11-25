@@ -8,9 +8,10 @@
  * aligned).
  *
  *   which album   the album you're living in (homemini's merged history,
- *                 renderer/homeSpotlight.ts); with none, today's pick: the
- *                 same album all day from your 50 most played (it used to be
- *                 its own "Today's pick" band lower on the Home)
+ *                 renderer/homeSpotlight.ts); with none, the album with the
+ *                 most songs on On Repeat (common/home-layout.ts heroChoice).
+ *                 Until the answer is in, the card holds its space, empty, so
+ *                 a launch never shows one album and swaps in another
  *   the line      the Music Man's, only when the album is the one he wrote it
  *                 about. Click it and he introduces the record, then it plays
  *                 from track 1 (launch/musicManIntro.ts — kept from launch
@@ -22,7 +23,9 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AlbumArtImage from './AlbumArtImage'
-import { useHomeSpotlight } from '../homeSpotlight'
+import { useHomeSpotlight, homeSpotlightAnswered } from '../homeSpotlight'
+import { useHomeShelves } from '../homeShelves'
+import { albumKeyOf } from '../utils/albumKey'
 import { useHomeItemMenus } from './HomeItemMenus'
 import { groupTracksIntoAlbums, type Album } from '../utils/albumGroups'
 import { indexAlbumsForIsland } from '../utils/islandSlots'
@@ -35,7 +38,7 @@ import { audioFromBase64Mpeg } from '../audio/base64-audio'
 import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { createMusicManIntro, type IntroPhase, type MusicManIntro } from '../launch/musicManIntro'
 import { setNotice } from '../activity'
-import { heroByline, heroShowLine, type HeroShow } from '../../common/home-layout'
+import { heroByline, heroChoice, heroShowLine, HERO_HOLD_MS, type HeroShow } from '../../common/home-layout'
 import { nyDate } from '../../common/concerts-feed'
 import type { Track } from '../types'
 import '../styles/home-hero.css'
@@ -47,6 +50,8 @@ type HeroAction =
 interface Props {
   /** The REGULAR library (declared live sets' songs excluded) — HomeView's projection. */
   tracks: Track[]
+  /** The whole library (On Repeat's ids resolve here, as on the shelves). */
+  allTracks: Track[]
   artworkMap: Record<string, string>
   artIndex: Map<string, string>
   /** Upcoming shows (homemini's concerts feed, items + discover). */
@@ -88,24 +93,6 @@ function waitForDuck(): Promise<void> {
   })
 }
 
-/** Today's pick: one album all day, from the 50 most played (recency when nothing is played yet). */
-function todaysPick(albums: Album[]): Album | null {
-  if (albums.length === 0) return null
-  const scored = albums.map((a) => {
-    let plays = 0
-    let newest = ''
-    for (const t of a.tracks) {
-      plays += Number(t.playCount) || 0
-      if (t.dateAdded && t.dateAdded > newest) newest = t.dateAdded
-    }
-    return { a, plays, newest }
-  })
-  scored.sort((x, y) => y.plays - x.plays || y.newest.localeCompare(x.newest))
-  const pool = scored.slice(0, 50)
-  const day = Math.floor(Date.now() / 86_400_000)
-  return pool[day % pool.length]!.a
-}
-
 function shuffled<T>(xs: readonly T[]): T[] {
   const out = [...xs]
   for (let i = out.length - 1; i > 0; i--) {
@@ -125,7 +112,7 @@ function DiscGlyph(): JSX.Element {
   )
 }
 
-export default function HomeHero({ tracks, artworkMap, artIndex, shows, dispatch, playTrack }: Props): JSX.Element | null {
+export default function HomeHero({ tracks, allTracks, artworkMap, artIndex, shows, dispatch, playTrack }: Props): JSX.Element | null {
   const spot = useHomeSpotlight()
   const menus = useHomeItemMenus()
   const living = spot.doc?.livingIn ?? null
@@ -136,9 +123,30 @@ export default function HomeHero({ tracks, artworkMap, artIndex, shows, dispatch
     () => (living ? byIdentity.get(islandAlbumKey({ artist: living.artist, album: living.album })) : undefined),
     [living, byIdentity],
   )
-  const pick = useMemo(() => (livingAlbum ? null : todaysPick(albums)), [livingAlbum, albums])
-  const album: Album | null = livingAlbum ?? pick
-  const isLiving = !!livingAlbum
+  // On Repeat (the shelves' document): the fallback album when there is none you're living in.
+  const { shelves } = useHomeShelves(allTracks, tracks)
+  const byId = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks])
+  const onRepeatKeys = useMemo((): string[] | null => {
+    if (!shelves) return null
+    const ids = shelves.onRepeat.length ? shelves.onRepeat : shelves.listeningALot.map((h) => h.id)
+    return ids.map((id) => byId.get(id)).filter((t): t is Track => !!t).map((t) => albumKeyOf(t))
+  }, [shelves, byId])
+  const albumsByKey = useMemo(() => {
+    const m = new Map<string, Album>()
+    for (const a of albums) { const t = a.tracks[0]; if (t) m.set(albumKeyOf(t), a) }
+    return m
+  }, [albums])
+  // Holding is bounded: after HERO_HOLD_MS the hero draws what it has.
+  const [waited, setWaited] = useState(false)
+  useEffect(() => {
+    const t = window.setTimeout(() => setWaited(true), HERO_HOLD_MS)
+    return () => window.clearTimeout(t)
+  }, [])
+  const choice = heroChoice({ answered: homeSpotlightAnswered(), living: !!livingAlbum, onRepeat: onRepeatKeys, waitedMs: waited ? HERO_HOLD_MS : 0 })
+  const album: Album | null = choice.kind === 'living' ? livingAlbum ?? null
+    : choice.kind === 'on-repeat' ? albumsByKey.get(choice.albumKey) ?? null
+      : null
+  const isLiving = choice.kind === 'living'
 
   const ordered = useMemo(() => (album ? sortAlbumTracks(album.tracks) : []), [album])
 
@@ -212,6 +220,10 @@ export default function HomeHero({ tracks, artworkMap, artIndex, shows, dispatch
     [album, shows],
   )
 
+  if (choice.kind === 'hold') {
+    // The card's own size, empty: nothing to read yet, nothing to swap later.
+    return <section className="home-hero home-hero--waiting" aria-hidden="true"><div className="home-hero-cover" /></section>
+  }
   if (!album) return null
   const year = album.year || album.tracks.find((t) => t.year)?.year || ''
 

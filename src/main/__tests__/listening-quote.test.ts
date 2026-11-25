@@ -3,7 +3,7 @@
  * (Jake, 2026-06-09: "no need for those new cards but i like the quote").
  *   - the rule (common/listening-quote.ts, twin of the phone backend);
  *   - homemini's line first (main/listening-quote-hub.ts);
- *   - the Home renders the line and none of the six cards.
+ *   - V7 (2026-11-24) cut the band from the desktop; main still answers it.
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
@@ -149,22 +149,18 @@ describe('createHubListeningQuote', () => {
   })
 })
 
-describe('the desktop shows the quote, not the cards (on Made for You since V7)', () => {
-  const home = src('views', 'MadeForYouView.tsx')
-  const css = src('styles', 'home.css')
-  it('renders memory.quote with the Music Man credit', () => {
-    assert.match(home, /\{memory\?\.quote && \(/)
-    assert.match(home, /— the Music Man/)
-  })
-  it('none of the six cards Jake turned down', () => {
-    for (const label of ['Current Streak', 'Golden Hour', 'Biggest Day', 'Binge Record', 'Comeback', 'home-stats--memory']) {
-      assert.doesNotMatch(home, new RegExp(label))
+describe('the desktop: the quote band was cut in V7, main still answers it', () => {
+  // The approved V7 plan cut the Music Man's listening quote as a band (common/
+  // home-layout.ts CUT_FROM_HOME): neither the Home nor Made for You draws it.
+  // main still answers getListeningMemory (the Artists page's heavy rotation).
+  it('no desktop page draws the quote or the six cards', () => {
+    for (const f of ['HomeView.tsx', 'MadeForYouView.tsx']) {
+      const page = src('views', f)
+      assert.doesNotMatch(page, /memory\?\.quote|getListeningMemory/, f)
+      for (const label of ['Current Streak', 'Golden Hour', 'Biggest Day', 'Binge Record', 'Comeback', 'home-stats--memory']) {
+        assert.doesNotMatch(page, new RegExp(label), f)
+      }
     }
-  })
-  it('the line is never clamped', () => {
-    const rules = css.match(/\.home-memory-obs \{[^}]*\}/g) ?? []
-    assert.ok(rules.length > 0)
-    for (const r of rules) assert.doesNotMatch(r, /line-clamp|ellipsis/)
   })
   it('main answers with the quote: homemini first, then this Mac', () => {
     const ipc = readFileSync(join(import.meta.dirname, '..', 'ipc', 'library-ipc.ts'), 'utf8')

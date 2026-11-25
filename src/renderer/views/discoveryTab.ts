@@ -13,7 +13,7 @@
  */
 import { SHOP_TAB_LABELS } from '../../common/shop-names.ts'
 
-export type DiscoveryTab = 'new-for-you' | 'browse' | 'your-list' | 'bandcamp' | 'news'
+export type DiscoveryTab = 'new-for-you' | 'browse' | 'your-list' | 'bandcamp'
 
 /** The tabs, in order, with what each is called (common/shop-names.ts; ids unchanged). */
 export const SHOP_TABS: ReadonlyArray<{ id: DiscoveryTab; label: string }> = [
@@ -21,7 +21,6 @@ export const SHOP_TABS: ReadonlyArray<{ id: DiscoveryTab; label: string }> = [
   { id: 'browse', label: SHOP_TAB_LABELS[1] },
   { id: 'your-list', label: SHOP_TAB_LABELS[2] },
   { id: 'bandcamp', label: SHOP_TAB_LABELS[3] },
-  { id: 'news', label: SHOP_TAB_LABELS[4] },
 ]
 
 export const DISCOVERY_TAB_EVENT = 'jaketunes-discovery-tab'

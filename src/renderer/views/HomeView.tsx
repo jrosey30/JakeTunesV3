@@ -4,14 +4,16 @@
  * V7 (2026-11-24, Jake's approved design; it was ~16 rows):
  *
  *   1. Tonight on JakeTunes   one album, ▶ Play and Shuffle (components/HomeHero.tsx)
- *   2. three shelves          Listen more, On repeat, Recently added, each with
+ *   2. three shelves          Listen More, On Repeat, Recently Added, each with
  *                             See All (components/HomeShelves.tsx)
- *   3. Shows                  upcoming shows, "Were you there?" (components/HomeShows.tsx)
+ *   3. Shows                  upcoming shows, "Were you there?" (components/HomeShows.tsx),
+ *                             then one Music News headline with See All
  *
  * Year in Review joins in December only. Which sections may draw, and where
- * everything that left the Home lives now (Made for You, Record Shop › News),
- * is common/home-layout.ts — homeSections and MOVED_OFF_HOME. An empty library
- * gets the welcome instead.
+ * everything that left the Home lives now (Made for You, the Record Shop's
+ * For You tab, the news page), is common/home-layout.ts: homeSections and
+ * MOVED_OFF_HOME; what the plan cut is CUT_FROM_HOME. An empty library gets
+ * the welcome instead.
  *
  * The phone's new Home is the same idea (hero, one For you rail, Tonight,
  * Listening Room): V7 and Mobile V3 stay aligned.
@@ -35,6 +37,7 @@ import { HomeItemMenusProvider, useHomeItemMenusHost } from '../components/HomeI
 import HomeShows from '../components/HomeShows'
 import { asConcertsState, type ConcertsFeedState } from '../../common/concerts-feed'
 import { homeSections } from '../../common/home-layout'
+import { useMusicNews } from '../musicNews'
 import '../styles/home.css'
 
 export default function HomeView() {
@@ -90,12 +93,18 @@ export default function HomeView() {
   }, [])
 
   const normalizedArtIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
+  // Music News: one headline under Shows (the phone's Tonight news line);
+  // See All opens the full list ('music-news').
+  const news = useMusicNews(lib.tracks)
+  const headline = news?.[0] ?? null
+
   const heroShows = useMemo(() => (concerts ? [...concerts.items, ...concerts.discover] : []), [concerts])
 
   const sections = homeSections({
     now: new Date(),
     libraryEmpty: lib.tracks.length === 0,
     shows: concerts ? concerts.items.length + concerts.discover.length : 0,
+    news: news?.length ?? 0,
   })
 
   return (
@@ -135,7 +144,7 @@ export default function HomeView() {
       )}
 
       {sections.includes('hero') && (
-        <HomeHero tracks={regularTracks} artworkMap={lib.artworkMap} artIndex={normalizedArtIndex} shows={heroShows} dispatch={dispatch} playTrack={playTrack} />
+        <HomeHero tracks={regularTracks} allTracks={lib.tracks} artworkMap={lib.artworkMap} artIndex={normalizedArtIndex} shows={heroShows} dispatch={dispatch} playTrack={playTrack} />
       )}
 
       {/* December only (common/home-layout.ts); all year on Made for You. */}
@@ -152,6 +161,14 @@ export default function HomeView() {
           </div>
           <HomeShows state={concerts} openLink={openLink} />
         </section>
+      )}
+
+      {sections.includes('news') && headline && (
+        <div className="home-news-line" role="group" aria-label="Music News">
+          <span className="home-news-line-label">NEWS</span>
+          <button type="button" className="home-news-line-title" onClick={() => openLink(headline.link)} title={headline.title}>{headline.title}</button>
+          <button type="button" className="home-section-more" onClick={() => dispatch({ type: 'SET_VIEW', view: 'music-news' })}>See All</button>
+        </div>
       )}
     </div>
     {/* Fixed bottom-right; kept outside .home-view (an isolated stacking

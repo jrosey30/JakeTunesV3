@@ -69,8 +69,7 @@ describe('the Home\'s items right-click and drag like library items', () => {
     assert.equal((g.match(/setAlbumDragPayload\(e, sortAlbumTracks\(/g) ?? []).length, 1)
     assert.match(g, /tracksForArtist\(tracks, d\.artist\)/)
   })
-  it("Rediscover an artist (on Made for You since V7); a daily mix drags as its songs in order", () => {
-    assert.match(mfy, /tracksForArtist\(regularTracks, pick\.artist\)/)
+  it("a daily mix drags as its songs in order (Rediscover and Today's pick were cut in V7)", () => {
     assert.match(mixes, /onDragStart=\{\(e\) => setAlbumDragPayload\(e, m\.tracks\.map/)
   })
   it('Made for You is its own menu host, like the Home', () => {

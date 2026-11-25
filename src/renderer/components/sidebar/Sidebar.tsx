@@ -1117,7 +1117,8 @@ export default function Sidebar() {
             const wasOpen = state.currentView === 'mixtape-detail' && getMixtapeId() === id
             void window.electronAPI.deleteMixtape?.(id)
               .then(() => refreshMixtapes())
-              .then(() => { if (wasOpen) dispatch({ type: 'SET_VIEW', view: 'home' }) })
+              // V7: tapes live on Made for You, so a thrown-out open tape lands there.
+              .then(() => { if (wasOpen) dispatch({ type: 'SET_VIEW', view: 'made-for-you' }) })
           }}
           onCancel={() => setTapeDeleteConfirm(null)}
         />

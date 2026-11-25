@@ -13,11 +13,17 @@
   border-radius: 14px;
   background: #211D1E;
   color: #FFFFFF;
-  animation: home-section-in 260ms ease-out both;
+  /* the motion tokens (V7 motion, styles/motion.css): one speed, one curve */
+  animation: home-section-in var(--motion-normal) var(--motion-ease) both;
 }
 @media (prefers-reduced-motion: reduce) {
   .home-hero { animation: none; }
 }
+/* Waiting for the answer (HomeHero, heroChoice 'hold'): the card's own
+   size and colour, empty, so the page below never jumps and no album is
+   shown only to be swapped for another. 224px = 180px cover + 2 × 22px. */
+.home-hero--waiting { min-height: 224px; box-sizing: border-box; animation: none; }
+.home-hero--waiting .home-hero-cover { box-shadow: none; cursor: default; }
 
 .home-hero-cover {
   width: 180px;
