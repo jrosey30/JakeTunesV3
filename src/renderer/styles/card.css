@@ -1,0 +1,36 @@
+/* V7 cards (components/Card.tsx, PlayButton.tsx): click opens, the ▶ on
+   hover plays. The card keeps its page's own classes; this file only adds the
+   ▶ and the cursor. The disc is the Artists tile's (artists-grid.css .ag-play,
+   Jake's pick 2026-10-21): white, orange triangle, centred on the art. */
+
+.jt-card { cursor: pointer; }
+.jt-card:focus-visible { outline: 2px solid var(--brand-orange, #FC5501); outline-offset: 2px; }
+.jt-card-art { position: relative; }
+
+.jt-play {
+  appearance: none;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  cursor: pointer;
+}
+.jt-play:disabled { cursor: default; opacity: 0.5; }
+.jt-play-icon { display: block; flex: none; }
+
+.jt-play--overlay {
+  position: absolute; inset: 0; margin: auto; z-index: 3;
+  width: clamp(32px, 28%, 46px); height: clamp(32px, 28%, 46px);
+  border-radius: 50%; border: 0; padding: 0;
+  background: #fff; color: var(--brand-orange, #FC5501);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  opacity: 0; transition: opacity 120ms ease, transform 120ms ease;
+}
+.jt-card:hover .jt-play--overlay,
+.jt-card:focus-within .jt-play--overlay,
+.jt-play--overlay:focus-visible { opacity: 1; }
+.jt-play--overlay:hover { transform: scale(1.06); }
+.jt-play--overlay:focus-visible { outline: 2px solid var(--brand-orange, #FC5501); outline-offset: 2px; }
+
+/* A pill takes its page's class for colour and size (album-page-play, …);
+   this only lines the triangle up with the word. */
+.jt-play--pill .jt-play-label { line-height: 1; }
+
+@media (prefers-reduced-motion: reduce) { .jt-play--overlay { transition: none; } }

@@ -436,6 +436,8 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
                     type="button"
                     className="tn-dig"
                     onClick={() => dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(d.artist) })}
+                    // V7: an artist card's menu is the artist menu, everywhere.
+                    onContextMenu={(e) => menus?.openArtistMenu(e, d.artist, tracksForArtist(tracks, d.artist))}
                     draggable
                     onDragStart={(e) => {
                       const ids = tracksForArtist(tracks, d.artist).map((t) => t.id)

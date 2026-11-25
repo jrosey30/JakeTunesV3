@@ -38,6 +38,7 @@ import { startWindSound, stopWindSound, mechanicalSound, tapeMotorPause } from '
 import { effectiveDurationFn, tapeTracks, tapeCutMs, tapePlayIds, dubTalkovers } from '../../common/tape-physics'
 import type { Track, Mixtape } from '../types'
 import '../styles/mixtape.css'
+import PlayButton from '../components/PlayButton'
 
 function fmt(ms: number): string {
   const s = Math.round(ms / 1000)
@@ -454,9 +455,7 @@ export default function MixtapeView() {
             const displayLeft = Math.max(0, counter.totalMs - counter.elapsedMs)
             return (
               <>
-                <button className="mixtape-play" onClick={() => { mechanicalSound('play'); pressPlay() }}>
-                  ▶ Play Tape
-                </button>
+                <PlayButton className="mixtape-play" name={tape.title} onPlay={() => { mechanicalSound('play'); pressPlay() }} />
                 <div className="faceplate">
                   {/* The A/B tabs are gone — a tape is one sequence now, so
                       there is nothing to flip to (2026-08-08). */}

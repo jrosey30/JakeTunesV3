@@ -168,8 +168,8 @@ export default function AlbumsView() {
 
   // Per-album work done ONCE per album list, not per card per render (it used
   // to run for all 2,579 cards on every playback tick). Running order + the
-  // Album Mode gate: the ▶ Album button appears ONLY when the record is
-  // verifiably complete — the same completeness doctrine the live-set merge
+  // Album Mode gate: the ▶'s tooltip says "front to back, gapless" ONLY when
+  // the record is verifiably complete — the same completeness doctrine the live-set merge
   // uses (one definition, no twin).
   const albumMeta = useMemo(() => filteredAlbums.map((album) => {
     const ordered = sortAlbumTracks(album.tracks)
@@ -254,7 +254,7 @@ export default function AlbumsView() {
       {/* Hidden while the search pill or the filter narrows the grid — the
           results are the point then (same rule as the Artists shelves). */}
       {!effectiveQuery && (
-        <IslandAlbumsShelf albums={albums} findArtHash={findArtHash} lookupArt={lookupArt} requestArt={requestArt} onOpenAlbum={openAlbum} />
+        <IslandAlbumsShelf albums={albums} findArtHash={findArtHash} lookupArt={lookupArt} requestArt={requestArt} onOpenAlbum={openAlbum} onPlayAlbum={playFullAlbum} albumMenu={albumMenuItems} />
       )}
       {filteredAlbums.length === 0 && (
         <EmptyState query={albFilter} noun="albums" />

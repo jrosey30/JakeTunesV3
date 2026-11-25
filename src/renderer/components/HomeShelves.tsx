@@ -4,36 +4,28 @@
  * added. 5 each. With a see all option bringing it to 10."). V7 (2026-11-24)
  * named them as the approved plan does: Listen More, On Repeat, Recently Added.
  *
- *   You Should Listen To More       hidden gems you own — the taste score's
- *                                   picks you've barely played, each with a
- *                                   reason from real stars / plays / genre
- *   You've Been Listening To A Lot  most plays in 30 days, with the count
- *   Recently Added                  newest songs, with the date added (a click
- *                                   plays it with the newest 100 queued behind)
+ *   Listen More          hidden gems you own — the taste score's picks you've
+ *                        barely played, each with a reason (homemini's weekly
+ *                        playlist, whose first songs the row is)
+ *   On Repeat            most plays in 30 days, with the count
+ *   Recently Added       newest songs, with the date added
  *
- * Five cards each. You Should Listen To More's "See All" opens Listen More
- * Weekly (2026-10-20: homemini's weekly playlist, whose first songs the row
- * is) — or, with no copy of it yet, grows to ten in place (the same
- * grid-in-place Shows uses); You've Been Listening To A Lot's "See All" opens
- * On Repeat (2026-10-28, Jake: "on repeat needs its own playlist and see all
- * needs to take you to that playlist" — the same ranking 30 deep, whose
- * first songs the row is); Recently Added's "See All" opens the Recently
- * Added playlist, as the old row did (Jake, mid-build: "should bring you to
- * recently added playlist"). Click a song → it plays, with the whole playlist
- * behind the row queued after it (Listen More Weekly's 50, On Repeat's 30,
- * Recently Added's newest 100), not just the 5 shown; the album is one
- * right-click away (Go to Album).
+ * V7 — click opens, ▶ plays (common/card-rules.ts): a click opens the song's
+ * album; the ▶ on hover plays the song with the whole playlist behind the row
+ * queued after it (Listen More Weekly's 50, On Repeat's 30, Recently Added's
+ * newest 100). "See All" always opens the playlist (Listen More's is Listen
+ * More Weekly); with no copy of it on this Mac there is no See All (it no
+ * longer grows the row).
  *
  * Like a library row (Jake, 2026-10-20): right-click a song for the Songs
- * view's song menu, an album for the Albums view's album menu
- * (HomeItemMenus); drag either onto Up Next, a sidebar playlist or the iPod
- * Pool (the library's drag payload, utils/trackDrag.ts).
+ * view's song menu (HomeItemMenus); drag it onto Up Next, a sidebar playlist
+ * or the iPod Pool (the library's drag payload, utils/trackDrag.ts).
  *
  * The rows come from homemini's merged-history document (renderer/
  * homeShelves.ts), this Mac's own when homemini is away. The cards are Home's
  * album card (.home-album-card), with names that wrap instead of clipping.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import AlbumArtImage from './AlbumArtImage'
 import { useHomeShelves } from '../homeShelves'
 import { useListenMoreWeekly } from '../listenMoreWeekly'
@@ -42,13 +34,15 @@ import { lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useHomeItemMenus } from './HomeItemMenus'
-import { setTrackDragPayload } from '../utils/trackDrag'
-import { SHELF_SHOWN, SHELF_MAX, playsLabel, addedLabel, recentlyAddedSongs, recentlyAddedPlay, shelfQueue } from '../../common/home-shelves'
+import Card from './Card'
+import { HOME_ROW_TITLE, SEE_ALL } from '../../common/card-rules'
+import { SHELF_SHOWN, playsLabel, addedLabel, recentlyAddedSongs, recentlyAddedPlay, shelfQueue } from '../../common/home-shelves'
 import { isTop25Rankable } from '../../common/top25-rankable'
 import type { Track } from '../types'
 
 type ShelfAction =
   | { type: 'VIEW_SMART_PLAYLIST'; id: 'recently-added' | 'listen-more-weekly' | 'on-repeat' }
+  | { type: 'VIEW_ALBUM_DETAIL'; albumKey: string }
   | { type: 'ADD_ARTWORK'; key: string; hash: string }
 
 interface Props {
@@ -64,12 +58,6 @@ interface Props {
 
 interface SongCard { track: Track; note: string; count: boolean }
 
-function activateOnKey(action: () => void) {
-  return (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); action() }
-  }
-}
-
 function Placeholder(): JSX.Element {
   return (
     <div className="home-album-art-placeholder">
@@ -82,69 +70,62 @@ function Placeholder(): JSX.Element {
   )
 }
 
-function SongRow({ title, scrollKey, cards, artFor, playTrack, openAll, fullQueue }: {
+function SongRow({ title, scrollKey, cards, artFor, playTrack, openAll, fullQueue, openAlbum }: {
   title: string
   scrollKey: string
   cards: SongCard[]
   artFor: (t: Track) => string | undefined
   playTrack: Props['playTrack']
-  /** When set, "See All" opens this (a playlist) instead of growing the row. */
+  /** "See All" opens this playlist; with none there is no See All (V7: See
+   *  All always opens a page, it never grows the row in place). */
   openAll?: () => void
-  /** Click queues this whole list (the row shows its first few); default: the shown cards. */
+  /** The ▶ queues this whole list (the row shows its first few); default: the shown cards. */
   fullQueue?: Track[]
+  /** A click opens the song's album. */
+  openAlbum: (t: Track) => void
 }): JSX.Element {
-  const [all, setAll] = useState(false)
   const menus = useHomeItemMenus()
-  const groupRef = useRef<HTMLElement>(null)
   const rowRef = useRef<HTMLDivElement>(null)
   useScrollPersistence(scrollKey, rowRef)
-  const shown = cards.slice(0, all ? SHELF_MAX : SHELF_SHOWN)
-  const more = cards.length > SHELF_SHOWN
-  const toggle = useCallback(() => {
-    // Folding the grid back up: keep the row's heading in view.
-    if (all) requestAnimationFrame(() => groupRef.current?.scrollIntoView({ block: 'nearest' }))
-    setAll(!all)
-  }, [all])
+  const shown = cards.slice(0, SHELF_SHOWN)
   const queue = fullQueue ?? shown.map((c) => c.track)
   return (
-    <section className="home-section home-shelves-row" ref={groupRef} aria-label={title}>
+    <section className="home-section home-shelves-row" aria-label={title}>
       <div className="home-section-header">
         <h2 className="home-section-title">{title}</h2>
-        {openAll ? (
-          <button type="button" className="home-section-more" onClick={openAll}>See All</button>
-        ) : more && (
-          <button type="button" className="home-section-more" onClick={toggle} aria-expanded={all}>
-            {all ? `Show Top ${SHELF_SHOWN}` : `See All ${Math.min(cards.length, SHELF_MAX)}`}
-          </button>
+        {openAll && (
+          <button type="button" className="home-section-more" onClick={openAll}>{SEE_ALL}</button>
         )}
       </div>
-      <div className={`home-card-row${all ? ' home-card-row--shelf-grid' : ''}`} role="list" ref={rowRef}>
+      <div className="home-card-row" role="list" ref={rowRef}>
         {shown.map((c, i) => {
           const hash = artFor(c.track)
           const go = recentlyAddedPlay(queue, i)
           const play = () => { if (go) playTrack(go.queue[go.start]!, go.queue, go.start, undefined, true, true) }
+          // V7: click opens the song's album; the hover ▶ plays it with the
+          // rest of the list after it (it used to play on a plain click).
           return (
-            <div
+            <Card
               key={c.track.id}
-              className="home-album-card home-album-card--shelf"
+              kind="song"
               role="listitem"
-              tabIndex={0}
-              onClick={play}
-              onKeyDown={activateOnKey(play)}
-              onContextMenu={(e) => menus?.openSongMenu(e, c.track, play, queue, i)}
-              draggable
-              onDragStart={(e) => setTrackDragPayload(e, c.track.id)}
+              name={c.track.title}
+              className="home-album-card home-album-card--shelf"
+              artClassName="home-album-art"
+              onOpen={() => openAlbum(c.track)}
+              onPlay={play}
+              playTitle={`Play ${c.track.title}, with the rest of this list after it`}
+              onMenu={(e) => menus?.openSongMenu(e, c.track, play, queue, i)}
+              dragIds={() => [c.track.id]}
               title={`${c.track.title} — ${c.track.artist}`}
+              art={hash ? <AlbumArtImage hash={hash} alt={c.track.album || c.track.title} onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')} /> : <Placeholder />}
             >
-              <div className="home-album-art">
-                {hash ? <AlbumArtImage hash={hash} alt={c.track.album || c.track.title} onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')} /> : <Placeholder />}
-              </div>
               <div className="home-album-info">
                 <div className="home-album-title">{c.track.title}</div>
                 <div className="home-album-artist">{c.track.artist}</div>
                 <div className={`home-shelves-note${c.count ? ' home-shelves-note--count' : ''}`}>{c.note}</div>
               </div>
-            </div>
+            </Card>
           )
         })}
       </div>
@@ -202,19 +183,21 @@ export default function HomeShelves({ tracks, regularTracks, artworkMap, artInde
     prefetchAlbumArtHashes(firsts.map(artFor), 320)
   }, [gems, heavy, recent, artFor, dispatch])
 
+  const openAlbum = useCallback((t: Track) => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(t) }), [dispatch])
   if (gems.length === 0 && heavy.length === 0 && recent.length === 0) return null
+  // V7: each row is named for the playlist its See All opens.
   return (
     <>
       {gems.length > 0 && (
-        <SongRow title="Listen More" scrollKey="home-row-listen-more" cards={gems} artFor={artFor} playTrack={playTrack}
+        <SongRow title={HOME_ROW_TITLE['listen-more-weekly']} scrollKey="home-row-listen-more" cards={gems} artFor={artFor} playTrack={playTrack} openAlbum={openAlbum}
           fullQueue={gemsQueue} openAll={weekly ? () => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'listen-more-weekly' }) : undefined} />
       )}
       {heavy.length > 0 && (
-        <SongRow title="On Repeat" scrollKey="home-row-listening-a-lot" cards={heavy} artFor={artFor} playTrack={playTrack}
+        <SongRow title={HOME_ROW_TITLE['on-repeat']} scrollKey="home-row-listening-a-lot" cards={heavy} artFor={artFor} playTrack={playTrack} openAlbum={openAlbum}
           fullQueue={heavyQueue} openAll={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'on-repeat' })} />
       )}
       {recent.length > 0 && (
-        <SongRow title="Recently Added" scrollKey="home-row-recent" cards={recent} artFor={artFor} playTrack={playTrack}
+        <SongRow title={HOME_ROW_TITLE['recently-added']} scrollKey="home-row-recent" cards={recent} artFor={artFor} playTrack={playTrack} openAlbum={openAlbum}
           fullQueue={recentSongs} openAll={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'recently-added' })} />
       )}
     </>

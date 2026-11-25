@@ -39,6 +39,8 @@ import OfferButtons from './DownloadStore/OfferButtons'
 import EditionMenu, { askEditions } from './DownloadStore/EditionMenu'
 import AlbumTracklistSheet from './DownloadStore/AlbumTracklistSheet'
 import { showDownload } from '../components/DownloadsPanel'
+import ContextMenu, { type MenuEntry } from '../components/ContextMenu'
+import { PlayIcon, PauseIcon } from '../components/TransportIcons'
 import '../styles/listen-to-the-list.css'
 
 interface Friend { name: string; adds: number; got: number; tossed: number; lastAt: number; imported: number }
@@ -162,6 +164,7 @@ export default function ListenToTheListView() {
   const [showFriends, setShowFriends] = useState(false)
   /** An album row's songs, open in place (Brief 255). */
   const [songsOf, setSongsOf] = useState<Recommendation | null>(null)
+  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; r: Recommendation } | null>(null)
   useEffect(() => { setSel((s) => Math.max(0, Math.min(s, inboxFlat.length - 1))) }, [inboxFlat.length])
   const selRef = useRef<HTMLDivElement>(null)
   useEffect(() => { selRef.current?.scrollIntoView({ block: 'nearest' }) }, [sel])
@@ -334,6 +337,8 @@ export default function ListenToTheListView() {
         ref={selected ? selRef : undefined}
         className={`ltl-tri${selected ? ' is-selected' : ''}`}
         onClick={() => setSel(i)}
+        // V7: every row has a menu — the Listening List's had none.
+        onContextMenu={(e) => { e.preventDefault(); setSel(i); setRowMenu({ x: e.clientX, y: e.clientY, r }) }}
         onPointerEnter={askAlbum}
         onFocus={askAlbum}
         role="button"
@@ -344,7 +349,7 @@ export default function ListenToTheListView() {
           {r.previewUrl && (
             <button type="button" className={`ltl-tri-play${isPlaying ? ' is-on' : ''}`}
               onClick={(e) => { e.stopPropagation(); previewReco(r) }} title={isPlaying ? 'Stop' : 'Preview'}>
-              {isPlaying ? '❚❚' : '▶'}
+              {isPlaying ? <PauseIcon size={12} /> : <PlayIcon size={12} />}
             </button>
           )}
         </div>
@@ -406,6 +411,28 @@ export default function ListenToTheListView() {
         </div>
       </div>
     )
+  }
+
+  // The Listening List row menu (V7): the row's own buttons, as lines.
+  const rowMenuItems = (r: Recommendation): MenuEntry[] => {
+    const isAlbum = recoType(r) === 'album'
+    const sentLink = isLinkKind(r) ? linkOf(r) : null
+    const dl = dlOf(r.id)
+    const busy = dl.state === 'queued' || dl.state === 'downloading'
+    return [
+      ...(r.previewUrl ? [{ label: preview.playingId === r.id ? 'Stop Preview' : 'Preview', onClick: () => previewReco(r) }] : []),
+      ...(isAlbum && r.kind !== 'concert' ? [{ label: 'Show Songs', onClick: () => setSongsOf(r) }] : []),
+      ...(sentLink ? [{ label: 'Open Link', onClick: () => { void window.electronAPI.openExternalUrl?.(sentLink) } }] : []),
+      { separator: true as const },
+      ...(!sentLink && (isAlbum || canDownloadReco(r)) ? [{
+        label: busy ? 'Saving…' : dl.state === 'error' ? 'Try Again' : isAlbum ? 'Save Album' : 'Save',
+        disabled: busy,
+        onClick: () => { if (r.kind === 'concert') openDownloadForReco(r); else getReco(r) },
+      }] : []),
+      { label: 'Find in Search', onClick: () => openDownloadForReco(r) },
+      { separator: true as const },
+      { label: 'Toss', onClick: () => tossReco(r) },
+    ]
   }
 
   const inboxEmpty = !loading && inboxFlat.length === 0
@@ -563,6 +590,7 @@ export default function ListenToTheListView() {
           onClose={() => setSongsOf(null)}
         />
       )}
+      {rowMenu && <ContextMenu x={rowMenu.x} y={rowMenu.y} items={rowMenuItems(rowMenu.r)} onClose={() => setRowMenu(null)} />}
     </div>
   )
 }

@@ -34,6 +34,7 @@ import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
 import { addToIpodPlaylistEntries } from '../ipodPlaylistAdd'
 import { setTrackDragPayload } from '../utils/trackDrag'
 import { formatDuration } from '../../common/format-duration'
+import PlayButton from '../components/PlayButton'
 
 const GRID = '44px minmax(0, 1.8fr) minmax(0, 1.2fr) 70px'
 
@@ -276,7 +277,7 @@ export default function MixDetailView() {
           <h1 className="album-page-title">{mix.title}</h1>
           <div className="album-page-facts">{tracks.length} song{tracks.length === 1 ? '' : 's'}</div>
           <div className="album-page-actions">
-            <button type="button" className="album-page-play" onClick={playMix}>▶ Play</button>
+            <PlayButton className="album-page-play" name={mix.title} onPlay={playMix} />
             <button type="button" className="album-page-shuffle" disabled={keeping}
               onClick={() => { void keepAsTape() }}>
               {keeping ? 'Saving…' : 'Save to Mixtapes'}

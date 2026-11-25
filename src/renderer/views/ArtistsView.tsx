@@ -22,12 +22,14 @@ import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useScrollingClass } from '../hooks/useScrollingClass'
 import { sessionArtistImages, hashColor, initials } from '../utils/artistPortrait'
-import { compareNames, compareAlbumNames, artistSectionLetter } from '../utils/artistSort'
+import { compareNames, artistSectionLetter } from '../utils/artistSort'
 import ScrollTopButton from '../components/ScrollTopButton'
 import FindBar from '../components/FindBar'
 import { useFindState } from '../hooks/useFindState'
 import { consumeDrillIn } from '../utils/drillIn'
-import { setAlbumDragPayload } from '../utils/trackDrag'
+import Card from '../components/Card'
+import ContextMenu from '../components/ContextMenu'
+import { artistMenuEntries, artistRunningOrder } from '../utils/libraryMenus'
 import { groupTracksByArtist } from '../utils/artistTracks'
 import EmptyState from '../components/EmptyState'
 import ArtistGroupingModal from '../components/ArtistGroupingModal'
@@ -82,53 +84,50 @@ interface ArtistCardProps {
   observe: (el: HTMLElement | null) => void
   onOpen: (name: string) => void
   onPlay: (a: ArtistCard) => void
+  onMenu: (e: React.MouseEvent, a: ArtistCard) => void
 }
 
 /** One artist card. Memoized (2026-10-21): a playback tick or one arriving
  *  photo used to re-render all ~1,940 cards (26 ms per tick; 30–120 ms per
  *  photo burst while scrolling into unseen letters) — now only the card whose
  *  photo arrived re-renders. */
-const ArtistCardView = memo(function ArtistCardView({ a, slug, chip, wide, hideOrigin, observe, onOpen, onPlay }: ArtistCardProps) {
+const ArtistCardView = memo(function ArtistCardView({ a, slug, chip, wide, hideOrigin, observe, onOpen, onPlay, onMenu }: ArtistCardProps) {
   const meta = [a.genre, hideOrigin ? '' : a.origin].filter(Boolean).join(' · ')
+  // V7 (components/Card.tsx): click opens, the hover ▶ plays (the white disc
+  // with the orange play, Jake's pick 2026-10-21), right-click is the artist
+  // menu, drag carries the artist's songs.
   return (
-    <div
-      ref={observe}
-      className={`ag-card${wide ? ' ag-card--shelf' : ''}`}
-      data-artist-name={a.name}
-      role="button"
-      tabIndex={0}
+    <Card
+      kind="artist"
+      innerRef={observe}
+      name={a.name}
+      className="ag-card"
+      extraClassName={wide ? 'ag-card--shelf' : undefined}
+      artClassName="ag-ph"
+      data={{ 'artist-name': a.name }}
       title={a.name}
-      onClick={() => onOpen(a.name)}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(a.name) } }}
-      draggable
-      onDragStart={(e) => setAlbumDragPayload(e, a.tracks.map((t) => t.id))}
-    >
-      <div className="ag-ph">
+      onOpen={() => onOpen(a.name)}
+      onPlay={() => onPlay(a)}
+      onMenu={(e) => onMenu(e, a)}
+      dragIds={() => a.tracks.map((t) => t.id)}
+      art={<>
         {slug
           ? <img src={`artist-image://${slug}.jpg`} alt="" draggable={false} loading="lazy" decoding="async" />
           : <div className="ag-ini" style={{ background: hashColor(a.name) }}>{initials(a.name.replace(/^the\s+/i, ''))}</div>}
-        {/* Hover play (Jake 2026-10-21, option A of three he was shown): the
-            photo dims a touch and a white disc with the orange play sits in
-            its exact centre. The triangle's box is centred, then nudged right
-            by 1/12 of its width so it LOOKS centred (a triangle's mass sits
-            left of its box centre). */}
         <span className="ag-scrim" aria-hidden="true" />
-        <button type="button" className="ag-play" aria-label={`Play ${a.name}`} title={`Play ${a.name}`}
-          onClick={(e) => { e.stopPropagation(); onPlay(a) }} onKeyDown={(e) => e.stopPropagation()}>
-          <svg className="ag-play-tri" width="16" height="18" viewBox="0 0 16 18" aria-hidden="true"><path d="M0 0L16 9L0 18Z" fill="currentColor" /></svg>
-        </button>
-      </div>
+      </>}
+    >
       <div className="ag-name">{a.name}</div>
       {meta && <div className="ag-meta">{meta}</div>}
       <div className="ag-meta">{a.albums ? `${plural(a.albums, 'album')} · ` : ''}{plural(a.tracks.length, 'song')}</div>
       {chip && <div className="ag-chip">{chip}</div>}
-    </div>
+    </Card>
   )
 })
 
 export default function ArtistsView(): JSX.Element {
   const { state: lib, dispatch: libDispatch } = useLibrary()
-  const { state: pb } = usePlayback()
+  const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
   const [sort, setSortState] = useState<SortId>(lastSort)
   const setSort = (s: SortId): void => { lastSort = s; setSortState(s) }
@@ -330,10 +329,12 @@ export default function ArtistsView(): JSX.Element {
   }, [])
 
   const playArtist = useCallback((a: ArtistCard) => {
-    const n = (v: number | string | undefined): number => Number(v) || 0
-    const list = [...a.tracks].sort((x, y) => compareAlbumNames(x.album || '', y.album || '') || n(x.discNumber) - n(y.discNumber) || n(x.trackNumber) - n(y.trackNumber))
+    const list = artistRunningOrder(a.tracks)
     if (list.length) playTrack(list[0], list, 0, undefined, true)
   }, [playTrack])
+  // V7: the artist menu (utils/libraryMenus.ts) — the grid had none.
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; a: ArtistCard } | null>(null)
+  const openArtistMenu = useCallback((e: React.MouseEvent, a: ArtistCard) => setCtxMenu({ x: e.clientX, y: e.clientY, a }), [])
 
   // ⌘F find + drill-in + auto-follow all land on a card the same way.
   const lastActivityRef = useRef(0)
@@ -391,7 +392,7 @@ export default function ArtistsView(): JSX.Element {
   const hideOrigin = sort === 'country'
   const card = (a: ArtistCard, chip?: string, wide?: boolean): JSX.Element => (
     <ArtistCardView key={a.name} a={a} slug={photos.get(a.name)} chip={chip} wide={wide} hideOrigin={hideOrigin}
-      observe={observe} onOpen={openArtist} onPlay={playArtist} />
+      observe={observe} onOpen={openArtist} onPlay={playArtist} onMenu={openArtistMenu} />
   )
   // The shelves + A–Z sections as ONE memoized element tree (2026-10-21): a
   // render for any other reason (a playback tick, the find bar) reuses it, so
@@ -419,7 +420,7 @@ export default function ArtistsView(): JSX.Element {
     </>
     // card() closes over exactly these:
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [shelves, sections, photos, hideOrigin, observe, openArtist, playArtist])
+  ), [shelves, sections, photos, hideOrigin, observe, openArtist, playArtist, openArtistMenu])
 
   return (
     <div className={`artists-view ag${skipOffscreen ? ' ag--skip-offscreen' : ''}`} ref={viewRootRef} onClickCapture={noteActivity} onWheelCapture={noteActivity} onKeyDownCapture={noteActivity}>
@@ -463,6 +464,10 @@ export default function ArtistsView(): JSX.Element {
       )}
       {body}
       {groupingOpen && <ArtistGroupingModal onClose={() => setGroupingOpen(false)} />}
+      {ctxMenu && (
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)}
+          items={artistMenuEntries({ name: ctxMenu.a.name, tracks: ctxMenu.a.tracks, playlists: lib.playlists, playTrack, libDispatch, pbDispatch })} />
+      )}
     </div>
   )
 }

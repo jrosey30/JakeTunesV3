@@ -31,6 +31,7 @@ import { getDeckState, layOnDeck } from '../mixtapes'
 import { ratingMenuEntries } from '../components/StarRating'
 import { downloadMenuEntries } from './downloadStore'
 import { canonicalArtist } from './artistAlias'
+import { compareAlbumNames } from './artistSort'
 import { albumKeyOf, albumKeyFromStrings } from './albumKey'
 import { toCynthiaTrack } from './cynthia'
 import { sortAlbumTracks } from './albumTrackOrder'
@@ -300,5 +301,100 @@ export function albumMenuEntries(o: AlbumMenuOptions): MenuEntry[] {
     ...(ordered.length ? [{ label: 'Share Album…', onClick: () => openFriendShare({ kind: 'album', track: ordered[0], albumTracks: ordered }) }] : []),
     { separator: true as const },
     { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(album.artist || '') }) },
+  ]
+}
+
+/** An artist's songs the way the Artists tile's ▶ plays them: album by album
+ *  (A–Z by album name), each in disc and track order. */
+export function artistRunningOrder(tracks: Track[]): Track[] {
+  const n = (v: number | string | undefined): number => Number(v) || 0
+  return [...tracks].sort((x, y) => compareAlbumNames(x.album || '', y.album || '') || n(x.discNumber) - n(y.discNumber) || n(x.trackNumber) - n(y.trackNumber))
+}
+
+export interface ArtistMenuOptions {
+  name: string
+  /** The artist's songs (any order; the menu plays them in running order). */
+  tracks: Track[]
+  playlists: Playlist[]
+  playTrack: PlayTrack
+  libDispatch: LibraryDispatch
+  pbDispatch: PlaybackDispatch
+}
+
+/** The artist menu (V7, 2026-11-24): every artist tile — the Artists grid,
+ *  Home's Top Artists and Rediscover, the shop's artist cards — offers these
+ *  lines. Before this the Artists grid had no menu at all. */
+export function artistMenuEntries(o: ArtistMenuOptions): MenuEntry[] {
+  const { name, playTrack, libDispatch, pbDispatch } = o
+  const ordered = artistRunningOrder(o.tracks)
+  const label = name || 'this artist'
+  return [
+    { label: `Play "${label}"`, disabled: !ordered.length, onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true, true) } },
+    { label: 'Shuffle', disabled: !ordered.length, onClick: () => { const s = [...ordered].sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
+    ...(ordered.length ? [{
+      label: `Start ${label} Radio`,
+      onClick: () => { window.dispatchEvent(new CustomEvent('jaketunes-start-artist-radio', { detail: { tracks: ordered, label: name } })) },
+    }] : []),
+    { separator: true as const },
+    ...queueMenuEntries(ordered, pbDispatch),
+    addToPlaylistEntry(ordered, o.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
+    ...addToIpodPlaylistEntries(ordered, ordered),
+    { separator: true as const },
+    { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(name) }) },
+  ]
+}
+
+export interface PlaylistMenuOptions {
+  name: string
+  /** The playlist's songs in its own order. */
+  tracks: Track[]
+  /** What clicking the card does (its page). */
+  open: () => void
+  playlists: Playlist[]
+  playTrack: PlayTrack
+  libDispatch: LibraryDispatch
+  pbDispatch: PlaybackDispatch
+}
+
+/** The playlist menu (V7): playlists, mixes and Home rows that open a
+ *  playlist all offer these lines. */
+export function playlistMenuEntries(o: PlaylistMenuOptions): MenuEntry[] {
+  const { tracks, playTrack, libDispatch, pbDispatch } = o
+  return [
+    { label: `Play "${o.name}"`, disabled: !tracks.length, onClick: () => { if (tracks.length) playTrack(tracks[0], tracks, 0, undefined, true, true) } },
+    { label: 'Shuffle', disabled: !tracks.length, onClick: () => { const s = [...tracks].sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
+    { separator: true as const },
+    ...queueMenuEntries(tracks, pbDispatch),
+    addToPlaylistEntry(tracks, o.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
+    ...addToIpodPlaylistEntries(tracks, tracks),
+    { separator: true as const },
+    { label: 'Open', onClick: o.open },
+  ]
+}
+
+export interface ConcertMenuOptions {
+  /** The show's one merged recording. */
+  merged: Track
+  band: string
+  /** Opens the show's page (what clicking its row does). */
+  open: () => void
+  playlists: Playlist[]
+  playTrack: PlayTrack
+  libDispatch: LibraryDispatch
+  pbDispatch: PlaybackDispatch
+}
+
+/** A declared concert's menu (V7): the Concerts page's rows had none. A show
+ *  is one recording, so it queues and lands on playlists as that one track. */
+export function concertMenuEntries(o: ConcertMenuOptions): MenuEntry[] {
+  const { merged, playTrack, libDispatch, pbDispatch } = o
+  return [
+    { label: 'Play the Show', onClick: () => playTrack(merged, [merged], 0, undefined, true) },
+    { label: 'Open', onClick: o.open },
+    { separator: true as const },
+    ...queueMenuEntries([merged], pbDispatch),
+    addToPlaylistEntry([merged], o.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
+    { separator: true as const },
+    ...(o.band ? [{ label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(o.band) }) }] : []),
   ]
 }

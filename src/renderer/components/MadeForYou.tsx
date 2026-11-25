@@ -34,9 +34,8 @@ import { dailyAiTapes, type AiMixtape } from '../../common/ai-mixtapes'
 import { CassetteSvg, CASSETTE_BADGE_INK } from '../views/MixtapeView'
 import { useHomeItemMenus } from './HomeItemMenus'
 import MixArtwork from './MixArtwork'
-import { PlayIcon } from './TransportIcons'
+import Card from './Card'
 import { openMix, type VibeMix as Mix } from '../utils/activeMix'
-import { setAlbumDragPayload } from '../utils/trackDrag'
 import type { Track } from '../types'
 import '../styles/home-madeforyou.css'
 
@@ -107,6 +106,15 @@ export default function MadeForYou() {
     playTrack(m.tracks[0], m.tracks, 0, undefined, true, /* preserveOrder — a mix's arc IS the product */ true)
   }, [playTrack])
 
+  // A daily AI tape plays the same way from its ▶: one side, no cuts, from
+  // the top (common/ai-mixtapes.ts), with the tape session armed so the pill
+  // shows the tape's clock.
+  const playTape = useCallback((tape: AiMixtape, tracks: Track[]) => {
+    if (!tracks.length) return
+    setTapeSession({ mixtapeId: tape.id, tapeTrackIds: tracks.map((t) => t.id), cuts: [] })
+    playTrack(tracks[0], tracks, 0, undefined, true, true)
+  }, [playTrack])
+
   const pickVibe = useCallback(async (vibe: string) => {
     if (building) return
     setBuilding(true)
@@ -161,32 +169,38 @@ export default function MadeForYou() {
         </button>
       </div>
 
+      {/* V7 — click opens, ▶ plays (components/Card.tsx): a tape or a mix
+          opens on click; the ▶ on hover plays it from the top as a tape;
+          right-click is its menu; drag carries its songs in order. */}
       {dailyTapes.length > 0 && (
         <div className="home-mixes-row">
           {dailyTapes.map(({ tape, tracks }) => {
             // The reels turn only while THIS tape is the one playing.
             const rolling = tapeSession?.mixtapeId === tape.id && pb.isPlaying
             return (
-              <div key={tape.id} className="home-mix-cell">
-                <button
-                  type="button"
-                  className="home-mix-card"
-                  onClick={() => openTape(tape)}
-                  // Right-click is the desktop's long-press (the phone's
-                  // context menu on the rail): Keep.
-                  onContextMenu={(e) => menus?.openTapeMenu(e, tape)}
-                  title={tape.commentary ? `${tape.title} — ${tape.commentary}` : `${tape.title} · ${tracks.length} songs`}
-                >
-                  <div className="home-mix-art">
-                    <MixArtwork tracks={tracks} alt={tape.title} />
-                    <span className="mixtape-cover-badge" aria-hidden="true">
-                      <CassetteSvg ink={CASSETTE_BADGE_INK} spinning={rolling} />
-                    </span>
-                  </div>
-                  {/* Below the art and wrapped in full: names never clip. */}
-                  <div className="home-tape-title">{tape.title}</div>
-                </button>
-              </div>
+              <Card
+                key={tape.id}
+                kind="tape"
+                name={tape.title}
+                className="home-mix-cell home-mix-card"
+                artClassName="home-mix-art"
+                onOpen={() => openTape(tape)}
+                onPlay={() => playTape(tape, tracks)}
+                // Right-click is the desktop's long-press (the phone's
+                // context menu on the rail): Keep.
+                onMenu={(e) => menus?.openTapeMenu(e, tape)}
+                dragIds={() => tracks.map((t) => t.id)}
+                title={tape.commentary ? `${tape.title} — ${tape.commentary}` : `${tape.title} · ${tracks.length} songs`}
+                art={<>
+                  <MixArtwork tracks={tracks} alt={tape.title} />
+                  <span className="mixtape-cover-badge" aria-hidden="true">
+                    <CassetteSvg ink={CASSETTE_BADGE_INK} spinning={rolling} />
+                  </span>
+                </>}
+              >
+                {/* Below the art and wrapped in full: names never clip. */}
+                <div className="home-tape-title">{tape.title}</div>
+              </Card>
             )
           })}
         </div>
@@ -194,36 +208,27 @@ export default function MadeForYou() {
       {dailyTapes.length === 0 && mixes.length > 0 && (
         <div className="home-mixes-row">
           {mixes.map((m) => {
-            // The play button is a SIBLING laid over the art, not a child —
-            // a button can't nest in a button. Clicking the card still opens
-            // the mix; the button plays it from the top as a tape (playMix).
+            const open = (): void => { openMix(m, lib.currentView); dispatch({ type: 'SET_VIEW', view: 'mix-detail' }) }
             return (
-              <div key={m.id} className="home-mix-cell">
-                <button
-                  className="home-mix-card"
-                  onClick={() => { openMix(m, lib.currentView); dispatch({ type: 'SET_VIEW', view: 'mix-detail' }) }}
-                  // Drag the mix — its songs in the mix's order — onto Up Next
-                  // or a playlist, like any run of library songs (2026-10-20).
-                  draggable
-                  onDragStart={(e) => setAlbumDragPayload(e, m.tracks.map((t) => t.id))}
-                  title={m.subtitle ? `${m.title} — ${m.subtitle}` : `${m.title} · ${m.tracks.length} songs`}
-                >
-                  <div className="home-mix-art">
-                    <MixArtwork tracks={m.tracks} />
-                    <div className="home-mix-scrim" aria-hidden="true" />
-                    <div className="home-mix-title">{m.title}</div>
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  className="home-mix-play"
-                  onClick={(e) => { e.stopPropagation(); playMix(m) }}
-                  title={`Play ${m.title}`}
-                  aria-label={`Play ${m.title}`}
-                >
-                  <PlayIcon size={16} />
-                </button>
-              </div>
+              <Card
+                key={m.id}
+                kind="mix"
+                name={m.title}
+                className="home-mix-cell home-mix-card"
+                artClassName="home-mix-art"
+                onOpen={open}
+                onPlay={() => playMix(m)}
+                onMenu={(e) => menus?.openPlaylistMenu(e, m.title, m.tracks, open)}
+                // Drag the mix — its songs in the mix's order — onto Up Next
+                // or a playlist, like any run of library songs (2026-10-20).
+                dragIds={() => m.tracks.map((t) => t.id)}
+                title={m.subtitle ? `${m.title} — ${m.subtitle}` : `${m.title} · ${m.tracks.length} songs`}
+                art={<>
+                  <MixArtwork tracks={m.tracks} />
+                  <div className="home-mix-scrim" aria-hidden="true" />
+                  <div className="home-mix-title">{m.title}</div>
+                </>}
+              />
             )
           })}
         </div>

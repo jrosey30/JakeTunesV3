@@ -3,8 +3,9 @@
  * (JakeTunesMobile IslandAlbumsSection.swift), now on the desktop Albums
  * page and synced both ways through homemini (renderer/syncedPicks.ts).
  *
- * Ten ranked slots. A filled slot opens the album; right-click → Replace… /
- * Remove / Move Left / Move Right. An empty slot opens the picker, which only
+ * Ten ranked slots. A filled slot opens the album and its hover ▶ plays it
+ * (V7); right-click → the album menu, then Replace… / Remove / Move Left /
+ * Move Right. An empty slot opens the picker, which only
  * offers COMPLETE albums (utils/islandEligible.ts — the desktop completeness
  * doctrine) that aren't already on the shelf. A pick the phone made for an
  * album this Mac doesn't have stays put, drawn faded — the desktop never
@@ -27,6 +28,10 @@ import {
   clearSlot, islandAlbumKey, moveSlot, placeInSlot, ISLAND_SLOT_COUNT,
   type AnyPicksState, type IslandAlbum, type IslandSlot,
 } from '../../common/synced-picks'
+import PlayButton from './PlayButton'
+import { sortAlbumTracks } from '../utils/albumTrackOrder'
+import { setAlbumDragPayload } from '../utils/trackDrag'
+import type { Track } from '../types'
 import '../styles/synced-picks.css'
 
 interface Props {
@@ -38,6 +43,10 @@ interface Props {
   /** Ask main to resolve covers the shelf needs but the artwork map lacks. */
   requestArt: (list: Array<{ artist: string; album: string }>) => void
   onOpenAlbum: (albumKey: string) => void
+  /** V7: the hover ▶ plays the album in running order. */
+  onPlayAlbum?: (ordered: Track[]) => void
+  /** V7: the album menu (the Albums view's, utils/libraryMenus.ts). */
+  albumMenu?: (album: Album) => MenuEntry[]
 }
 
 async function commit(next: IslandSlot[]): Promise<void> {
@@ -81,7 +90,7 @@ function DiscGlyph(): JSX.Element {
   )
 }
 
-export default function IslandAlbumsShelf({ albums, findArtHash, lookupArt, requestArt, onOpenAlbum }: Props): JSX.Element {
+export default function IslandAlbumsShelf({ albums, findArtHash, lookupArt, requestArt, onOpenAlbum, onPlayAlbum, albumMenu }: Props): JSX.Element {
   const picks = useIslandAlbums()
   const values = picks.values
   const [menu, setMenu] = useState<{ x: number; y: number; slot: number } | null>(null)
@@ -119,7 +128,11 @@ export default function IslandAlbumsShelf({ albums, findArtHash, lookupArt, requ
 
   const menuItems = (slot: number): MenuEntry[] => {
     if (!values[slot]) return [{ label: 'Choose Album…', disabled: !editable, onClick: () => setPicking(slot) }]
+    // V7: an Island cover is an album — the album menu first, then the slot's own lines.
+    const album = slots[slot]?.album
+    const albumLines = album && albumMenu ? albumMenu(album).filter((e) => !('label' in e) || !/Island Albums/.test(e.label)) : []
     return [
+      ...(albumLines.length ? [...albumLines, { separator: true as const }] : []),
       { label: 'Replace…', disabled: !editable, onClick: () => setPicking(slot) },
       { label: 'Remove', disabled: !editable, onClick: () => { void commit(clearSlot(values, slot)) } },
       { separator: true },
@@ -162,20 +175,29 @@ export default function IslandAlbumsShelf({ albums, findArtHash, lookupArt, requ
       </div>
       <div className="isl-grid">
         {slots.map((s, i) => (s.pick ? (
-          <button
+          // V7 (common/card-rules.ts): click opens the album, the hover ▶
+          // plays it, right-click is the album menu plus the slot's lines,
+          // drag carries it in running order.
+          <div
             key={i}
-            type="button"
-            className={`isl-slot${s.album ? '' : ' isl-slot--missing'}`}
+            role="button"
+            tabIndex={0}
+            className={`jt-card isl-slot${s.album ? '' : ' isl-slot--missing'}`}
+            data-card-kind="island"
             title={`${i + 1}. ${s.pick.album} — ${s.pick.artist}${s.album ? '' : ' (not in this library)'}`}
             aria-label={`Number ${i + 1}: ${s.pick.album} by ${s.pick.artist}`}
             onClick={() => open(i)}
+            onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(i) } }}
             onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, slot: i }) }}
+            draggable={!!s.album || undefined}
+            onDragStart={s.album ? (e) => setAlbumDragPayload(e, sortAlbumTracks(s.album!.tracks).map((t) => t.id)) : undefined}
           >
             <span className="isl-cover">
               {s.hash ? <AlbumArtImage hash={s.hash} alt="" className="isl-cover-img" size={240} /> : <DiscGlyph />}
+              {s.album && onPlayAlbum && <PlayButton variant="overlay" className="jt-card-play" name={s.album.name} onPlay={() => onPlayAlbum(sortAlbumTracks(s.album!.tracks))} />}
             </span>
             <span className="isl-rank">{i + 1}</span>
-          </button>
+          </div>
         ) : (
           <button
             key={i}

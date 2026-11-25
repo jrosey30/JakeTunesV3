@@ -9,10 +9,12 @@
  * Both rows are in DATE order (Jake, 2026-10-28: "concert suggestions are
  * never in date order"): taste picks the shows and writes the reason line,
  * the date orders them — main hands over listConcerts() output, so nothing
- * here re-sorts. Each row is a rail of the first cards with "See All N",
- * which opens the whole list in place as a wrapped grid. Cards keep the ticket-
- * stub look of the old Live Near You cards; names wrap, never clip. Clicking a
- * card opens its ticket link, as before.
+ * here re-sorts. Each row is a rail of the first cards with "See All",
+ * which opens the Shows page (views/ShowsView.tsx, V7: See All always opens a
+ * page) with every card in a wrapped grid. Cards keep the ticket-
+ * stub look of the old Live Near You cards; names wrap, never clip. V7: a click
+ * opens the show (its tickets, or "Pick a night"), the ▶ on the photo plays the
+ * snippet, right-click is the show menu.
  *
  * Going / I went (2026-10-29, twin of the phone's ConcertGoing.swift): a
  * "Going" pill on each card marks the show (one click, again to undo); the day
@@ -34,6 +36,9 @@
  */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
+import PlayButton from './PlayButton'
+import { SEE_ALL } from '../../common/card-rules'
+import ContextMenu, { type MenuEntry } from './ContextMenu'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
@@ -87,6 +92,8 @@ interface Going {
   openLately: (item: ConcertItem) => void
   /** Open "Pick a night" for a card whose act plays several nights. */
   openNights: (item: ConcertItem) => void
+  /** V7: a show card's right-click menu, at the event. */
+  openMenu: (e: React.MouseEvent, item: ConcertItem, items: MenuEntry[]) => void
 }
 
 interface CardProps {
@@ -246,6 +253,18 @@ function ShowConcertCard({ item, kind, nowMs, today, openLink, going, snippet }:
         playing={playing}
         stamped={stamped}
         onPlay={() => snippet.toggle(item)}
+        onOpen={several ? () => going.openNights(item) : url ? () => openLink(url) : null}
+        openWords={several ? 'pick a night' : 'open the tickets'}
+        onMenu={(e) => going.openMenu(e, item, [
+          ...(several ? [{ label: 'Pick a Night…', onClick: () => going.openNights(item) }] : url ? [{ label: 'Open Tickets', onClick: () => openLink(url) }] : []),
+          { label: playing ? 'Stop the Snippet' : 'Hear Their Song', onClick: () => snippet.toggle(item) },
+          ...(canMark(item, today) && !several ? [
+            { separator: true as const },
+            { label: 'Interested', checked: marked.interested, onClick: () => going.mark(item, own, 'interested') },
+            { label: 'Going', checked: on, onClick: () => { if (!on) setStamped(Date.now()); going.mark(item, own, 'going') } },
+          ] : []),
+          ...(lately ? [{ label: 'What They\u2019ve Been Playing', onClick: () => going.openLately(item) }] : []),
+        ])}
       />
       {/* A night that has passed is a record: no marks, no tickets, no set lists (2026-11-03, the
           phone twin's review). */}
@@ -301,18 +320,24 @@ interface Snippet {
   toggle: (item: ConcertItem) => void
 }
 
-function ConcertCard({ item, kind, nowMs, today, photo, playing, stamped, onPlay }: Omit<CardProps, 'going' | 'openLink'> & {
+function ConcertCard({ item, kind, nowMs, today, photo, playing, stamped, onPlay, onOpen, openWords, onMenu }: Omit<CardProps, 'going' | 'openLink'> & {
   photo: JSX.Element | null
   playing: boolean
   stamped: number
   onPlay: () => void
+  /** V7: what a click opens (the tickets, or "Pick a night"); null: nothing to open. */
+  onOpen: (() => void) | null
+  openWords: string
+  onMenu: (e: React.MouseEvent) => void
 }) {
   const stamp = runStamp(item, today)
   const badges = concertBadges(item, nowMs)
   const bill = cardBill(item)
   const reason = cardReason(item, kind)
   const where = whereLine(item)
-  const open = onPlay
+  // V7: a click opens the show (its tickets, or "Pick a night"); the ▶ on the
+  // photo plays 15 s of their song you play most (a click used to play it).
+  const open = onOpen ?? (() => {})
   const time = formatShowTime(item.time)
   const stub = stubLabel(item.date, today)
   const others = item.artists.filter((a) => a !== bill.artist)
@@ -321,18 +346,24 @@ function ConcertCard({ item, kind, nowMs, today, photo, playing, stamped, onPlay
     [item.venue, item.room, where].filter(Boolean).join(' · '),
     runNightsLine(item) ?? [longDate(item.date), time].filter(Boolean).join(' · '),
     reason,
-    playing ? 'Click to stop the snippet' : 'Click to hear their song you play most',
+    onOpen ? `Click: ${openWords}` : '',
   ].filter(Boolean).join('\n')
   return (
     <div
-      className={`home-tour-card home-concert-card${badges.soldOut === 'all' ? ' home-concert-card--soldout' : ''}${playing ? ' home-concert-card--playing' : ''}`}
+      className={`jt-card home-tour-card home-concert-card${badges.soldOut === 'all' ? ' home-concert-card--soldout' : ''}${playing ? ' home-concert-card--playing' : ''}`}
+      data-card-kind="show"
+      role="button"
       tabIndex={0}
       onClick={open}
-      onKeyDown={activateOnKey(open)}
+      onKeyDown={(e) => { if (e.target === e.currentTarget) activateOnKey(open)(e) }}
+      onContextMenu={(e) => { e.preventDefault(); onMenu(e) }}
       title={title}
     >
-      <div className="home-concert-photo">
+      <div className="jt-card-art home-concert-photo">
         {photo}
+        <PlayButton variant="overlay" className="jt-card-play" name={cardBill(item).artist}
+          title={playing ? 'Stop the snippet' : `Hear ${cardBill(item).artist}: 15 s of their song you play most`}
+          onPlay={onPlay} />
         {stub && <span className={`home-concert-stub${stub === 'TONIGHT' ? ' home-concert-stub--tonight' : ''}`}>{stub}</span>}
         {playing && <Equalizer />}
         {stamped > 0 && <span key={stamped} className="home-concert-stamp" aria-hidden="true">GOING</span>}
@@ -383,38 +414,35 @@ interface RailProps {
   pastFrom?: number
   /** Filtered and nothing marked: what to say in place of the row. */
   empty?: string
+  /** The Shows page: every card, in a wrapped grid, no See All. */
+  page?: boolean
+  /** Home: "See All" opens the Shows page. */
+  seeAll?: () => void
 }
 
-function ConcertRail({ title, source, items, kind, cap, scrollKey, nowMs, today, openLink, going, snippet, filterBar, pastFrom, empty }: RailProps) {
-  const [all, setAll] = useState(false)
-  const groupRef = useRef<HTMLDivElement>(null)
+function ConcertRail({ title, source, items, kind, cap, scrollKey, nowMs, today, openLink, going, snippet, filterBar, pastFrom, empty, page, seeAll }: RailProps) {
   const rowRef = useRef<HTMLDivElement>(null)
   useScrollPersistence(scrollKey, rowRef)
-  const more = items.length > cap
-  const shown = all ? items : items.slice(0, cap)
-  const toggle = useCallback(() => {
-    // Folding a long grid back up: keep the row's heading in view.
-    if (all) requestAnimationFrame(() => groupRef.current?.scrollIntoView({ block: 'nearest' }))
-    setAll(!all)
-  }, [all])
+  // V7: on Home a rail shows its first cards and "See All" opens the Shows
+  // page (it used to grow the rail in place); the page shows every card.
+  const more = !page && items.length > cap
+  const shown = page ? items : items.slice(0, cap)
   return (
-    <div className="home-shows-group" ref={groupRef}>
+    <div className="home-shows-group">
       <div className="home-section-subhead">
         <h3 className="home-section-subtitle">{title}</h3>
         <div className="home-concert-subhead-end">
           {filterBar}
           <span className="home-section-source">{source}</span>
-          {more && (
-            <button type="button" className="home-section-more" onClick={toggle} aria-expanded={all}>
-              {all ? `Show First ${cap}` : `See All ${items.length}`}
-            </button>
+          {more && seeAll && (
+            <button type="button" className="home-section-more" onClick={seeAll}>{SEE_ALL}</button>
           )}
         </div>
       </div>
       {items.length === 0 && empty
         ? <p className="home-concert-empty">{empty}</p>
         : (
-          <div className={`home-card-row${all ? ' home-card-row--concert-grid' : ''}`} role="list" ref={rowRef}>
+          <div className={`home-card-row${page ? ' home-card-row--concert-grid' : ''}`} role="list" ref={rowRef}>
             {shown.map((item, i) => (
               <Fragment key={`${item.id}|${item.rank}`}>
                 {i === pastFrom && <div className="home-concert-past" role="separator" aria-label="Nights that have passed">Past</div>}
@@ -579,7 +607,10 @@ function LatelyPanel({ artist, lately, close, openLink }: { artist: string; late
   )
 }
 
-export default function HomeShows({ state, openLink }: { state: ConcertsFeedState; openLink: (url: string) => void }) {
+export default function HomeShows({ state, openLink, page }: { state: ConcertsFeedState; openLink: (url: string) => void; page?: boolean }) {
+  const { dispatch: libDispatch } = useLibrary()
+  const seeAll = useCallback(() => libDispatch({ type: 'SET_VIEW', view: 'shows' }), [libDispatch])
+  const [showMenu, setShowMenu] = useState<{ x: number; y: number; items: MenuEntry[] } | null>(null)
   const nowMs = Date.now()
   const today = nyDate(nowMs)
   const [entries, setEntries] = useState<RsvpEntry[] | null>(null)
@@ -655,6 +686,7 @@ export default function HomeShows({ state, openLink }: { state: ConcertsFeedStat
     lately: (item) => latelyBy[cardBill(item).artist] ?? null,
     openLately: (item) => setOpenFor(cardBill(item).artist),
     openNights: (item) => setNightsFor(item),
+    openMenu: (e, _item, items) => setShowMenu({ x: e.clientX, y: e.clientY, items }),
   }
 
   // Live Near You's filter: the marked nights, one card each (both lists + homemini's snapshots).
@@ -711,7 +743,8 @@ export default function HomeShows({ state, openLink }: { state: ConcertsFeedStat
       {(state.items.length > 0 || filter !== 'all') && (
         <ConcertRail
           title="Live Near You" source={sourceLabel(state, nowMs)} items={rankedItems} kind="ranked"
-          cap={RANKED_RAIL} scrollKey="home-row-concerts" nowMs={nowMs} today={today} openLink={openLink} going={going} snippet={snippet}
+          cap={RANKED_RAIL} scrollKey={page ? 'shows-row-concerts' : 'home-row-concerts'} nowMs={nowMs} today={today} openLink={openLink} going={going} snippet={snippet}
+          page={page} seeAll={seeAll}
           filterBar={filterBar}
           pastFrom={marked && marked.past.length > 0 ? marked.upcoming.length : undefined}
           empty={filter === 'interested' ? 'Nothing marked Interested yet. Click Interested on a show.' : filter === 'going' ? 'Nothing marked Going yet.' : undefined}
@@ -721,10 +754,12 @@ export default function HomeShows({ state, openLink }: { state: ConcertsFeedStat
       {state.discover.length > 0 && (
         <ConcertRail
           title="You'd Like This" source="Not in your library yet" items={state.discover} kind="discover"
-          cap={DISCOVER_RAIL} scrollKey="home-row-concerts-discover" nowMs={nowMs} today={today} openLink={openLink} going={going} snippet={snippet}
+          cap={DISCOVER_RAIL} scrollKey={page ? 'shows-row-concerts-discover' : 'home-row-concerts-discover'} nowMs={nowMs} today={today} openLink={openLink} going={going} snippet={snippet}
+          page={page} seeAll={seeAll}
         />
       )}
       {nightsFor && <NightsSheet item={nightsFor} going={going} openLink={openLink} close={closeNights} />}
+      {showMenu && createPortal(<ContextMenu x={showMenu.x} y={showMenu.y} items={showMenu.items} onClose={() => setShowMenu(null)} />, document.body)}
     </>
   )
 }

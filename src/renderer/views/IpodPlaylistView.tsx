@@ -29,6 +29,7 @@ import { askToAddToIpodPlaylist } from '../ipodPlaylistAdd'
 import { checkPlaylistName, notOnIpodQuestion } from '../../common/ipod-playlists-view'
 import '../styles/songs.css'
 import '../styles/album-page.css'
+import PlayButton from '../components/PlayButton'
 
 const NO_IDS: number[] = []
 
@@ -173,7 +174,7 @@ export default function IpodPlaylistView() {
           <div className="album-page-creditline">{kindLine}</div>
           {own?.waiting && !hold && <div className="album-page-creditline ipod-playlist-waiting">Waiting for homemini. Saved on this Mac; it goes when homemini answers.</div>}
           <div className="album-page-actions">
-            <button type="button" className="album-page-play" disabled={!tracks.length} onClick={() => tracks.length && playTrack(tracks[0], tracks, 0, undefined, true, true)}>▶ Play</button>
+            <PlayButton className="album-page-play" name={name} disabled={!tracks.length} onPlay={() => { if (tracks.length) playTrack(tracks[0], tracks, 0, undefined, true, true) }} />
             {editable && renaming === null && <button type="button" className="album-page-shuffle" onClick={() => { setRenaming(name); setRenameError(null) }}>Rename…</button>}
             {editable && <button type="button" className="album-page-shuffle" onClick={() => setConfirmDelete(true)}>Delete…</button>}
           </div>

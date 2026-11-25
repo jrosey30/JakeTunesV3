@@ -6,7 +6,7 @@
  * `concert.blurb` when set, else the first grounded fact — never invented.
  * White / silver / charcoal / one orange; the brown poster wall is retired.
  */
-import { useMemo, useRef, useSyncExternalStore, useCallback } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore, useCallback } from 'react'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
 import { subscribeLiveSets, getLiveSetsSnapshot } from '../liveSets'
@@ -14,7 +14,12 @@ import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLook
 import { artistSortName, NAME_COLLATOR } from '../utils/artistSort'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { setConcertKey } from '../concertNav'
-import type { LiveSetEntry } from '../types'
+import type { LiveSetEntry, Track } from '../types'
+import { usePlayback } from '../context/PlaybackContext'
+import { useAudio } from '../hooks/useAudio'
+import Card from '../components/Card'
+import ContextMenu from '../components/ContextMenu'
+import { concertMenuEntries } from '../utils/libraryMenus'
 import { declaredConcerts } from '../../common/concert-meta'
 import { posterMatte } from '../../common/concert-poster'
 import '../styles/albums.css'
@@ -51,6 +56,8 @@ function bandKey(band: string): string {
 
 export default function ConcertsView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
+  const { dispatch: pbDispatch } = usePlayback()
+  const { playTrack } = useAudio()
   const snap = useSyncExternalStore(subscribeLiveSets, getLiveSetsSnapshot)
   const normalizedArtIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
 
@@ -65,6 +72,8 @@ export default function ConcertsView() {
     return out.sort((a, b) => NAME_COLLATOR.compare(bandKey(a.band), bandKey(b.band)) || (a.when - b.when) || a.show.localeCompare(b.show))
   }, [snap, lib.tracks, lib.artworkMap, normalizedArtIndex])
 
+  const byId = useMemo(() => new Map(lib.tracks.map((t) => [t.id, t] as const)), [lib.tracks])
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: ConcertRow; merged: Track } | null>(null)
   const openConcert = useCallback((albumKey: string) => {
     setConcertKey(albumKey)
     libDispatch({ type: 'SET_VIEW', view: 'concert-detail' })
@@ -88,34 +97,48 @@ export default function ConcertsView() {
         </div>
       ) : (
         <div className="concerts-rows">
-          {concerts.map((c) => (
-            <div
-              key={c.albumKey}
-              className="concert-row"
-              data-album-key={c.albumKey}
-              onClick={() => openConcert(c.albumKey)}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openConcert(c.albumKey) } }}
-              role="button"
-              tabIndex={0}
-              title={`${c.show} — ${c.band}`}
-            >
-              <div className="concert-row-art" style={{ background: posterMatte(c.entry.concert) }}>
-                {c.artHash
+          {concerts.map((c) => {
+            const merged = byId.get(c.entry.mergedTrackId)
+            // V7 (components/Card.tsx): click opens the show, the hover ▶
+            // plays it, right-click is the concert menu, drag carries it.
+            return (
+              <Card
+                key={c.albumKey}
+                kind="concert"
+                name={c.show}
+                className="concert-row"
+                artClassName="concert-row-art"
+                artStyle={{ background: posterMatte(c.entry.concert) }}
+                data={{ 'album-key': c.albumKey }}
+                onOpen={() => openConcert(c.albumKey)}
+                onPlay={merged ? () => playTrack(merged, [merged], 0, undefined, true) : undefined}
+                onMenu={merged ? (e) => setCtxMenu({ x: e.clientX, y: e.clientY, row: c, merged }) : undefined}
+                dragIds={merged ? () => [merged.id] : undefined}
+                title={`${c.show} — ${c.band}`}
+                art={c.artHash
                   ? <AlbumArtImage hash={c.artHash} alt={c.show} className="concert-row-img" size={320} />
                   : <div className="concert-row-noart" aria-hidden="true" />}
-              </div>
-              <div className="concert-row-body">
-                <div className="concert-row-band">{c.band || c.show}</div>
-                <div className="concert-row-show">{c.show}</div>
-                <div className="concert-row-where">
-                  {c.venue && <b>{c.venue}</b>}{c.venue && c.city ? ', ' : ''}{c.city}{(c.venue || c.city) && c.date ? ' · ' : ''}{c.date}
+              >
+                <div className="concert-row-body">
+                  <div className="concert-row-band">{c.band || c.show}</div>
+                  <div className="concert-row-show">{c.show}</div>
+                  <div className="concert-row-where">
+                    {c.venue && <b>{c.venue}</b>}{c.venue && c.city ? ', ' : ''}{c.city}{(c.venue || c.city) && c.date ? ' · ' : ''}{c.date}
+                  </div>
+                  {c.blurb && <p className="concert-row-blurb">{c.blurb}</p>}
+                  <div className="concert-row-stat">{c.entry.cues.length} songs · {hms(c.entry.totalDurationMs)}</div>
                 </div>
-                {c.blurb && <p className="concert-row-blurb">{c.blurb}</p>}
-                <div className="concert-row-stat">{c.entry.cues.length} songs · {hms(c.entry.totalDurationMs)}</div>
-              </div>
-            </div>
-          ))}
+              </Card>
+            )
+          })}
         </div>
+      )}
+      {ctxMenu && (
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)}
+          items={concertMenuEntries({
+            merged: ctxMenu.merged, band: ctxMenu.row.band, open: () => openConcert(ctxMenu.row.albumKey),
+            playlists: lib.playlists, playTrack, libDispatch, pbDispatch,
+          })} />
       )}
     </div>
   )

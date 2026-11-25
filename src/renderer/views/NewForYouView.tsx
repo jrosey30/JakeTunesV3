@@ -20,7 +20,7 @@
  * discographies minus what the library owns.
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useCallback } from 'react'
-import type { DiscoveryLearned, Recommendation } from '../types'
+import type { DiscoveryLearned, Recommendation, Track } from '../types'
 import PageGate from '../components/PageGate'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../previewPlayer'
@@ -47,8 +47,22 @@ import AlbumTracklistSheet from './DownloadStore/AlbumTracklistSheet'
 import { showDownload } from '../components/DownloadsPanel'
 import { LIST_MARK } from '../../common/shop-names'
 import AlbumSaveButton from './DownloadStore/AlbumSaveButton'
+import Card from '../components/Card'
+import ContextMenu, { type MenuEntry } from '../components/ContextMenu'
+import { useHomeItemMenusHost } from '../components/HomeItemMenus'
+import { artistRunningOrder } from '../utils/libraryMenus'
+import { canonicalArtist } from '../utils/artistAlias'
+import { albumKeyOf } from '../utils/albumKey'
+import { SEE_ALL } from '../../common/card-rules'
 import '../styles/discover-feed.css'
 import ShopNewReleases from '../components/ShopNewReleases'
+
+/** A click that landed on one of a card's own controls (a button, a link, a
+ *  menu) is that control's, never the card's open. */
+function fromControl(e: React.MouseEvent): boolean {
+  const t = e.target as HTMLElement | null
+  return !!t?.closest('button, a, select, input, [role="menu"], [role="menuitem"]')
+}
 
 interface FeedCard {
   lane: string
@@ -118,6 +132,7 @@ export default function NewForYouView() {
   const pageRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('discover-page', pageRef)
 
+
   // Backfill portraits for whoever the Overlooked lane is showing. Bounded and
   // batched inside the helper so the photo IPC isn't hammered; already-known
   // names are skipped, so revisiting Discover costs nothing.
@@ -143,6 +158,9 @@ export default function NewForYouView() {
   const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
   const { state: lib, dispatch } = useLibrary()
   const { playTrack } = useAudio()
+  // V7: the library's song and artist menus for the owned cards (Host's
+  // Picks, Behind the Counter) — the Home's host, reused.
+  const menus = useHomeItemMenusHost(playTrack)
   // "In Your Library" — music Jake OWNS but overlooks (the rediscovery
   // engine). One click PLAYS it: no list, no download — it's sitting
   // right there.
@@ -163,9 +181,12 @@ export default function NewForYouView() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadWanted() }, [])
 
-  const playOwned = (pick: RediscoveryPick) => {
+  const ownedTracksOf = (artist: string): Track[] => {
     const nrm = (x: string) => (x || '').trim().toLowerCase()
-    const tracks = lib.tracks.filter((t) => nrm(t.albumArtist || t.artist) === nrm(pick.artist))
+    return lib.tracks.filter((t) => nrm(t.albumArtist || t.artist) === nrm(artist))
+  }
+  const playOwned = (pick: RediscoveryPick) => {
+    const tracks = artistRunningOrder(ownedTracksOf(pick.artist))
     if (tracks.length) playTrack(tracks[0], tracks, 0, undefined, true)
   }
 
@@ -345,6 +366,34 @@ export default function NewForYouView() {
     }
   }
 
+  // V7: opening a shop card. An album opens its songs (Brief 255's sheet); a
+  // song or an artist opens the pick in Search, where it can be had.
+  const openShop = (c: FeedCard): void => {
+    if (c.type === 'album') { setSongsOf(c); return }
+    const rec = addedRecs.get(cardId(c))
+    if (rec) { prefillDownloadView(rec, c.type === 'song' ? 'song' : 'album'); openBrowse(dispatch); return }
+    const query = c.type === 'artist' ? c.artist : `${c.artist} ${c.title}`
+    window.dispatchEvent(new CustomEvent('jaketunes-download-prefill', { detail: { query, kind: c.type === 'song' ? 'song' : 'album', artist: c.artist, title: c.type === 'artist' ? '' : c.title, target: 'browse' } }))
+    openBrowse(dispatch)
+  }
+  // The shop menu (V7): the same lines on every shop card.
+  const [shopMenu, setShopMenu] = useState<{ x: number; y: number; c: FeedCard } | null>(null)
+  const shopMenuItems = (c: FeedCard): MenuEntry[] => {
+    const id = cardId(c)
+    const sampleUrl = c.type === 'album' ? c.hookPreviewUrl : c.previewUrl
+    const isAdded = added.has(id)
+    return [
+      { label: c.type === 'album' ? 'Show Songs' : 'Find in Search', onClick: () => openShop(c) },
+      ...(sampleUrl ? [{
+        label: preview.playingId === id ? 'Stop Preview' : 'Preview',
+        onClick: () => togglePreview(id, sampleUrl, c.type === 'album' && c.hookTitle ? `${c.title} · ${c.hookTitle}` : c.title, c.artist),
+      }] : []),
+      { separator: true as const },
+      { label: isAdded ? 'On Your List' : 'Add to Your List', disabled: isAdded, onClick: () => { void addToList(c) } },
+      ...(c.lane !== 'ipod-wanted' ? [{ separator: true as const }, { label: `Not for Me — Never Show ${c.artist}`, onClick: () => notForMe(c) }] : []),
+    ]
+  }
+
   const shopCard = (c: FeedCard, section?: string) => {
     const id = cardId(c)
     const isPlaying = preview.playingId === id
@@ -355,7 +404,15 @@ export default function NewForYouView() {
     const listed = c.type === 'album' && isAdded ? addedRecs.get(id) : undefined
     const askAlbum = listed ? () => { const f = recoFields(listed); askEditions(f.artist, f.album || f.title) } : undefined
     return (
-      <div key={id} ref={seenRef(id, c)} className="store-card store-card--reco" onPointerEnter={askAlbum} onFocus={askAlbum}>
+      // V7 — click opens (an album's songs, else the pick in Search), the ▶ on
+      // the art previews it, right-click is the shop menu. A click on any of
+      // the card's own buttons does only that button's job.
+      <div key={id} ref={seenRef(id, c)} className="jt-card store-card store-card--reco" data-card-kind="shop"
+        role="button" tabIndex={0} title={c.type === 'artist' ? c.artist : `${c.title} — ${c.artist}`}
+        onClick={(e) => { if (!fromControl(e)) openShop(c) }}
+        onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openShop(c) } }}
+        onContextMenu={(e) => { e.preventDefault(); setShopMenu({ x: e.clientX, y: e.clientY, c }) }}
+        onPointerEnter={askAlbum} onFocus={askAlbum}>
         <div className="store-art">
           <div className="df-art-ph" aria-hidden="true">♪</div>
           {c.artUrl && <img className="store-art-img" src={c.artUrl} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none' }} />}
@@ -486,20 +543,36 @@ export default function NewForYouView() {
               <span className="store-shelf-title">{sh.label} Picks</span>
               <span className="store-shelf-owned">already in your library</span>
               {sh.commentary && <span className="store-shelf-note" title={sh.commentary}>“{sh.commentary.length > 110 ? sh.commentary.slice(0, 107).replace(/\s+\S*$/, '') + '…' : sh.commentary}”</span>}
-              <button type="button" className="store-seeall" onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sh.id })}>See All ›</button>
+              <button type="button" className="store-seeall" onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sh.id })}>{SEE_ALL}</button>
             </div>
             <div className="store-row">
-              {picks.map((t, ti) => (
-                <div key={t.id} className="store-card" onClick={() => playTrack(t, picks, ti, undefined, true, true)} title={`Play ${t.title}`}>
-                  <div className="store-art">
-                    <div className="df-art-ph" aria-hidden="true">♪</div>
-                    {(() => { const h = lookupArtworkOneShot(lib.artworkMap, t.artist, t.album); return h ? <AlbumArtImage hash={h} alt="" className="store-art-img" size={320} /> : null })()}
-                    <span className="store-play" aria-hidden="true"><PlayIcon size={16} /></span>
-                  </div>
-                  <div className="store-name" title={t.title}>{t.title}</div>
-                  <div className="store-artist" title={t.artist}>{t.artist}</div>
-                </div>
-              ))}
+              {picks.map((t, ti) => {
+                const h = lookupArtworkOneShot(lib.artworkMap, t.artist, t.album)
+                const play = (): void => playTrack(t, picks, ti, undefined, true, true)
+                // V7: a song you own — click opens its album, the ▶ plays it
+                // with the host's other picks after it (it used to play on click).
+                return (
+                  <Card
+                    key={t.id}
+                    kind="song"
+                    name={t.title}
+                    className="store-card"
+                    artClassName="store-art"
+                    onOpen={() => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(t) })}
+                    onPlay={play}
+                    onMenu={(e) => menus.api.openSongMenu(e, t, play, picks, ti)}
+                    dragIds={() => [t.id]}
+                    title={`${t.title} — ${t.artist}`}
+                    art={<>
+                      <div className="df-art-ph" aria-hidden="true">♪</div>
+                      {h ? <AlbumArtImage hash={h} alt="" className="store-art-img" size={320} /> : null}
+                    </>}
+                  >
+                    <div className="store-name" title={t.title}>{t.title}</div>
+                    <div className="store-artist" title={t.artist}>{t.artist}</div>
+                  </Card>
+                )
+              })}
             </div>
           </section>
         ))}
@@ -513,21 +586,29 @@ export default function NewForYouView() {
             // ARTIST cards (Jake: "those are supposed to be ARTISTS") —
             // circles, artist name front and centered, album demoted to
             // the tooltip alongside Music Man's pitch.
-            <div key={`${pk.artist}|${pk.album}`} className="df-card df-card--artist">
-              <button type="button" className="df-art df-art--btn" title={pk.reason || `Play ${pk.artist}`} onClick={() => playOwned(pk)}>
-                {/* An ARTIST card shows the ARTIST. Portrait when we have
-                    one, honest initials disc when we don't. Never a cover. */}
-                {portraits.get(pk.artist)
-                  ? <img className="df-portrait" src={`artist-image://${portraits.get(pk.artist)}.jpg`} alt="" draggable={false} />
-                  : <div className="df-initials" style={{ background: hashColor(pk.artist) }}>{initials(pk.artist)}</div>}
-                <span className="df-play df-play--owned" aria-hidden="true"><PlayIcon size={15} /></span>
-              </button>
+            <Card
+              key={`${pk.artist}|${pk.album}`}
+              kind="artist"
+              name={pk.artist}
+              className="df-card df-card--artist"
+              artClassName="df-art df-art--btn"
+              onOpen={() => dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(pk.artist) })}
+              onPlay={() => playOwned(pk)}
+              onMenu={(e) => menus.api.openArtistMenu(e, pk.artist, ownedTracksOf(pk.artist))}
+              dragIds={() => artistRunningOrder(ownedTracksOf(pk.artist)).map((t) => t.id)}
+              title={pk.reason || pk.artist}
+              art={portraits.get(pk.artist)
+                // An ARTIST card shows the ARTIST. Portrait when we have
+                // one, honest initials disc when we don't. Never a cover.
+                ? <img className="df-portrait" src={`artist-image://${portraits.get(pk.artist)}.jpg`} alt="" draggable={false} />
+                : <div className="df-initials" style={{ background: hashColor(pk.artist) }}>{initials(pk.artist)}</div>}
+            >
               <div className="df-badge-row df-badge-row--center">
                 <span className="df-type df-type--owned">Artist</span>
                 <span className="df-year">{pk.plays} play{pk.plays === 1 ? '' : 's'}</span>
               </div>
               <div className="df-name df-name--center" title={`${pk.artist}${pk.album ? ` — ${pk.album}` : ''}`}>{pk.artist}</div>
-            </div>
+            </Card>
           ))}
         </div>
       </section>
@@ -613,6 +694,8 @@ export default function NewForYouView() {
           />
         )
       })()}
+      {shopMenu && <ContextMenu x={shopMenu.x} y={shopMenu.y} items={shopMenuItems(shopMenu.c)} onClose={() => setShopMenu(null)} />}
+      {menus.overlays}
     </div>
   )
 }

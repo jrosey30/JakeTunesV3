@@ -8,13 +8,12 @@ import AlbumGrid, { type AlbumGridItem } from './AlbumGrid'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import EmptyState from '../components/EmptyState'
 import { albumKeyFromStrings } from '../utils/albumKey'
-import { canonicalArtist } from '../utils/artistAlias'
+import { albumMenuEntries } from '../utils/libraryMenus'
+import { sortAlbumTracks } from '../utils/albumTrackOrder'
+import { ensureLiveSetsLoaded } from '../liveSets'
 import { groupTracksIntoAlbums, type Album } from '../utils/albumGroups'
 import type { Track } from '../types'
 import '../styles/albums.css'
-import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
-import { addToIpodPlaylistEntries } from '../ipodPlaylistAdd'
-import { shuffle } from '../../common/shuffle'
 
 /// V5 facelift: Grid mode for the flat-table views (Songs / Playlist /
 /// Smart Playlist) — the iTunes-10 album-tile wall. This is a shared
@@ -23,7 +22,7 @@ import { shuffle } from '../../common/shuffle'
 /// playlist's albums. Rendering + interactions mirror AlbumsView's
 /// existing grid exactly (same albums.css classes, same artwork lookup
 /// chain, same context-menu shape) — one visual language for tiles
-/// everywhere. Click opens the album detail; double-click plays the
+/// everywhere. Click opens the album detail; the hover ▶ plays the
 /// album; right-click gives the same menu AlbumsView has.
 interface TrackGridViewProps {
   tracks: Track[]
@@ -63,32 +62,25 @@ export default function TrackGridView({ tracks, emptyNoun }: TrackGridViewProps)
     prefetchAlbumArtHashes(albums.slice(0, 48).map(a => findArtHash(a)), 320)
   }, [albums, findArtHash, lib.artworkMap])
 
-  const albumMenuItems = useCallback((album: Album): MenuEntry[] => {
-    const ordered = album.tracks
-    return [
-      { label: `Play "${album.name}"`, onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true) } },
-      { label: 'Shuffle', onClick: () => { const s = shuffle(ordered); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
-      { separator: true as const },
-      ...queueMenuEntries(ordered, pbDispatch),
-      addToPlaylistEntry(ordered, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
-      ...addToIpodPlaylistEntries(ordered, lib.tracks),
-      { separator: true as const },
-      { label: 'Go to Album', onClick: () => libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyFromStrings(album.artist, album.name) }) },
-      { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(album.artist || '') }) },
-    ]
-  }, [playTrack, pbDispatch, libDispatch])
+  // V7: the Albums view's own album menu (utils/libraryMenus.ts), not a copy
+  // that drifted (this grid's lacked Live Concert Mode, Island Albums, Share).
+  useEffect(() => { void ensureLiveSetsLoaded() }, [])
+  const albumMenuItems = useCallback((album: Album): MenuEntry[] => albumMenuEntries({
+    album, library: lib.tracks, playlists: lib.playlists, playTrack, libDispatch, pbDispatch,
+  }), [lib.tracks, lib.playlists, playTrack, libDispatch, pbDispatch])
 
   // 2026-10-21: the same windowed, memoized wall as Albums (components/
   // AlbumGrid.tsx) — only rows near the viewport are mounted, and a playback
-  // tick re-renders no cards. Play order on double-click stays album.tracks
-  // (the caller's order), as before.
+  // tick re-renders no cards. V7: click opens the album, the hover ▶ plays it
+  // in running order, as on the Albums view (double-click no longer plays: the
+  // first click had already opened the album, so it never could).
   const scrollRef = useRef<HTMLDivElement>(null)
   const gridItems = useMemo((): AlbumGridItem[] => albums.map((album) => ({
-    key: albumKeyFromStrings(album.artist, album.name), album, artHash: findArtHash(album), ordered: album.tracks,
+    key: albumKeyFromStrings(album.artist, album.name), album, artHash: findArtHash(album), ordered: sortAlbumTracks(album.tracks),
   })), [albums, findArtHash])
   const openAlbum = useCallback((key: string) => libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: key }), [libDispatch])
   const openMenu = useCallback((e: ReactMouseEvent, album: Album) => setCtxMenu({ x: e.clientX, y: e.clientY, album }), [])
-  const playAlbum = useCallback((album: Album) => { if (album.tracks.length) playTrack(album.tracks[0], album.tracks, 0, undefined, true) }, [playTrack])
+  const playAlbum = useCallback((ordered: Track[]) => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true, true) }, [playTrack])
 
   if (albums.length === 0) {
     return <EmptyState query={lib.searchQuery} noun={emptyNoun} />
@@ -102,7 +94,8 @@ export default function TrackGridView({ tracks, emptyNoun }: TrackGridViewProps)
         geometryKey="track-grid"
         onOpen={openAlbum}
         onContextMenu={openMenu}
-        onDoubleClick={playAlbum}
+        onPlayAlbum={playAlbum}
+        draggable
       />
       {ctxMenu && (
         <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={albumMenuItems(ctxMenu.album)} onClose={() => setCtxMenu(null)} />
