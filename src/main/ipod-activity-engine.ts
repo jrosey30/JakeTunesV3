@@ -70,7 +70,7 @@ import { NOT_CONVERTED_AGAIN, deleteLandedRecord, landedVerdict, readLandedRecor
 /** The plain reason a song wasn't converted when afconvert can't be used (Brief 265). */
 export const NO_AAC_ENCODER = "Apple's AAC encoder isn't available on this Mac"
 import { applyFileStamps, createFileStampCache, fileToStamp } from './ipod-file-stamps.ts'
-import { backupItunesDb, backupRefusal } from './ipod-db-backup.ts'
+import { backupItunesDb, backupRefusal, restoreItunesDbBackup } from './ipod-db-backup.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
 import { wipeListingMatchesKeep, keepStreak } from './activity-keep.ts'
 import {
@@ -92,7 +92,12 @@ import {
   type SwapCandidate,
   type SwapManifestRow,
   type SwapPlan,
+  type SwapProof,
 } from './ipod-swap-sync.ts'
+import {
+  NEW_TAG, ORIG_TAG, catalogSizesByPath, deleteWavesJournal, nextWave, noRoomForReplacement, ownerOfSide, proveCardFromJournal,
+  readWavesJournal, recoverFromJournal, sideName, waveReserveBytes, writeWavesJournal, type JournalRow, type WaveItem, type WavesJournal,
+} from './ipod-replace-waves.ts'
 import { startRoundTripGeneration } from './sync-engine/roundtrip.ts'
 import { orderForIpodCatalog, conformCatalogIdOrder } from './ipod-catalog-order.ts'
 import { REWIPED_NOTE, dropKeptNote, swapKeptNote } from '../common/sync-failure-copy.ts'
@@ -184,6 +189,8 @@ export interface ActivitySyncHost {
   remountVolume?: typeof platformRemountVolume
   /** Tests only: force the contiguity step to fail. Production leaves it unset. */
   ensureContiguousDb?: typeof platformEnsureContiguousDb
+  /** Tests only: the card's free bytes (replacement waves). Production reads it with statfs. */
+  cardFreeBytes?: (mount: string) => Promise<number | null>
   /** Tests only: the card's size in bytes. Production reads it with statfs. */
   cardCapacityBytes?: (mount: string) => Promise<number | null>
   /** Tests only: one song onto the card (a fake card fails it with EIO). Production: copyFile. */
@@ -1041,7 +1048,47 @@ async function runActivitySyncHolding(
     await host.writeJournal(null)
     return fail({ copied: 0, error: tooSmall, target })
   }
-  const proof = proveCardForSwap(priorManifestRaw, priorSealRaw, await readCardState(IPOD_MOUNT))
+  // A run that was replacing songs in waves and stopped: its journal settles the wave it left
+  // open (Brief 265; ipod-replace-waves.ts recoverFromJournal). A commit is known from the
+  // journal, never guessed from sizes: an uncommitted wave's originals go back (and the last
+  // committed song list, from its Mac backup, if the card holds a newer unproven one).
+  const priorJournal = await readWavesJournal(host.stateDir)
+  let journalUsable = !!priorJournal
+  if (priorJournal) {
+    const fixed = await recoverFromJournal(IPOD_MOUNT, priorJournal, async (dir) => { await restoreItunesDbBackup(dir, IPOD_MOUNT) })
+    const r = fixed.report
+    console.log(`activity-sync: a stopped replacement was settled from its journal — ${r.restored.length} original(s) back, ${r.released.length} released, ${r.removed.length} unfinished copy(ies) removed${r.dbRestored ? ', the last committed song list put back' : ''}${r.kept.length ? `, ${r.kept.length} left as found` : ''}`)
+    if (r.stale) {
+      // The card was changed elsewhere since this Mac's run stopped: the journal no longer
+      // describes it. Nothing on the card was touched; the journal goes.
+      console.warn('activity-sync: the iPod\'s song list is neither the one the stopped replacement committed nor the one it was writing — left as it is, the journal dropped')
+      await deleteWavesJournal(host.stateDir)
+      journalUsable = false
+    } else if (!fixed.ok) journalUsable = false
+    else if (priorJournal.open || priorJournal.inflight) {
+      priorJournal.inflight = null
+      priorJournal.open = null
+      await writeWavesJournal(host.stateDir, priorJournal).catch((err) => { journalUsable = false; console.warn('activity-sync: waves journal update failed:', err instanceof Error ? err.message : err) })
+    }
+  }
+  // Files on the card no row explains, when the card is proven from the waves journal (below).
+  let strays = 0
+  const proof: SwapProof = await (async () => {
+    const sealed = proveCardForSwap(priorManifestRaw, priorSealRaw, await readCardState(IPOD_MOUNT))
+    if (sealed.ok || !priorJournal || !journalUsable) return sealed
+    // Picked up where the replacement stopped: the card is what its journal says, never a wipe.
+    const byJournal = proveCardFromJournal(priorJournal, await readCardState(IPOD_MOUNT))
+    if (!byJournal.ok) return sealed
+    strays = byJournal.strays
+    console.log(`activity-sync: the last run stopped while replacing songs — the card is proven from its journal (${byJournal.rows.size} song(s), ${strays} stray file(s)); picking up where it stopped`)
+    return { ok: true, rows: byJournal.rows, history: byJournal.history }
+  })()
+  /** Songs whose card file changes at the same card path: replaced in waves, originals kept until committed. */
+  let replaceIds = new Set<number>()
+  /** Songs whose new copy couldn't be made: they kept their copy on the iPod (said in the result). */
+  const keptOldCopies: string[] = []
+  /** The ones a wave actually replaced (counted as one out and one in, like any changed song). */
+  const replacedIds = new Set<number>()
   let swap: SwapPlan | null = null
   let fullReason: string | null = null
   const stayRows = new Map<number, SwapManifestRow>()
@@ -1049,12 +1096,21 @@ async function runActivitySyncHolding(
     fullReason = proof.why
   } else {
     const candidate = planSwap(candidates, proof.rows)
-    fullReason = swapTooBig(candidate, target)
+    // A replaced song isn't counted as changing the card: it goes on in waves beside its
+    // original, so a format change never turns into a full wipe-and-copy (Brief 265).
+    replaceIds = new Set(candidates.filter((c) => {
+      const row = proof.rows.get(c.id)
+      const v = stayVerdict(c, row)
+      // The same song with a new card file: at the same path, or at a new one (a new extension).
+      return v === 'file-changed' || (v === 'moved' && !!row && row.identity === c.identity && c.identity.startsWith('fp:'))
+    }).map((c) => c.id))
+    fullReason = swapTooBig({ ...candidate, arrive: candidate.arrive.filter((id) => !replaceIds.has(id)) }, target)
     if (!fullReason) {
       // The fragmentation backstop: enough holes since the last full copy
       // and the card gets a fresh one.
       const capacity = await (host.cardCapacityBytes ?? cardCapacityBytes)(IPOD_MOUNT).catch(() => null)
-      fullReason = swapBackstop(proof.history, candidate.leave.reduce((n, r) => n + r.size, 0), capacity)
+      // Replaced songs leave no hole (their new copy takes the place), so they don't count here either.
+      fullReason = swapBackstop(proof.history, candidate.leave.filter((r) => !replaceIds.has(r.id)).reduce((n, r) => n + r.size, 0), capacity)
     }
     if (!fullReason) {
       swap = candidate
@@ -1277,13 +1333,16 @@ async function runActivitySyncHolding(
   let catalogBakDone = false
   // The iTunesDB backed up on this Mac once per run, before the first file on the card is
   // removed or the first catalog is written (Brief 265 Part 3; ipod-db-backup.ts).
-  let macBackup: { ok: true } | { ok: false; reason: string } | null = null
-  const backupOnMac = async (): Promise<{ ok: true } | { ok: false; reason: string }> => {
+  /** The waves journal while this run replaces songs (ipod-replace-waves.ts); null otherwise. */
+  let journal: WavesJournal | null = null
+  let macBackup: { ok: true; dir: string | null } | { ok: false; reason: string } | null = null
+  const backupRoot = host.dbBackupRoot ?? join(host.stateDir, 'itunesdb-backups')
+  const backupOnMac = async (): Promise<{ ok: true; dir: string | null } | { ok: false; reason: string }> => {
     if (macBackup) return macBackup
-    const b = await backupItunesDb({ mount: IPOD_MOUNT, root: host.dbBackupRoot ?? join(host.stateDir, 'itunesdb-backups') })
+    const b = await backupItunesDb({ mount: IPOD_MOUNT, root: backupRoot })
     if (b.ok && b.dir) console.log(`activity-sync: iTunesDB backed up to ${b.dir}`)
     if (!b.ok) console.error(`activity-sync: ${backupRefusal(b.reason)}`)
-    macBackup = b.ok ? { ok: true } : { ok: false, reason: b.reason }
+    macBackup = b.ok ? { ok: true, dir: b.dir } : { ok: false, reason: b.reason }
     return macBackup
   }
 
@@ -1355,6 +1414,9 @@ async function runActivitySyncHolding(
     try {
       for (const p of await listIpodMusicFiles(IPOD_MOUNT)) {
         if (cataloguedAbs.has(p)) continue
+        // A replacement's hidden original or staged copy is never deleted here: the next sync
+        // settles it from the waves journal (recoverFromJournal).
+        if (ownerOfSide(p)) continue
         try { await unlink(p); removed++ } catch { /* best effort */ }
       }
     } catch { /* best effort */ }
@@ -1381,7 +1443,7 @@ async function runActivitySyncHolding(
   const stopAfterTouch = (why: ActivitySyncResult): Promise<ActivitySyncResult> =>
     swap ? swapStop(why) : rewipeAndStop(why)
   const swapCounts = () => swap
-    ? { out: swap.leave.length, in: copied, stayed: kept, changed: swap.changed.length }
+    ? { out: swap.leave.length + replacedIds.size, in: copied, stayed: kept, changed: swap.changed.length }
     : undefined
 
   // ── The catalog, written, put on the card and proven (interim or final) ──
@@ -1570,6 +1632,18 @@ async function runActivitySyncHolding(
         console.warn(`activity-sync: ${kind} manifest write failed (non-fatal):`, mErr)
       }
     }
+    // While songs are being replaced, the journal names this song list before it goes on the
+    // card, so a run that dies while writing or proving it is settled from the journal.
+    if (journal) {
+      const next: WavesJournal = { ...journal, inflight: { md5: contig.md5 } }
+      try {
+        await writeWavesJournal(host.stateDir, next)
+        journal = next
+      } catch (err) {
+        try { await unlink(localDb) } catch { /* temp */ }
+        return stop(false, { copied, copyErrors, target, error: `Couldn’t write this iPod’s replacement record on this Mac (${err instanceof Error ? err.message : String(err)}). Nothing on the iPod was changed.` })
+      }
+    }
     let catalogConsecutive = 0
     let readback: { tracks: Array<Record<string, unknown>> } | null = null
     let cardBytes: Buffer | null = null
@@ -1720,6 +1794,23 @@ async function runActivitySyncHolding(
     await startRoundTripGeneration(host.stateDir, cardBytes, playCountsLeft)
       .catch((err) => console.warn('activity-sync: round-trip generation note failed (non-blocking):', err))
 
+    // While songs are being replaced, every proven catalog is a commit: its Mac backup and the
+    // journal (what the card holds now) are written before anything else happens to the card.
+    if (journal) {
+      const b = await backupItunesDb({ mount: IPOD_MOUNT, root: backupRoot })
+      if (!b.ok) return stop(true, { copied, copyErrors, target, error: backupRefusal(b.reason) })
+      const rows: JournalRow[] = tracks.map((t) => {
+        const id = Number(t.id)
+        return { id, destPath: relOf(dstById.get(id) || ''), identity: identityById.get(id) || '', size: expectedSize.get(id) ?? 0, sourceSize: masterSizeById.get(id) || 0 }
+      })
+      const next: WavesJournal = { ...journal, rows, committed: { md5: contig.md5, bytes: contig.bytes, backupDir: b.dir }, inflight: null, open: journal.open ? { ...journal.open, state: 'committed' } : null }
+      try {
+        await writeWavesJournal(host.stateDir, next)
+        journal = next
+      } catch (err) {
+        return stop(true, { copied, copyErrors, target, error: `Couldn’t write this iPod’s replacement record on this Mac (${err instanceof Error ? err.message : String(err)})` })
+      }
+    }
     return { ok: true, tracks, readback, md5: contig.md5, bytes: contig.bytes }
   }
 
@@ -1727,6 +1818,24 @@ async function runActivitySyncHolding(
   // sync's seal no longer describes it. (Cleared here, not before Prepare:
   // a refusal that never touched the card keeps the last seal, so the next
   // Sync can still swap.)
+  // Songs to replace: the Mac backup and the waves journal come before anything else happens,
+  // the clearing of the last seal included, so no moment of this run leaves the card unprovable.
+  if (swap && replaceIds.size > 0 && proof.ok) {
+    const b = await backupOnMac()
+    if (!b.ok) {
+      await host.writeJournal(null)
+      return fail({ copied: 0, target, error: backupRefusal(b.reason) })
+    }
+    const st = await readCardState(IPOD_MOUNT)
+    try {
+      if (!st.catalog) throw new Error('the song list on the iPod can’t be read')
+      journal = { version: 1, rows: [...proof.rows.values()], committed: { ...st.catalog, backupDir: b.dir }, inflight: null, history: proof.history, open: null }
+      await writeWavesJournal(host.stateDir, journal)
+    } catch (err) {
+      await host.writeJournal(null)
+      return fail({ copied: 0, target, error: `Couldn’t write this iPod’s replacement record on this Mac (${err instanceof Error ? err.message : String(err)}). Nothing on the iPod was changed.` })
+    }
+  }
   await host.clearSeal()
   try {
     await host.writeManifest({
@@ -1756,6 +1865,222 @@ async function runActivitySyncHolding(
       return fail({ copied: 0, target, error: `Couldn’t clear this iPod’s record of converted songs on this Mac (${dropped.error}). Nothing on the iPod was changed.` })
     }
   }
+  // ── 2d. Replace in waves (Brief 265 Parts 2-3; ipod-replace-waves.ts) ──
+  // The same song with a new card file (a new format, a re-ripped master, a new recipe; at its
+  // path, or at a new one for a new extension) is replaced BESIDE its original, in waves sized
+  // to the card's free space. Each wave: the journal says it's open (staged); its new copies are
+  // staged as `.name.jtnew` and confirmed; put in place (the original kept as `.name.jtorig`,
+  // or left at its old path); the catalog naming them is written and proven, which backs it up
+  // on the Mac and marks the wave committed in the journal (putCatalog); only then are the
+  // originals deleted and the wave closed. A run that stops anywhere is settled and picked up
+  // by the next one from the journal (recoverFromJournal, proveCardFromJournal).
+  if (swap && replaceIds.size > 0 && proof.ok && journal) {
+    const sw = swap
+    const proven = proof
+    const byId = new Map(plan.map((e) => [e.id, e]))
+    const absOf = (colon: string): string => join(IPOD_MOUNT, tsaRelFromColon(colon, pathSep))
+    const colonOf = (abs: string): string => tsaNormalizeColonPath(abs.startsWith(IPOD_MOUNT) ? abs.slice(IPOD_MOUNT.length + 1) : abs)
+    const leavingRows = sw.leave.filter((r) => !replaceIds.has(r.id))
+    /** A song whose new copy isn't ready keeps its original exactly as it is. */
+    const keepOriginal = (id: number, why: string): void => {
+      const e = byId.get(id)
+      const row = proven.rows.get(id)
+      if (!e || !row) return
+      console.warn(`activity-sync: "${e.title}" keeps its copy on the iPod (${why})`)
+      keptOldCopies.push(e.title)
+      e.dstToCopy = absOf(row.destPath)
+      dstById.set(id, e.dstToCopy)
+      const t = tracks.find((x) => Number(x.id) === id)
+      if (t) t.path = row.destPath
+      keepIds.add(id)
+      stayRows.set(id, row)
+      keepAbs.add(e.dstToCopy)
+    }
+    const pending: Array<WaveItem & { e: CopyPlanEntry; row: SwapManifestRow; oldAbs: string }> = []
+    for (const id of replaceIds) {
+      const e = byId.get(id)
+      const row = proven.rows.get(id)
+      if (!e || !row) continue
+      if (fetchFailedIds.has(id) || e.later) { keepOriginal(id, 'its new copy could not be made'); continue }
+      const newSize = e.knownSourceSize ?? (await stat(e.srcToCopy).catch(() => null))?.size ?? 0
+      if (!(newSize > 0)) { keepOriginal(id, 'its new copy has no size'); continue }
+      pending.push({ id, newSize, e, row, oldAbs: absOf(row.destPath) })
+    }
+    const current = new Map<number, SwapManifestRow>(proven.rows)
+    const sourceFor = async (e: CopyPlanEntry): Promise<{ abs: string; cleanup: () => Promise<void> }> => {
+      const held = preStaged.get(e.id)
+      if (held) return { abs: held.abs, cleanup: async () => {} }
+      if (e.restage) {
+        const staged = await host.stageTrack(e.restage.colon, e.restage.id)
+        if (!staged.ok) throw new Error(staged.error)
+        return { abs: staged.abs, cleanup: staged.cleanup }
+      }
+      return { abs: e.srcToCopy, cleanup: async () => {} }
+    }
+    /** The files the song list on the card names now: a stop keeps every one of them. */
+    const listedOnCard = async (): Promise<Set<string>> => {
+      const db = await readFile(join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')).catch(() => null)
+      const listed = db ? catalogSizesByPath(db) : null
+      return new Set([...(listed?.keys() ?? [])].map((c) => absOf(c)))
+    }
+    const setOpen = async (open: WavesJournal['open']): Promise<void> => {
+      const next: WavesJournal = { ...journal!, open }
+      await writeWavesJournal(host.stateDir, next)
+      journal = next
+    }
+    /**
+     * Before a commit: each original straight back over its new copy (one rename, never a delete
+     * first). A rename that fails (a card dropping out) falls back to copying the original over
+     * it, so the song list on the card still describes the files on it. true only when every
+     * original went back by rename: anything less leaves the journal open for the next sync.
+     */
+    const putBack = async (placed: Array<{ dst: string; orig: string | null }>): Promise<boolean> => {
+      let all = true
+      for (const pl of [...placed].reverse()) {
+        if (pl.orig) {
+          const moved = await rename(pl.orig, pl.dst).then(() => true, () => false)
+          if (moved) continue
+          all = false
+          await copyFile(pl.orig, pl.dst).catch((e) => console.error(`activity-sync: couldn't put ${pl.dst} back yet (the next sync does, from the journal):`, e instanceof Error ? e.message : e))
+        } else {
+          const gone = await unlink(pl.dst).then(() => true, (e: NodeJS.ErrnoException) => e.code === 'ENOENT')
+          if (!gone) all = false
+        }
+      }
+      return all
+    }
+    const total = pending.length
+    let replaced = 0
+    while (pending.length > 0) {
+      if (host.isCancelled()) {
+        cataloguedAbs = await listedOnCard()
+        return swapStop(fail({ copied: 0, cancelled: true, error: `Sync cancelled by user — ${replaced} song(s) were replaced; the rest are as they were.`, target }))
+      }
+      const fsInfo = await statfs(IPOD_MOUNT).catch(() => null)
+      const free = host.cardFreeBytes
+        ? (await host.cardFreeBytes(IPOD_MOUNT).catch(() => null)) ?? 0
+        : fsInfo ? Number(fsInfo.bavail) * Number(fsInfo.bsize) : 0
+      const itunes = join(IPOD_MOUNT, 'iPod_Control', 'iTunes')
+      const dbBytes = (await stat(join(itunes, 'iTunesDB')).catch(() => null))?.size ?? 0
+      const artBytes = (await stat(join(IPOD_MOUNT, 'iPod_Control', 'Artwork', 'ArtworkDB')).catch(() => null))?.size ?? 0
+      const reserve = waveReserveBytes(dbBytes, artBytes)
+      const cluster = fsInfo ? Number(fsInfo.bsize) : 4096
+      let wave = nextWave(pending, free, reserve, cluster).map((w) => pending.find((p) => p.id === w.id)!)
+      if (wave.length === 0) {
+        const smallest = pending.reduce((a, b) => (b.newSize < a.newSize ? b : a))
+        const msg = noRoomForReplacement(smallest.e.title, smallest.newSize, free, reserve)
+        console.error(`activity-sync: ${msg}`)
+        cataloguedAbs = await listedOnCard()
+        return swapStop(fail({ copied: 0, target, error: msg }))
+      }
+      // 1. The journal says this wave is open (staged) before the card is touched.
+      try {
+        await setOpen({ state: 'staged', items: wave.map((w) => ({ id: w.id, dstColon: colonOf(w.e.dstToCopy), oldColon: w.row.destPath })) })
+      } catch (err) {
+        cataloguedAbs = await listedOnCard()
+        return swapStop(fail({ copied: 0, target, error: `Couldn’t write this iPod’s replacement record on this Mac (${err instanceof Error ? err.message : String(err)}). Nothing on the iPod was changed.` }))
+      }
+      host.sendProgress({ phase: 'copy', current: replaced, total, mode, title: `Replacing ${wave.length} song${wave.length === 1 ? '' : 's'} beside the old copies…` })
+      // 2. Stage each new copy beside its original. A song whose copy can't be made or doesn't
+      //    land is skipped (it keeps its original); the rest of the wave goes on.
+      const skipped = new Set<number>()
+      for (const w of wave) {
+        const tmp = sideName(w.e.dstToCopy, NEW_TAG)
+        try {
+          const src = await sourceFor(w.e)
+          try {
+            await mkdir(dirname(tmp), { recursive: true })
+            await copyFile(src.abs, tmp)
+            const conf = await confirmWriteOnCard(src.abs, tmp)
+            if (!conf.ok) throw new Error(`it didn't land on the card (${conf.reason})`)
+          } finally { await src.cleanup() }
+        } catch (err) {
+          await unlink(tmp).catch(() => undefined)
+          skipped.add(w.id)
+          keepOriginal(w.id, `its new copy couldn't be put on the iPod: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+      for (let k = pending.length - 1; k >= 0; k--) if (skipped.has(pending[k].id)) pending.splice(k, 1)
+      wave = wave.filter((w) => !skipped.has(w.id))
+      if (wave.length === 0) continue
+      // 3. Put in place. Before the commit, any failure puts each original straight back over
+      //    its new copy (one rename, never a delete first); a rename that fails is left for the
+      //    next sync to settle from the journal.
+      const placed: Array<{ dst: string; orig: string | null }> = []
+      try {
+        for (const w of wave) {
+          const dst = w.e.dstToCopy
+          if (dst === w.oldAbs) {
+            const orig = sideName(dst, ORIG_TAG)
+            await rename(dst, orig)
+            placed.push({ dst, orig })
+          } else {
+            placed.push({ dst, orig: null })   // a new path: the original stays at its own until the commit
+          }
+          await rename(sideName(dst, NEW_TAG), dst)
+        }
+      } catch (err) {
+        const allBack = await putBack(placed)
+        for (const w of wave) await unlink(sideName(w.e.dstToCopy, NEW_TAG)).catch(() => undefined)
+        if (allBack) await setOpen(null).catch(() => undefined)
+        const msg = `Couldn't put the new copies on the iPod (${err instanceof Error ? err.message : String(err)}). ${allBack ? 'Every song is as it was.' : 'Some songs couldn\'t be put back yet; the next sync puts them back first.'}`
+        console.error(`activity-sync: ${msg}`)
+        cataloguedAbs = await listedOnCard()
+        return swapStop(fail({ copied: 0, target, error: msg }))
+      }
+      // 4. Commit: the catalog of every song on the card now (the staying ones, this wave's new
+      //    copies, the ones still to replace at their originals). Proven, then backed up and
+      //    marked committed in the journal by putCatalog.
+      const inWave = new Set(wave.map((w) => w.id))
+      const next = new Map(current)
+      for (const w of wave) next.set(w.id, { ...w.row, destPath: colonOf(w.e.dstToCopy), size: w.newSize, sourceSize: masterSizeById.get(w.id) || w.row.sourceSize })
+      const inCatalog = new Set<number>([...keepIds, ...replaceIds].filter((id) => next.has(id)))
+      const waiting = pending.filter((p) => !inWave.has(p.id))
+      for (const p of waiting) { const t = tracks.find((x) => Number(x.id) === p.id); if (t) t.path = p.row.destPath; dstById.set(p.id, p.oldAbs) }
+      const sizes = new Map<number, number>()
+      for (const id of inCatalog) sizes.set(id, next.get(id)!.size)
+      const committed = await putCatalog(
+        tracks.filter((t) => inCatalog.has(Number(t.id))),
+        playlists.map((p) => ({ ...p, trackIds: (Array.isArray(p.trackIds) ? p.trackIds : []).filter((id) => inCatalog.has(Number(id))) })).filter((p) => p.trackIds.length > 0),
+        'interim', sizes)
+      for (const p of waiting) { const t = tracks.find((x) => Number(x.id) === p.id); if (t) t.path = colonOf(p.e.dstToCopy); dstById.set(p.id, p.e.dstToCopy) }
+      if (!committed.ok) {
+        if (!committed.touchedCard) {
+          // The card's song list is untouched: every original of the wave goes back now. The
+          // journal is closed only when all of them did; otherwise the next sync finishes it.
+          if (await putBack(placed)) await setOpen(null).catch(() => undefined)
+        } else {
+          // The new song list may be on the card: nothing is put back now. The journal still says
+          // the wave is open (staged), so the next sync puts the committed song list and the
+          // originals back, from the journal and the Mac backup.
+          console.error('activity-sync: a replacement wave\'s song list may be on the card — left for the next sync to settle from the journal')
+        }
+        cataloguedAbs = new Set([...(await listedOnCard()), ...placed.map((pl) => pl.dst)])
+        return swapStop(committed.result)
+      }
+      // 5. Released: the wave's originals go now that the catalog names the replacements.
+      for (const w of wave) {
+        const gone = w.e.dstToCopy === w.oldAbs ? sideName(w.oldAbs, ORIG_TAG) : w.oldAbs
+        await unlink(gone).catch((err) => console.warn(`activity-sync: original ${gone} left behind (the next sync removes it):`, err instanceof Error ? err.message : err))
+        keepIds.add(w.id)
+        stayRows.set(w.id, next.get(w.id)!)
+        keepAbs.add(w.e.dstToCopy)
+        replacedIds.add(w.id)
+        current.set(w.id, next.get(w.id)!)
+      }
+      try { await setOpen(null) } catch (err) {
+        console.warn('activity-sync: the journal still says a wave is open (the next sync finishes releasing it):', err instanceof Error ? err.message : err)
+      }
+      cataloguedAbs = await listedOnCard()
+      replaced += wave.length
+      for (let k = pending.length - 1; k >= 0; k--) if (inWave.has(pending[k].id)) pending.splice(k, 1)
+      console.log(`activity-sync: replaced ${wave.length} song(s) in a wave (${replaced}/${total}); originals released after the catalog was committed`)
+    }
+    // Replaced (or kept) songs stay where they are now: nothing below removes or copies them again.
+    sw.arrive = sw.arrive.filter((id) => !keepIds.has(id))
+    sw.leave = leavingRows
+  }
+
   // ── 3. Remove (swap) or wipe (full) ──
   // The catalog is backed up on this Mac before the first file leaves the card
   // (Brief 265 Part 3): no backup, nothing removed, nothing wiped.
@@ -1788,7 +2113,7 @@ async function runActivitySyncHolding(
         : 'Wiping the iPod for a clean rebuild…',
     })
   }
-  if (!swap || swap.leave.length > 0) {
+  if (!swap || swap.leave.length > 0 || strays > 0) {
     let wiped = 0
     try {
       let streak = 0
@@ -1797,6 +2122,7 @@ async function runActivitySyncHolding(
         const listed = await listIpodMusicFiles(IPOD_MOUNT)
         for (const p of listed) {
           if (keepAbs.has(p)) continue
+          if (swap && ownerOfSide(p)) continue   // a replacement's hidden file: the waves journal settles it
           try { await unlink(p); wiped++ } catch { /* retry */ }
         }
         listedNow = await listIpodMusicFiles(IPOD_MOUNT)
@@ -2057,7 +2383,9 @@ async function runActivitySyncHolding(
       writtenById.set(e.id, { srcPath: e.srcToCopy, dstPath: e.dstToCopy, expectedSize: stayRows.get(e.id)?.size ?? 0 })
       const facts = await cardFileFacts(e.dstToCopy)
       if (facts) cardMtime.set(e.id, facts.mtimeMs)
-      kept++
+      // A song replaced in a wave was copied (beside its original), not kept as it was.
+      if (replacedIds.has(e.id)) copied++
+      else kept++
       settled.add(e.id)
       continue
     }
@@ -2423,6 +2751,7 @@ async function runActivitySyncHolding(
     await host.writeSeal(seal)
     console.log(`activity-sync: TSA sealed ${seal.target} songs — plug-in will inspect, not auto-sync`)
     await forgetPartial()
+    await deleteWavesJournal(host.stateDir)   // sealed: the replacement is over
     try {
       // The swap's proof: this catalog's bytes and every file's size, so the
       // next Sync can trust the card and move only what changes.
@@ -2491,8 +2820,11 @@ async function runActivitySyncHolding(
   const changedNote = counts && counts.changed > 0
     ? ` ${counts.changed.toLocaleString()} of them ${counts.changed === 1 ? 'was' : 'were'} re-copied because the library file changed.`
     : ''
+  const keptNote = keptOldCopies.length > 0
+    ? ` ${keptOldCopies.length.toLocaleString()} kept ${keptOldCopies.length === 1 ? 'its' : 'their'} old copy (the new one couldn't be made): ${keptOldCopies.slice(0, 3).join(', ')}${keptOldCopies.length > 3 ? '…' : ''}.`
+    : ''
   const summary = counts
-    ? swapResultLine(counts.out, counts.in, counts.stayed) + changedNote
+    ? swapResultLine(counts.out, counts.in, counts.stayed) + changedNote + keptNote
     : fullCopyLine(fullReason || 'nothing to keep')
   console.log(`activity-sync: ${summary}`)
   host.sendProgress({ phase: 'verify', current: 1, total: 1, title: 'Sealed', mode, summary })

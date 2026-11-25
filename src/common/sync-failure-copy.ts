@@ -71,6 +71,9 @@ const RULES: Rule[] = [
   { test: /activity tsa/i, stage: 'prepare', happened: 'Some songs can’t go on.', next: ITS_SONGS },
   // Brief 265: no Apple AAC encoder, or no backup of the song list on the Mac: refused before the card is touched.
   { test: /aac encoder isn.t available on this mac|so this ipod.s songs couldn.t be converted\. nothing on the ipod was changed/i, stage: 'prepare', happened: 'Apple’s AAC encoder isn’t available on this Mac.', next: 'Nothing on the iPod was changed. Quit and reopen JakeTunes, then sync again.' },
+  { test: /couldn.t write this ipod.s replacement record on this mac/i, stage: 'copy', happened: 'Couldn’t save where the song replacement got to.', next: 'Sync again; it picks up where it stopped.' },
+  { test: /couldn.t put the new copies on the ipod/i, stage: 'copy', happened: 'Couldn’t put the new copies on the iPod.', next: 'Every song is as it was. Sync again; it picks up where it stopped.' },
+  { test: /isn.t room on the ipod to put the new copy/i, stage: 'copy', happened: 'Not enough room on the iPod to replace songs beside their old copies.', next: 'Nothing was deleted. Free some space on the iPod, then sync again.' },
   { test: /couldn.t clear this ipod.s record of converted songs on this mac/i, stage: 'prepare', happened: 'Couldn’t update this iPod’s record on this Mac.', next: 'Nothing on the iPod was changed. Quit and reopen JakeTunes, then sync again.' },
   { test: /could not back up the ipod.s song list on this mac/i, stage: 'prepare', happened: 'Couldn’t back up the iPod’s song list on this Mac.', next: 'Nothing on the iPod was changed. Check the Mac’s free space, then sync again.' },
   { test: /have damaged audio and there are not enough replacements/i, stage: 'prepare', happened: 'Some songs are damaged.', next: 'Download them again, then sync.' },

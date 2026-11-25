@@ -44,6 +44,7 @@ import {
 import { confirmWriteOnCard, flushCardCaches, remountVerifyEntries, retireIpodFirmwareScratch } from '../ipod-sync-card.ts'
 import { isAacEncoderMissing } from '../aac-mirror-recipe.ts'
 import { deleteLandedRecord } from '../ipod-landed-record.ts'
+import { cardListsPath, catalogSizesByPath } from '../ipod-replace-waves.ts'
 import { applyFileStamps, createFileStampCache, fileToStamp } from '../ipod-file-stamps.ts'
 import { backupItunesDb, backupRefusal } from '../ipod-db-backup.ts'
 
@@ -971,6 +972,8 @@ export function createSyncEngine(host: SyncEngineHost) {
     // Songs not converted because Apple's AAC encoder couldn't be used (Brief 265): named in
     // the end-of-sync result, never copied as the lossless master or an ffmpeg AAC instead.
     const notConverted: Array<{ id: number; title: string; artist: string }> = []
+    // Songs already on the card in another form, left as they are (Brief 265: no in-place replacement here).
+    const notReplaced: Array<{ id: number; title: string; artist: string }> = []
     const pathRewrites: Array<{ id: number; oldPath: string; newPath: string }> = []
     // Exact bytes that landed (or were confirmed already present) per track.
     // Verify/recopy MUST use these — never the library master — or a convert
@@ -1113,6 +1116,8 @@ export function createSyncEngine(host: SyncEngineHost) {
       }
     }
 
+    // The catalog on the card now: a file it lists (at that size) is a song on the iPod, never overwritten in place.
+    const listedOnCard = catalogSizesByPath(await readFile(join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')).catch(() => Buffer.alloc(0))) ?? new Map<string, number>()
     for (const { local, ipod, title, trackId } of toCopy) {
       // 4.5.0-109: cancellation check at the file boundary. Per-file is the
       // right granularity — fine enough that a Cancel click is felt within
@@ -1315,6 +1320,21 @@ export function createSyncEngine(host: SyncEngineHost) {
           continue
         }
       } catch { /* fall through to copy — non-fatal */ }
+      // A different file the card's catalog lists at this path: replacing it in place would delete the
+      // original before the catalog names its replacement (Brief 265). The full-library sync
+      // doesn't do that: the song stays as it is on the iPod and is named in the result; the
+      // iPod's own Sync replaces songs safely, beside the originals.
+      {
+        const there = await stat(dstToCopy).catch(() => null)
+        // Listed at any size, in any letter case (FAT and HFS+ ignore case): it's a song on the iPod.
+        if (there && cardListsPath(listedOnCard, ':' + dstToCopy.slice(IPOD_MOUNT.length + 1).split(pathSep).join(':'))) {
+          const tr = trackByLocal.get(local)
+          console.warn(`sync-to-ipod: "${title}" is on the iPod in another form — kept as it is (no in-place replacement)`)
+          notReplaced.push({ id: Number(tr?.id), title: String(tr?.title ?? title), artist: String(tr?.artist ?? '') })
+          sendToRenderer('sync-progress', { phase: 'copy', current: copied + copyErrors, total: totalToCopy, title })
+          continue
+        }
+      }
       try {
         const dir = dstToCopy.substring(0, dstToCopy.lastIndexOf(pathSep))
         await mkdir(dir, { recursive: true })
@@ -1361,11 +1381,8 @@ export function createSyncEngine(host: SyncEngineHost) {
         // frees the GB the user expected. Only fires when dst != ipod
         // (i.e. extension changed); same-ext conversion (.m4a→.m4a)
         // overwrites in place via copyFile, no orphan to clean.
-        if (dstToCopy !== ipod) {
-          try {
-            await unlink(ipod)
-          } catch { /* old file may have already been moved/missing */ }
-        }
+        // The old-extension copy is NOT deleted here (Brief 265): the catalog still names it
+        // until the new one is written. The orphan clean-up after the catalog write removes it.
       } catch (err) {
         console.error(`Copy failed: ${srcToCopy} → ${dstToCopy}:`, err)
         copyErrors++
@@ -2430,6 +2447,7 @@ export function createSyncEngine(host: SyncEngineHost) {
               : undefined,
             ipodOrphansDeleted,
             ...(notConverted.length > 0 ? { notConverted } : {}),
+            ...(notReplaced.length > 0 ? { notReplaced } : {}),
             // Return ONLY the smart-match re-links so the renderer can update
             // library.json; converted / playable card names stay on the card.
             pathRewrites: libraryPathRewrites,
