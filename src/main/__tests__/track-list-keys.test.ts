@@ -24,6 +24,12 @@ describe('listKeyIntent', () => {
   test('⌥↑/⌥↓ are left to the sidebar section headers', () => {
     assert.equal(listKeyIntent(key('ArrowDown', { altKey: true })), null)
   })
+  test('⌘↑/⌘↓ and Ctrl+↑/↓ are the volume keys, never a selection move', () => {
+    assert.equal(listKeyIntent(key('ArrowUp', { metaKey: true })), null)
+    assert.equal(listKeyIntent(key('ArrowDown', { metaKey: true })), null)
+    assert.equal(listKeyIntent(key('ArrowUp', { ctrlKey: true })), null)
+    assert.equal(listKeyIntent(key('ArrowDown', { ctrlKey: true, shiftKey: true })), null)
+  })
   test('←/→ are never taken (transport / Cover Flow)', () => {
     assert.equal(listKeyIntent(key('ArrowLeft')), null)
     assert.equal(listKeyIntent(key('ArrowRight')), null)
@@ -105,22 +111,27 @@ describe('source lock: every song list uses the shared keys', () => {
   const root = join(import.meta.dirname, '../../renderer')
   const read = (rel: string) => readFileSync(join(root, rel), 'utf8')
 
-  for (const [file, view] of [
-    ['views/PlaylistView.tsx', 'playlist'],
-    ['views/SmartPlaylistView.tsx', 'smart-playlist'],
-    ['views/SongsView.tsx', null],
-  ] as const) {
-    test(`${file} calls useTrackListKeys, list mode only`, () => {
-      const src = read(file)
-      assert.match(src, /import \{ useTrackListKeys \} from '\.\.\/hooks\/useTrackListKeys'/)
-      const call = src.slice(src.indexOf('useTrackListKeys({'))
-      assert.ok(src.includes('useTrackListKeys({'), 'hook is called')
-      const enabled = call.slice(0, call.indexOf('\n', call.indexOf('enabled:')) + 1)
-      assert.match(enabled, /viewMode === 'list'/, 'off in Grid / Cover Flow (the flow owns ↑/↓ there)')
-      if (view) assert.ok(enabled.includes(`currentView === '${view}'`), 'only while this view is on screen')
-      assert.match(call.slice(0, 900), /tracks: sorted(Tracks)?,/, 'moves in the order on screen')
-    })
-  }
+  // V7: the six song lists draw one table (components/SongTable.tsx), and the
+  // table is the one caller of the keys — song-table.test.ts locks that each
+  // page uses it. Its keys follow the order on screen and only answer while
+  // its page is the one showing in list mode (Grid / Cover Flow aren't tables).
+  test('the song table calls useTrackListKeys, for its page only', () => {
+    const src = read('components/SongTable.tsx')
+    assert.match(src, /import \{ useTrackListKeys \} from '\.\.\/hooks\/useTrackListKeys'/)
+    const call = src.slice(src.indexOf('useTrackListKeys({'))
+    assert.match(call.slice(0, 200), /enabled: active && !dialogOpen,/)
+    assert.match(call.slice(0, 200), /\n    tracks,\n/, 'moves in the order on screen')
+    for (const [file, view] of [
+      ['views/PlaylistView.tsx', 'playlist'],
+      ['views/SmartPlaylistView.tsx', 'smart-playlist'],
+      ['views/SongsView.tsx', 'songs'],
+      ['views/GenresView.tsx', 'genres'],
+      ['views/AlbumDetailView.tsx', 'album-detail'],
+      ['views/IpodPlaylistView.tsx', 'ipod-playlist'],
+    ] as const) {
+      assert.match(read(file), new RegExp(`active=\\{(lib|state|libState)\\.currentView === '${view}'\\}`), file)
+    }
+  })
 
   test('the hook claims ↑/↓ so the global volume shortcut does not also fire', () => {
     const src = read('hooks/useTrackListKeys.ts')
@@ -132,6 +143,6 @@ describe('source lock: every song list uses the shared keys', () => {
 
   test('PlaylistView keeps its hooks above the not-found return', () => {
     const src = read('views/PlaylistView.tsx')
-    assert.ok(src.indexOf('useTrackListKeys({') < src.indexOf('if (!playlist) {\n    return'))
+    assert.ok(src.indexOf('useListSort(') < src.indexOf('if (!playlist) {\n    return'))
   })
 })

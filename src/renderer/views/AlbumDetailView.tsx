@@ -7,12 +7,9 @@ import type { AlbumPerson } from '../types'
 import { useDelayedFlag } from '../hooks/useDelayedFlag'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
-import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
-import { useCynthia } from '../context/CynthiaContext'
-import { toCynthiaTrack } from '../utils/cynthia'
+import { useAudio } from '../hooks/useAudio'
 import { albumKeyOf } from '../utils/albumKey'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
-import { canonicalArtist } from '../utils/artistAlias'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import { compareAlbumNames } from '../utils/artistSort'
 import { albumCreditReleaseDate, formatReleaseDateDisplay } from '../utils/albumReleaseDate'
@@ -20,19 +17,20 @@ import { albumDetailBackLabel } from '../utils/albumBackLabel'
 import { useBackLabel } from '../hooks/useBackLabel'
 import BackButton from '../components/chrome/BackButton'
 import { useNavigation } from '../context/NavigationContext'
-import { lookupArtwork, buildNormalizedArtworkIndex, clearArtworkNegativeCache } from '../utils/artworkLookup'
+import { lookupArtwork, buildNormalizedArtworkIndex } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
-import { ratingMenuEntries } from '../components/StarRating'
-import ContextMenu, { MenuEntry } from '../components/ContextMenu'
-import { downloadMenuEntries } from '../utils/downloadStore'
-import GetInfoModal from '../components/GetInfoModal'
+import ContextMenu from '../components/ContextMenu'
+import SongTable, { type SongTableLead } from '../components/SongTable'
+import { useListSort } from '../hooks/useListSort'
+import { sortSongs } from '../utils/songTableRules'
+import { shuffle } from '../../common/shuffle'
+import { formatDuration } from '../../common/format-duration'
 import ConfirmDialog from '../components/ConfirmDialog'
 import RemoveConcertDialog, { REMOVE_CONCERT_LABEL } from '../components/RemoveConcertDialog'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { setNotice } from '../activity'
 import { usePlaysElsewhere } from '../playsElsewhere'
-import { playsEverywhere } from '../../common/plays-elsewhere'
 // V5 Live Concert Mode — declared-set store + declare orchestration.
 import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, unregisterLiveSet, cueAt, promoteTrackToLibrary, cleanLiveTitle } from '../liveSets'
 import { attachConcert, detachConcert, subscribeConcertCrowd, isConcertCrowdEnabled, setConcertCrowdEnabled } from '../concertCrowd'
@@ -41,22 +39,16 @@ import { verifyLiveSetCompleteness } from '../utils/liveSetCompleteness'
 import type { Track, LiveSetCue } from '../types'
 import '../styles/songs.css'
 import '../styles/album-page.css'
-import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
-import { addToIpodPlaylistEntries } from '../ipodPlaylistAdd'
-import { getInfoTarget, type GetInfoTarget } from '../../common/get-info-target'
 import { planConcertStart } from '../../common/concert-start'
 import { jewelCasePhotoVars } from '../../common/jewel-case-photo'
+
+/** The album page's own columns, after its '#' (V7: the shared table, the album's set). */
+const ALBUM_COLUMNS = ['title', 'playCount', 'time'] as const
+const ALBUM_COLUMNS_MULTI = ['title', 'artist', 'playCount', 'time'] as const
 
 /** The jewel case's proportions (fractions of the cover) for album-page.css. */
 const SLEEVE_VARS = jewelCasePhotoVars('--apd-f-') as CSSProperties
 
-function formatDuration(ms: number): string {
-  if (!ms || ms <= 0) return ''
-  const totalSecs = Math.floor(ms / 1000)
-  const mins = Math.floor(totalSecs / 60)
-  const secs = totalSecs % 60
-  return `${mins}:${secs.toString().padStart(2, '0')}`
-}
 
 /** Music Man sometimes returns a meta "I don't know this album" riff — hide it. */
 function formatTotalDuration(ms: number): string {
@@ -80,13 +72,6 @@ function totalClock(ms: number): string {
   return startClock(Math.max(0, ms))
 }
 
-// Album table (direction D, 2026-10-27): the classic iTunes columns —
-// #, Name, [Artist only on multi-artist albums], Plays, Star, Time.
-function gridCols(multiArtist: boolean): string {
-  return multiArtist
-    ? '48px minmax(0, 1.4fr) minmax(0, 1fr) 64px 52px 64px'
-    : '48px minmax(0, 1fr) 64px 52px 64px'
-}
 
 const ICON_PLAY = (
   <svg width="10" height="11" viewBox="0 0 10 11" aria-hidden="true"><path d="M1.5 1.2v8.6L9 5.5z" fill="currentColor" /></svg>
@@ -139,7 +124,6 @@ export default function AlbumDetailView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
-  const { openCynthia } = useCynthia()
   const elsewhere = usePlaysElsewhere()
 
   const albumKeyRef = useRef<string>('')
@@ -150,7 +134,6 @@ export default function AlbumDetailView() {
   // the table header sticks under it.
   const tracklistRef = useRef<HTMLDivElement>(null)
   useScrollPersistence(`album-detail:${albumKey}`, tracklistRef)
-  const tableRef = useRef<HTMLDivElement>(null)
 
   const { canGoBack, goBack: navBack } = useNavigation()
   const navBackLabel = useBackLabel()
@@ -212,12 +195,9 @@ export default function AlbumDetailView() {
     if (artHash) prefetchAlbumArtHashes([artHash])
   }, [artHash])
 
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
   // Right-click a setlist song → reimport that one track into the regular
   // library (promote). The concert stays intact; only that song re-appears.
   const [cueCtx, setCueCtx] = useState<{ x: number; y: number; cue: LiveSetCue } | null>(null)
-  const [getInfoState, setGetInfoState] = useState<GetInfoTarget<Track> | null>(null)
-  const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
 
   // ── V5 Live Concert Mode ──
   // Declared-set state for THIS album; merge progress; undeclare confirm.
@@ -362,192 +342,20 @@ export default function AlbumDetailView() {
   }, [spineIdx, spineOptions, narrow])
   const spineText = spineOptions[spineIdx]
 
-  const lastClickedIdx = useRef<number>(-1)
-  // Keyboard cursor in the table (↑/↓/Return — see the keydown effect below).
-  const focusedIdx = useRef<number>(-1)
-
-  const handleClick = useCallback((id: number, idx: number, e: React.MouseEvent) => {
-    window.getSelection()?.removeAllRanges()
-    if (e.shiftKey && lastClickedIdx.current >= 0 && lastClickedIdx.current < tracks.length) {
-      const from = Math.min(lastClickedIdx.current, idx)
-      const to = Math.max(lastClickedIdx.current, idx)
-      libDispatch({ type: 'SELECT_RANGE', ids: tracks.slice(from, to + 1).map((t) => t.id) })
-    } else {
-      libDispatch({ type: 'SELECT_TRACK', id, multi: e.metaKey || e.ctrlKey })
-      lastClickedIdx.current = idx
-    }
-    focusedIdx.current = idx
-  }, [tracks, libDispatch])
-
-  const handleDoubleClick = useCallback((idx: number) => {
-    window.getSelection()?.removeAllRanges()
-    const track = tracks[idx]
-    if (track) playTrack(track, tracks, idx, undefined, true)
-  }, [tracks, playTrack])
-
-  // Cmd+I → Get Info for the selected rows (nothing selected → the
-  // now-playing song). Same listener shape as SongsView's.
-  useEffect(() => {
-    if (lib.currentView !== 'album-detail') return
-    const handler = () => {
-      if (document.querySelector('.getinfo-overlay')) return
-      const np = pb.nowPlaying ? lib.tracks.find(t => t.id === pb.nowPlaying!.id) : undefined
-      const target = getInfoTarget(tracks, lib.selectedTrackIds, np)
-      if (target) setGetInfoState(target)
-    }
-    window.addEventListener('jaketunes-get-info', handler)
-    return () => window.removeEventListener('jaketunes-get-info', handler)
-  }, [lib.currentView, lib.selectedTrackIds, lib.tracks, pb.nowPlaying, tracks])
-
-  // ⚠️ TWIN: src/renderer/views/SongsView.tsx::handleRatingChange — keep in sync.
-  const handleRatingChange = useCallback((trackId: number, rating: number) => {
-    const value = String(rating)
-    libDispatch({ type: 'UPDATE_TRACKS', updates: [{ id: trackId, field: 'rating', value }] })
-    window.electronAPI.saveMetadataOverride(trackId, 'rating', value)
-    if (rating > 0) {
-      const stampValue = String(Date.now())
-      libDispatch({ type: 'UPDATE_TRACKS', updates: [{ id: trackId, field: 'starredAt', value: stampValue }] })
-      window.electronAPI.saveMetadataOverride(trackId, 'starredAt', stampValue)
-    }
-  }, [libDispatch])
-
-  // ⚠️ TWIN: src/renderer/views/SongsView.tsx::handleGetInfoSave — keep in sync.
-  const handleGetInfoSave = useCallback(async (updates: { id: number; field: string; value: string }[]) => {
-    const fpById = new Map<number, string>()
-    const oldArtAlbumById = new Map<number, { artist: string; album: string }>()
-    for (const u of updates) {
-      if (fpById.has(u.id)) continue
-      const t = lib.tracks.find((tr) => tr.id === u.id)
-      if (!t) continue
-      fpById.set(u.id, `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`)
-      oldArtAlbumById.set(u.id, { artist: t.artist || '', album: t.album || '' })
-    }
-    for (const u of updates) {
-      await window.electronAPI.saveMetadataOverride(u.id, u.field, u.value, fpById.get(u.id))
-    }
-    if (updates.some((u) => u.field === 'artist' || u.field === 'album')) {
-      const newById = new Map(oldArtAlbumById)
-      for (const u of updates) {
-        const cur = newById.get(u.id)
-        if (!cur) continue
-        if (u.field === 'artist') cur.artist = u.value
-        else if (u.field === 'album') cur.album = u.value
-      }
-      for (const v of newById.values()) clearArtworkNegativeCache(v.artist, v.album)
-    }
-    libDispatch({ type: 'UPDATE_TRACKS', updates })
-  }, [libDispatch, lib.tracks])
-
-  const handleFetchArt = useCallback(async (artist: string, album: string, force?: boolean) => {
-    const result = await window.electronAPI.fetchAlbumArt(artist, album, force)
-    if (result.ok && result.key && result.hash) {
-      libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-      return { key: result.key, hash: result.hash }
-    }
-    return null
-  }, [libDispatch])
-
-  const handleSetCustomArt = useCallback(async (artist: string, album: string, imagePath: string) => {
-    const result = await window.electronAPI.setCustomArtwork(artist, album, imagePath)
-    if (result.ok && result.key && result.hash) {
-      libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-      return { key: result.key, hash: result.hash }
-    }
-    setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
-    return null
-  }, [libDispatch])
-
-  const handleContextMenu = useCallback((e: React.MouseEvent, track: Track, idx: number) => {
-    e.preventDefault()
-    if (!lib.selectedTrackIds.has(track.id)) libDispatch({ type: 'SELECT_TRACK', id: track.id })
-    setCtxMenu({ x: e.clientX, y: e.clientY, track, idx })
-  }, [lib.selectedTrackIds, libDispatch])
-
-  // ⚠️ TWIN: src/renderer/views/SongsView.tsx::getContextMenuItems (lines ~207-356).
-  // This is the SAME track context menu the rest of the app uses. If you add or
-  // change an item there, mirror it here (and vice-versa) so the album page's
-  // right-click never drifts from the Songs list.
-  const getContextMenuItems = useCallback((): MenuEntry[] => {
-    if (!ctxMenu) return []
-    const { track, idx } = ctxMenu
-    const selectedTracks = lib.selectedTrackIds.size > 1
-      ? tracks.filter((t) => lib.selectedTrackIds.has(t.id))
-      : [track]
-    const count = selectedTracks.length
-    const label = count > 1 ? `${count} Songs` : track.title
-
-    const artPairs = new Map<string, { artist: string; album: string }>()
-    for (const t of selectedTracks) {
-      if (t.artist && t.album) {
-        const k = `${t.artist.toLowerCase().trim()}|||${t.album.toLowerCase().trim()}`
-        if (!artPairs.has(k)) artPairs.set(k, { artist: t.artist, album: t.album })
-      }
-    }
-    const artworkItems: MenuEntry[] = artPairs.size > 0 ? [
-      { separator: true as const },
-      {
-        label: 'Add Artwork…',
-        onClick: async () => {
-          const file = await window.electronAPI.chooseArtworkFile()
-          if (!file.ok || !file.path) return
-          let failed = 0, lastErr = ''
-          for (const { artist, album } of artPairs.values()) {
-            const result = await window.electronAPI.setCustomArtwork(artist, album, file.path)
-            if (result.ok && result.key && result.hash) libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-            else { failed += 1; lastErr = result.error || '' }
-          }
-          if (failed > 0) setNotice(failed === 1 ? (lastErr ? `Couldn't save artwork: ${lastErr}` : "Couldn't save artwork.") : `Couldn't save artwork for ${failed} albums.`, { kind: 'error' })
-        },
-      },
-      {
-        label: 'Fetch Artwork from Internet',
-        onClick: async () => {
-          for (const { artist, album } of artPairs.values()) {
-            const result = await window.electronAPI.fetchAlbumArt(artist, album, true)
-            if (result.ok && result.key && result.hash) libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-          }
-        },
-      },
-    ] : []
-
-    const trackArtist = (track.artist || '').trim()
-    const sourceContribs = (track.contributingArtists && track.contributingArtists.length > 0 ? track.contributingArtists : [trackArtist])
-      .map((s) => (s || '').trim().toLowerCase()).filter((s) => s.length > 0)
-    const artistTracks = sourceContribs.length
-      ? lib.tracks.filter((t) => {
-          const candidates = (t.contributingArtists && t.contributingArtists.length > 0 ? t.contributingArtists : [(t.artist || '').trim()])
-            .map((s) => (s || '').trim().toLowerCase()).filter((s) => s.length > 0)
-          return candidates.some((c) => sourceContribs.includes(c))
-        })
-      : []
-
-    return [
-      { label: `Play "${label}"`, onClick: () => playTrack(track, tracks, idx, undefined, true) },
-      { separator: true as const },
-      ...queueMenuEntries(selectedTracks, pbDispatch),
-      addToPlaylistEntry(selectedTracks, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
-      ...addToIpodPlaylistEntries(selectedTracks, lib.tracks),
-      { separator: true as const },
-      // Already on the album page — only Go to Artist makes sense here.
-      { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },
-      ...(trackArtist && artistTracks.length > 0 ? [
-        { separator: true as const },
-        { label: `Start ${trackArtist} Radio`, onClick: () => { window.dispatchEvent(new CustomEvent('jaketunes-start-artist-radio', { detail: { tracks: artistTracks, label: trackArtist } })) } },
-      ] : []),
-      ...ratingMenuEntries(selectedTracks, libDispatch),
-      { separator: true as const },
-      { label: 'Get Info', onClick: () => setGetInfoState({ tracks: selectedTracks, index: idx }) },
-      ...artworkItems,
-      ...downloadMenuEntries(selectedTracks),
-      { separator: true as const },
-      {
-        label: 'Cynthia',
-        onClick: () => openCynthia({ x: ctxMenu.x, y: ctxMenu.y, scope: { type: 'tracks', label: count > 1 ? `${count} songs` : track.title, tracks: selectedTracks.map(toCynthiaTrack) } }),
-      },
-      { separator: true as const },
-      { label: count > 1 ? `Delete ${count} Songs` : 'Delete Song', onClick: () => setDeleteConfirm({ ids: selectedTracks.map((t) => t.id), count }) },
-    ]
-  }, [ctxMenu, lib.selectedTrackIds, lib.tracks, tracks, playTrack, pbDispatch, libDispatch, openCynthia])
+  // The songs: the one song table (V7), sortable like every list; its own
+  // order (null) is the record's running order. The album page keeps its own
+  // short columns (the jewel-case layout's rule): #, Name, Artist (only when
+  // the record has more than one), Plays, Time. The '#' shows the speaker, so
+  // there is no speaker column.
+  const [sort, setSort] = useListSort(`album:${albumKey}`)
+  const shown = useMemo(() => sortSongs(tracks, sort, elsewhere), [tracks, sort, elsewhere])
+  const multiArtist = new Set(tracks.map((t) => (t.artist || '').trim().toLowerCase())).size > 1
+  const lead = useMemo((): SongTableLead => ({
+    label: '#',
+    width: 48,
+    // The record's own number; the speaker while it plays.
+    render: (track, idx, playing) => (playing ? <SpeakerPlayingIcon /> : (track.trackNumber || idx + 1)),
+  }), [])
 
   // Fetch factual credits + Music Man blurb when the album changes.
   // Deferred so the track list paints before Claude/MB IPC competes.
@@ -601,70 +409,6 @@ export default function AlbumDetailView() {
     return () => { cancelled = true; window.clearTimeout(timer) }
   }, [albumArtist, albumName, year, tracks.length])
 
-  // Drag-to-queue from the album page. This view never set the drag payload,
-  // so dragging a song into the queue silently did nothing — the "works
-  // (Songs view) then doesn't (album page)" glitch. Same multi-select
-  // semantics as SongsView: drag the selection if the grabbed row is in it.
-  const handleRowDragStart = useCallback((track: Track, e: React.DragEvent) => {
-    const sel = lib.selectedTrackIds
-    const chosen = sel.has(track.id) && sel.size > 1 ? tracks.filter(t => sel.has(t.id)) : [track]
-    e.dataTransfer.setData('application/jaketunes-tracks', JSON.stringify(chosen.map(t => t.id)))
-    e.dataTransfer.effectAllowed = 'copy'
-  }, [lib.selectedTrackIds, tracks])
-
-  // Keyboard in the table — the same keys as the Songs list (SongsView's
-  // handler): ↑/↓ move the selection (⇧ extends it), Return plays the
-  // highlighted song. Capture phase + stopPropagation on ↑/↓ so App.tsx's
-  // global volume nudge doesn't ALSO fire while you arrow through the record.
-  useEffect(() => { focusedIdx.current = -1 }, [albumKey])
-  const scrollRowIntoView = useCallback((idx: number) => {
-    const el = tableRef.current?.querySelector<HTMLElement>(`[data-row-idx="${idx}"]`)
-    el?.scrollIntoView({ block: 'nearest' })
-  }, [])
-  useEffect(() => {
-    if (lib.currentView !== 'album-detail' || tracks.length === 0) return
-    const onKey = (e: KeyboardEvent) => {
-      if (document.querySelector('.getinfo-overlay')) return
-      const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
-      if (e.metaKey || e.ctrlKey || e.altKey) return
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault()
-        e.stopPropagation()
-        const dir = e.key === 'ArrowDown' ? 1 : -1
-        let cur = focusedIdx.current
-        if (cur < 0) cur = tracks.findIndex((t) => lib.selectedTrackIds.has(t.id))
-        let next = cur < 0 ? (dir > 0 ? 0 : tracks.length - 1) : cur + dir
-        next = Math.max(0, Math.min(tracks.length - 1, next))
-        focusedIdx.current = next
-        const track = tracks[next]
-        if (!track) return
-        if (e.shiftKey) {
-          const anchor = lastClickedIdx.current >= 0 ? lastClickedIdx.current : next
-          const from = Math.min(anchor, next)
-          const to = Math.max(anchor, next)
-          libDispatch({ type: 'SELECT_RANGE', ids: tracks.slice(from, to + 1).map((t) => t.id) })
-        } else {
-          libDispatch({ type: 'SELECT_TRACK', id: track.id })
-          lastClickedIdx.current = next
-        }
-        scrollRowIntoView(next)
-        return
-      }
-      if (e.key === 'Enter') {
-        // A focused button (Play, Read all…) answers Return itself.
-        if (tag === 'BUTTON' || tag === 'A') return
-        const idx = focusedIdx.current >= 0 ? focusedIdx.current : tracks.findIndex((t) => lib.selectedTrackIds.has(t.id))
-        const track = idx >= 0 ? tracks[idx] : null
-        if (!track) return
-        e.preventDefault()
-        playTrack(track, tracks, idx, undefined, true)
-      }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [lib.currentView, lib.selectedTrackIds, tracks, libDispatch, playTrack, scrollRowIntoView])
-
   if (tracks.length === 0) {
     return (
       <div className="album-page album-page--empty">
@@ -692,8 +436,6 @@ export default function AlbumDetailView() {
   const showBlurb = !!blurb && !isWeakBlurb(blurb)
 
   // Artist column only when the record really has more than one artist.
-  const multiArtist = new Set(tracks.map((t) => (t.artist || '').trim().toLowerCase())).size > 1
-  const cols = gridCols(multiArtist)
 
   // 2026-09-02 — no whole-page gate: the tracks are in memory, so the album
   // paints on frame one; the history blurb lands in its own line, with a
@@ -776,7 +518,7 @@ export default function AlbumDetailView() {
               </div>
               <div className="apd-ctrls">
                 <button type="button" className="apd-btn apd-btn--orange" onClick={() => playTrack(tracks[0], tracks, 0, undefined, true)}>{ICON_PLAY}Play</button>
-                <button type="button" className="apd-btn" onClick={() => { const s = tracks.slice().sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) }}>{ICON_SHUFFLE}Shuffle</button>
+                <button type="button" className="apd-btn" onClick={() => { const s = shuffle(tracks); if (s.length) playTrack(s[0], s, 0, undefined, true) }}>{ICON_SHUFFLE}Shuffle</button>
                 {/* V5 Live Concert Mode — declare / play-set / undeclare.
                     Declaring is allowed IF AND ONLY IF the album is complete
                     (every track present, verified against declared counts). */}
@@ -954,62 +696,17 @@ export default function AlbumDetailView() {
           )
         })()}
 
-        <div className="apd-table" ref={tableRef} role="grid" aria-label={`${albumName} songs`}>
-          <div className="apd-thead" style={{ gridTemplateColumns: cols }} role="row">
-            <div className="apd-th apd-th--c apd-th--sorted" role="columnheader">#</div>
-            <div className="apd-th" role="columnheader">Name</div>
-            {multiArtist && <div className="apd-th" role="columnheader">Artist</div>}
-            <div className="apd-th apd-th--r" role="columnheader">Plays</div>
-            <div className="apd-th apd-th--c" role="columnheader">Star</div>
-            <div className="apd-th apd-th--r" role="columnheader">Time</div>
-          </div>
-          {tracks.map((track, idx) => {
-            const isPlaying = pb.nowPlaying?.id === track.id
-            const isSelected = lib.selectedTrackIds.has(track.id)
-            const starred = (Number(track.rating) || 0) > 0
-            return (
-              <div
-                key={track.id}
-                data-row-idx={idx}
-                role="row"
-                aria-selected={isSelected}
-                className={`apd-row${idx % 2 ? ' apd-row--alt' : ''}${isPlaying ? ' apd-row--playing' : ''}${isSelected ? ' apd-row--selected' : ''}`}
-                style={{ gridTemplateColumns: cols }}
-                onClick={(e) => handleClick(track.id, idx, e)}
-                onDoubleClick={() => handleDoubleClick(idx)}
-                onMouseEnter={() => prefetchTrackForPlay(track)}
-                onMouseDown={() => prefetchTrackImmediate(track)}
-                onContextMenu={(e) => handleContextMenu(e, track, idx)}
-                draggable
-                onDragStart={(e) => handleRowDragStart(track, e)}
-              >
-                <div className="apd-td apd-td--c apd-td--num">{isPlaying ? <SpeakerPlayingIcon /> : (track.trackNumber || idx + 1)}</div>
-                <div className="apd-td apd-td--name">
-                  {track.audioMissing && <span className="songs-cell-missing-badge" title="Audio file missing — re-import to restore playback." aria-label="Audio file missing">!</span>}
-                  <span className="apd-name-text">{track.title || ''}</span>
-                </div>
-                {multiArtist && <div className="apd-td apd-td--artist">{track.artist || ''}</div>}
-                <div className="apd-td apd-td--r apd-td--dim">{playsEverywhere(track, elsewhere)}</div>
-                <div className="apd-td apd-td--c">
-                  <button
-                    type="button"
-                    className={`apd-star${starred ? ' apd-star--on' : ''}`}
-                    onClick={(e) => { e.stopPropagation(); handleRatingChange(track.id, starred ? 0 : 5) }}
-                    onDoubleClick={(e) => e.stopPropagation()}
-                    title={starred ? 'Unstar' : 'Star'}
-                    aria-label={starred ? 'Unstar' : 'Star'}
-                    aria-pressed={starred}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 10 10" fill={starred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round" aria-hidden="true">
-                      <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
-                    </svg>
-                  </button>
-                </div>
-                <div className="apd-td apd-td--r apd-td--time">{formatDuration(track.duration)}</div>
-              </div>
-            )
-          })}
-        </div>
+        <SongTable
+          listKey={`album:${albumKey}`}
+          scroll="page"
+          className="apd-songs"
+          tracks={shown}
+          active={lib.currentView === 'album-detail'}
+          sort={sort}
+          onSort={setSort}
+          lead={lead}
+          columns={multiArtist ? ALBUM_COLUMNS_MULTI : ALBUM_COLUMNS}
+        />
 
       </div>
 
@@ -1019,7 +716,6 @@ export default function AlbumDetailView() {
         <span aria-hidden="true" />
       </div>
 
-      {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={getContextMenuItems()} onClose={() => setCtxMenu(null)} />}
       {cueCtx && (
         <ContextMenu
           x={cueCtx.x}
@@ -1033,27 +729,6 @@ export default function AlbumDetailView() {
                 }]
           }
           onClose={() => setCueCtx(null)}
-        />
-      )}
-      {getInfoState && (
-        <GetInfoModal
-          tracks={getInfoState.tracks}
-          allTracks={getInfoState.allTracks ?? tracks}
-          initialIndex={getInfoState.index}
-          artworkMap={lib.artworkMap}
-          onClose={() => setGetInfoState(null)}
-          onSave={handleGetInfoSave}
-          onFetchArt={handleFetchArt}
-          onSetCustomArt={handleSetCustomArt}
-        />
-      )}
-      {deleteConfirm && (
-        <ConfirmDialog
-          message={deleteConfirm.count === 1 ? 'Are you sure you want to delete this song from your library?' : `Are you sure you want to delete ${deleteConfirm.count} songs from your library?`}
-          detail="This will remove them from all playlists. This cannot be undone."
-          confirmLabel="Delete"
-          onConfirm={() => { libDispatch({ type: 'DELETE_TRACKS', ids: deleteConfirm.ids }); setDeleteConfirm(null) }}
-          onCancel={() => setDeleteConfirm(null)}
         />
       )}
       {undeclareConfirm && liveSet && (

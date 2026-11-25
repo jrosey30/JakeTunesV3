@@ -489,3 +489,29 @@
 [class*="cam-"] { background: hsla(var(--cam-h) 65% 55% / 0.15); }
 .cam-A { background: hsla(var(--cam-h) 55% 55% / 0.13); }
 .cam-B { background: hsla(var(--cam-h) 75% 52% / 0.22); }
+
+/* ── The one song table (V7, components/SongTable.tsx) ─────────────────── */
+
+/* A page's own first column (#, the Top 1000's rank): centred, quiet digits. */
+.songs-cell--lead,
+.songs-header-cell--lead {
+  justify-content: center;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.songs-header-cell--lead { cursor: pointer; }
+.songs-cell--lead { color: #6a6a6a; }
+.songs-row--selected .songs-cell--lead { color: #fff; }
+.songs-cell--lead.songs-cell--rank { justify-content: flex-start; }
+
+/* Drag-to-reorder: an orange line where the rows will land. */
+.songs-row--drop-before { box-shadow: inset 0 2px 0 var(--brand-orange); }
+.songs-drop-end { height: 2px; background: var(--brand-orange); }
+
+/* A table inside a page that scrolls (the album page): the page is the
+   scroller, the column header still pins to its top. */
+.songs-table--in-page {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}

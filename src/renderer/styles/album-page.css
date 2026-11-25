@@ -857,104 +857,10 @@
 /* Song names wrap here, never ellipsize (the shared sheet clips them). */
 .album-page--d .album-page-sheet .cj-name { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
 
-/* ── The classic iTunes table ─────────────────────────────────────────── */
-.apd-table {
-  border-top: 1px solid #fff;
-  background: var(--white);
-}
-.apd-thead,
-.apd-row {
-  display: grid;
-}
-.apd-thead {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  height: 21px;
-  background: linear-gradient(180deg, #efefef, #e1e1e1);
-  border-bottom: 1px solid #a9a9a9;
-  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.5);
-  font-size: 11px;
-  color: #333;
-  user-select: none;
-  -webkit-user-select: none;
-}
-.apd-th {
-  display: flex;
-  align-items: center;
-  padding: 0 6px;
-  border-right: 1px solid #c4c4c4;
-  white-space: nowrap;
-  min-width: 0;
-}
-.apd-th:last-child { border-right: 0; }
-/* Last column keeps clear of the page's scroll thumb (macOS overlays it). */
-.apd-th:last-child,
-.apd-row .apd-td--time { padding-right: 16px; }
-.apd-th--r { justify-content: flex-end; }
-.apd-th--c { justify-content: center; }
-.apd-th--sorted {
-  background: linear-gradient(180deg, #c9d7ec, #a9bedf);
-  color: #111;
-  font-weight: 700;
-}
-
-.apd-row {
-  min-height: 22px;
-  align-items: start;
-  font-size: 12px;
-  color: var(--text-primary);
-  background: var(--white);
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  transition: background-color var(--motion-instant) var(--motion-ease);
-  scroll-margin-top: 22px;
-  scroll-margin-bottom: 4px;
-}
-.apd-row--alt { background: var(--row-alt); }
-.apd-row:hover { background: rgba(var(--selection-top-rgb), 0.11); }
-.apd-row--selected,
-.apd-row--selected:hover { background: #4577d3; color: #fff; }
-.apd-row--playing .apd-name-text { font-weight: 700; }
-
-.apd-td {
-  padding: 3px 6px;
-  min-width: 0;
-  line-height: 16px;
-  display: flex;
-  align-items: flex-start;
-  /* names never ellipsize — they wrap */
-  overflow-wrap: anywhere;
-}
-.apd-td--r { justify-content: flex-end; text-align: right; font-variant-numeric: tabular-nums; }
-.apd-td--c { justify-content: center; text-align: center; }
-.apd-td--num { color: #7b7b7b; font-variant-numeric: tabular-nums; }
-.apd-td--num svg { margin-top: 1px; }
-.apd-td--dim { color: #7b7b7b; }
-.apd-td--artist { color: #3a3a3a; }
-.apd-td--name .songs-cell-missing-badge { margin-top: 1px; }
-.apd-name-text { min-width: 0; }
-.apd-row--selected .apd-td--num,
-.apd-row--selected .apd-td--dim,
-.apd-row--selected .apd-td--artist { color: #e5ecf9; }
-
-.apd-star {
-  appearance: none;
-  width: 18px;
-  height: 16px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  display: grid;
-  place-items: center;
-  color: #b9b2a6;
-  cursor: pointer;
-  transition: color var(--motion-instant) var(--motion-ease), transform var(--motion-instant) var(--motion-ease);
-}
-.apd-star:hover { color: var(--brand-orange); transform: scale(1.15); }
-.apd-star--on { color: var(--brand-orange); }
-.apd-row--selected .apd-star { color: #fff; }
+/* ── The songs: the one song table (V7, components/SongTable.tsx) ────────
+   The page scrolls it; its column header pins to the top of the page while
+   the songs pass under it. */
+.apd-songs { border-top: 1px solid #fff; background: var(--white); }
 
 /* ── Status line ──────────────────────────────────────────────────────── */
 .apd-statusbar {

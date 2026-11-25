@@ -20,7 +20,8 @@ interface LibraryState {
   artistDetailReturnView: ViewName | null
   currentView: ViewName
   searchQuery: string
-  sortColumn: SortColumn
+  /** null = the library's own order ("Original Order", V7). */
+  sortColumn: SortColumn | null
   sortDirection: SortDirection
   selectedTrackIds: Set<number>
   artworkMap: Record<string, string>
@@ -36,6 +37,8 @@ type LibraryAction =
   | { type: 'SET_VIEW'; view: ViewName }
   | { type: 'SET_SEARCH'; query: string }
   | { type: 'SET_SORT'; column: SortColumn }
+  /** V7: a header click — asc, desc, then null ("Original Order"); utils/songTableRules.ts nextSort. */
+  | { type: 'SET_SORT_STATE'; sort: { column: SortColumn; direction: SortDirection } | null }
   | { type: 'SELECT_TRACK'; id: number; multi?: boolean }
   | { type: 'SELECT_RANGE'; ids: number[] }
   | { type: 'SELECT_ALL' }
@@ -96,6 +99,10 @@ function libraryReducer(state: LibraryState, action: LibraryAction): LibraryStat
         state.sortColumn === action.column && state.sortDirection === 'asc' ? 'desc' : 'asc'
       return { ...state, sortColumn: action.column, sortDirection: direction }
     }
+    case 'SET_SORT_STATE':
+      return action.sort
+        ? { ...state, sortColumn: action.sort.column, sortDirection: action.sort.direction }
+        : { ...state, sortColumn: null, sortDirection: 'asc' }
     case 'SELECT_TRACK': {
       const next = new Set(action.multi ? state.selectedTrackIds : [])
       if (next.has(action.id) && action.multi) {

@@ -13,6 +13,7 @@
  *   a letter     type-to-find on the title (800 ms buffer)
  *
  * ⌥↑ / ⌥↓ are never taken: a sidebar section header uses them to move itself.
+ * ⌘↑ / ⌘↓ (Ctrl+↑ / Ctrl+↓) are never taken either: they are the volume keys.
  */
 
 export type ListKeyIntent =
@@ -31,7 +32,8 @@ export interface ListKeyLike {
 
 export function listKeyIntent(e: ListKeyLike): ListKeyIntent | null {
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-    if (e.altKey) return null
+    // ⌥↑/⌥↓ move a sidebar section; ⌘↑/⌘↓ (Ctrl on others) are the volume keys.
+    if (e.altKey || e.metaKey || e.ctrlKey) return null
     return { kind: 'move', dir: e.key === 'ArrowDown' ? 1 : -1, extend: e.shiftKey }
   }
   if (e.key === 'Enter') return { kind: 'enter' }
@@ -67,24 +69,4 @@ export function isTypingTarget(el: { tagName?: string; isContentEditable?: boole
   if (!el) return false
   const tag = (el.tagName || '').toUpperCase()
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!el.isContentEditable
-}
-
-/**
- * Bring row `idx` of a plain (non-virtual) list into view, nearest edge,
- * below a header that sits inside the same scroller. Rows are the
- * `.songs-row` children of `.songs-body`.
- */
-export function scrollListRowIntoView(container: HTMLElement | null, idx: number): void {
-  if (!container || idx < 0) return
-  const rows = container.querySelectorAll<HTMLElement>(':scope > .songs-body > .songs-row')
-  const row = rows[idx]
-  if (!row) return
-  const box = container.getBoundingClientRect()
-  // An iPod's page pins its bar and the column header together (.songs-pin, styles/ipod-ad.css).
-  const header = container.querySelector<HTMLElement>(':scope > .songs-pin, :scope > .songs-header')
-  // Sticky or scrolled away, the header covers whatever is above its bottom edge.
-  const top = header ? Math.max(box.top, header.getBoundingClientRect().bottom) : box.top
-  const r = row.getBoundingClientRect()
-  if (r.top < top) container.scrollTop -= top - r.top
-  else if (r.bottom > box.bottom) container.scrollTop += r.bottom - box.bottom
 }

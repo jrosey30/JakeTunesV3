@@ -1,10 +1,8 @@
 import { LARRY_VOICE_ID } from '../../common/cohost'
-import { useMemo, useState, useEffect, useRef, useCallback, useSyncExternalStore } from 'react'
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { audioFromBase64Mpeg } from '../audio/base64-audio'
 import { useLibrary } from '../context/LibraryContext'
-import { usePlayback } from '../context/PlaybackContext'
-import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
-import { useScrollPersistence } from '../hooks/useScrollPersistence'
+import { useAudio } from '../hooks/useAudio'
 import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { evaluateSmartPlaylist, SMART_PLAYLIST_TITLES as TITLES } from '../utils/smartPlaylists'
 import { smartPlaylistCover } from '../utils/playlistCovers'
@@ -30,44 +28,18 @@ import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useReleaseMonths } from '../releaseMonths'
 import { monthPlaylistName, monthTrackIds, parseMonthPlaylistId } from '../../common/release-months'
 import { isTop25Rankable } from '../../common/top25-rankable'
-import { lastPlayedEverywhere, playsEverywhere } from '../../common/plays-elsewhere'
 import { usePlaysElsewhere, useTracksEverywhere } from '../playsElsewhere'
 import { Track, type SmartPlaylistId } from '../types'
-import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
-import ContextMenu, { MenuEntry } from '../components/ContextMenu'
-import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded, isDownloading } from '../utils/downloadStore'
-import { formatAppDateTime } from '../utils/formatDate'
-import { DATE_TIME_COLUMN_WIDTH } from '../utils/columnState'
 import { canonicalArtist } from '../utils/artistAlias'
-import { albumKeyOf } from '../utils/albumKey'
-import ConfirmDialog from '../components/ConfirmDialog'
-import GetInfoModal from '../components/GetInfoModal'
-import StarRating, { ratingMenuEntries } from '../components/StarRating'
-import SortArrowIcon from '../components/SortArrowIcon'
 import TrackGridView from '../components/TrackGridView'
 import CoverFlowView from './CoverFlowView'
 import { useViewMode } from '../context/ViewModeContext'
-import { useTrackListKeys } from '../hooks/useTrackListKeys'
-import { scrollListRowIntoView } from '../utils/trackListKeys'
 import { setNotice } from '../activity'
-import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
 import '../styles/musicman.css'
 import '../styles/songs.css'
-import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
-import { addToIpodPlaylistEntries } from '../ipodPlaylistAdd'
-import { getInfoTarget } from '../../common/get-info-target'
-import { sortTracksByName } from '../utils/artistSort'
-
-// Persist sort preferences per smart playlist across navigation
-const smartSortPrefs = new Map<string, { col: string | null; dir: 'asc' | 'desc' }>()
-
-function formatDuration(ms: number): string {
-  if (!ms || ms <= 0) return ''
-  const totalSecs = Math.floor(ms / 1000)
-  const m = Math.floor(totalSecs / 60)
-  const s = totalSecs % 60
-  return `${m}:${s.toString().padStart(2, '0')}`
-}
+import SongTable, { type SongTableLead } from '../components/SongTable'
+import { useListSort } from '../hooks/useListSort'
+import { filterSongs, sortSongs } from '../utils/songTableRules'
 
 // Titles: SMART_PLAYLIST_TITLES (utils/smartPlaylists.ts) — one map for this
 // page's heading and the back pill's name for it.
@@ -127,41 +99,11 @@ function isSameCalendarDay(isoDate: string): boolean {
   )
 }
 
-interface ColDef {
-  key: string
-  label: string
-  defaultWidth: number
-  minWidth: number
-  resizable: boolean
-}
-
+/** The Top 1000's '#' needs room for "1000 (1000) ▼999"; Top 25 keeps 80. */
 const TOP_1000_RANK_WIDTH = 116
-
-const ALL_COLUMN_DEFS: ColDef[] = [
-  { key: 'playing', label: '', defaultWidth: 24, minWidth: 24, resizable: false },
-  // 4.5: Power-rankings column — only surfaced for the ranked playlists,
-  // Top 25 and (2026-11-07) Top 1000 (filtered out below for the rest). Shows current rank +
-  // last-week rank in parens + a green up / red down / neutral dash
-  // arrow. LW data is taken from a weekly-rotated snapshot in ui-state.
-  { key: 'rank', label: '#', defaultWidth: 80, minWidth: 60, resizable: false },
-  { key: 'title', label: 'Name', defaultWidth: 220, minWidth: 80, resizable: true },
-  { key: 'time', label: 'Time', defaultWidth: 50, minWidth: 40, resizable: true },
-  { key: 'artist', label: 'Artist', defaultWidth: 160, minWidth: 60, resizable: true },
-  { key: 'album', label: 'Album', defaultWidth: 160, minWidth: 60, resizable: true },
-  { key: 'genre', label: 'Genre', defaultWidth: 100, minWidth: 50, resizable: true },
-  { key: 'year', label: 'Year', defaultWidth: 50, minWidth: 35, resizable: true },
-  { key: 'dateAdded', label: 'Date Added', defaultWidth: DATE_TIME_COLUMN_WIDTH, minWidth: DATE_TIME_COLUMN_WIDTH, resizable: true },
-  { key: 'lastPlayedAt', label: 'Last Played', defaultWidth: DATE_TIME_COLUMN_WIDTH, minWidth: DATE_TIME_COLUMN_WIDTH, resizable: true },
-  { key: 'playCount', label: 'Plays', defaultWidth: 50, minWidth: 35, resizable: true },
-  { key: 'channelMode', label: 'Channels', defaultWidth: 70, minWidth: 50, resizable: true },
-  // 4.5: 'rating' column REMOVED — star renders inline next to title.
-]
-
-const ALWAYS_VISIBLE = new Set(['playing', 'title'])
 
 export default function SmartPlaylistView() {
   const { state: libState, dispatch } = useLibrary()
-  const { state: pbState, dispatch: pbDispatch } = usePlayback()
   // 2026-10-20 — the phone's and workmini's plays count here too. Ranking reads
   // `everywhere`; rows stay the library's own tracks (display only, never saved).
   const elsewhere = usePlaysElsewhere()
@@ -491,44 +433,8 @@ export default function SmartPlaylistView() {
     return own(evaluateSmartPlaylist(playlistId, everywhere))
   }, [playlistId, libState.tracks, everywhere, picks, topWindow, windowedCounts, weekly, onRepeat, monthYm, releaseMonths, top1000, ipodListDevice, ipodList])
 
-  // Apply search filter — every word must appear somewhere across all fields
-  const filteredTracks = useMemo(() => {
-    if (!libState.searchQuery) return smartTracks
-    const words = libState.searchQuery.toLowerCase().split(/\s+/).filter(w => w.length > 0)
-    return smartTracks.filter(t => {
-      const haystack = `${t.title || ''} ${t.artist || ''} ${t.album || ''} ${t.genre || ''} ${t.year || ''}`.toLowerCase()
-      return words.every(w => haystack.includes(w))
-    })
-  }, [smartTracks, libState.searchQuery])
-
-  // --- Column visibility ---
-  // Default hidden set varies by playlist — Recently Added obviously
-  // wants dateAdded visible; Top 25 wants playCount visible; etc.
-  // Rating stays visible everywhere so ratings can be edited from any
-  // smart playlist.
-  const defaultHidden = useMemo(() => {
-    switch (playlistId) {
-      case 'recently-added':  return new Set(['lastPlayedAt', 'playCount', 'channelMode'])             // show dateAdded
-      case 'tiktok':
-      case 'bandcamp':
-      case 'savant':          return new Set(['lastPlayedAt', 'playCount', 'channelMode'])             // newest import first: show dateAdded
-      case 'recently-played': return new Set(['dateAdded', 'playCount', 'channelMode']) // recency-driven; both noisy
-      case 'top-25':          return new Set(['dateAdded', 'lastPlayedAt', 'channelMode'])              // playCount drives the list, keep it visible
-      case 'top-1000':        return new Set(['dateAdded', 'lastPlayedAt', 'channelMode'])              // rank order from the quiz; plays stay visible
-      case 'top-rated':       return new Set(['dateAdded', 'lastPlayedAt', 'playCount', 'channelMode']) // Starred is binary; counts add noise
-      case 'best-of-year':    return new Set(['dateAdded', 'lastPlayedAt', 'channelMode'])              // the signals that ranked it stay visible
-      default:                return new Set(['dateAdded', 'lastPlayedAt', 'playCount', 'channelMode']) // picks views — meta-light
-    }
-  }, [playlistId])
-  const [hiddenCols, setHiddenCols] = useState<Set<string>>(defaultHidden)
-  // Re-render when download pins/progress change so the title-cell disc tracks
-  // state (store is app-init'd in App.tsx; inert on all-local machines).
-  useSyncExternalStore(subscribeDownloads, downloadsVersion)
-  // When the user switches between smart playlists, reset hiddenCols
-  // to that playlist's defaults — otherwise carrying over the previous
-  // playlist's hide-set means each view doesn't get the right columns.
-  useEffect(() => { setHiddenCols(defaultHidden) }, [defaultHidden])
-  const [headerCtxMenu, setHeaderCtxMenu] = useState<{ x: number; y: number } | null>(null)
+  // The "This page" search — the song table's filter (utils/songTableRules.ts).
+  const filteredTracks = useMemo(() => filterSongs(smartTracks, libState.searchQuery), [smartTracks, libState.searchQuery])
 
   // 4.5: Top 25 windowing — see the topWindow state declared above
   // smartTracks. The load/save effects + segmented control live here
@@ -550,17 +456,6 @@ export default function SmartPlaylistView() {
       window.electronAPI.saveUiState({ ...existing, topWindow: w })
     })
   }, [])
-
-  const visibleCols = ALL_COLUMN_DEFS.filter(c => {
-    if (hiddenCols.has(c.key)) return false
-    // Rank column shows on every Top 25 view; the LW arrow inside it
-    // only renders for All Time (week/month don't have a meaningful
-    // week-over-week snapshot). Number always present so the user
-    // sees positions 1 -> 25. Top 1000 (2026-11-07) shows it too, always
-    // with the arrow: its rank is the quiz's, from homemini.
-    if (c.key === 'rank' && !isRankedPlaylist(playlistId)) return false
-    return true
-  })
 
   // 4.5: last-week snapshot for the ranked playlists. Rotates weekly: when
   // we detect a new week, promote the in-flight `curr` snapshot to `prev`
@@ -600,124 +495,60 @@ export default function SmartPlaylistView() {
     return () => { cancelled = true }
   }, [playlistId, currentRanks])
 
-  // --- Local sort state — restored from module-level map so it survives navigation ---
-  const [sortCol, setSortCol] = useState<string | null>(() => {
-    const saved = playlistId ? smartSortPrefs.get(playlistId) : undefined
-    return saved?.col ?? null
-  })
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => {
-    const saved = playlistId ? smartSortPrefs.get(playlistId) : undefined
-    return saved?.dir ?? 'asc'
-  })
-
-  // Restore sort prefs when switching smart playlists
-  const prevSmartId = useRef(playlistId)
-  useEffect(() => {
-    if (playlistId !== prevSmartId.current) {
-      prevSmartId.current = playlistId
-      const saved = playlistId ? smartSortPrefs.get(playlistId) : undefined
-      setSortCol(saved?.col ?? null)
-      setSortDir(saved?.dir ?? 'asc')
-    }
-  }, [playlistId])
-
-  // Persist sort prefs whenever they change
-  useEffect(() => {
-    if (playlistId) smartSortPrefs.set(playlistId, { col: sortCol, dir: sortDir })
-  }, [playlistId, sortCol, sortDir])
-
-  // 4.5: column-resize sort-suppression. handleColResize stamps
-  // lastResizeEndAt on mouseup; handleSort ignores clicks within the
-  // suppression window so a resize drag doesn't also re-sort.
-  const lastResizeEndAt = useRef<number>(0)
-  const handleSort = useCallback((key: string) => {
-    if (Date.now() - lastResizeEndAt.current < 300) return
-    if (key === 'playing') return
-    if (sortCol === key) {
-      if (sortDir === 'desc') {
-        setSortCol(null)
-        setSortDir('asc')
-      } else {
-        setSortDir('desc')
-      }
-    } else {
-      setSortCol(key)
-      setSortDir('asc')
-    }
-  }, [sortCol, sortDir])
-
-  // --- Sorted tracks ---
-  const sortedTracks = useMemo(() => {
-    // 4.5: Starred playlist defaults to starredAt sort — recent star
-    // on top, oldest at bottom. Reverse toggle in the header flips it.
-    // Only applies when user hasn't picked an explicit column header
-    // (clicking a column escapes back into the generic sort path).
-    if (playlistId === 'top-rated' && !sortCol) {
-      return [...filteredTracks].sort((a, b) => {
-        const av = a.starredAt || 0
-        const bv = b.starredAt || 0
-        const cmp = av < bv ? -1 : av > bv ? 1 : 0
-        return starredReversed ? cmp : -cmp
-      })
-    }
-    if (!sortCol) return filteredTracks
-    // Artist / Album: "The Strokes" under S, like every other list (artistSort.ts).
-    if (sortCol === 'artist' || sortCol === 'album') return sortTracksByName(filteredTracks, sortCol, sortDir)
+  // --- The list's own order, then the column sort (null = Original Order) ---
+  // 4.5: the Starred playlist's own order is starredAt — recent star on top,
+  // oldest at the bottom; Recent / Oldest in the header flips it.
+  const ownOrder = useMemo(() => {
+    if (playlistId !== 'top-rated') return filteredTracks
     return [...filteredTracks].sort((a, b) => {
-      let av: string | number = '', bv: string | number = ''
-      switch (sortCol) {
-        case 'title': av = a.title || ''; bv = b.title || ''; break
-        case 'artist': av = a.artist || ''; bv = b.artist || ''; break
-        case 'album': av = a.album || ''; bv = b.album || ''; break
-        case 'genre': av = a.genre || ''; bv = b.genre || ''; break
-        case 'year': av = a.year || 0; bv = b.year || 0; break
-        case 'time': av = a.duration || 0; bv = b.duration || 0; break
-        case 'dateAdded': av = a.dateAdded || ''; bv = b.dateAdded || ''; break
-        case 'lastPlayedAt': { const d = lastPlayedEverywhere(a, elsewhere) - lastPlayedEverywhere(b, elsewhere); return sortDir === 'asc' ? d : -d }
-        case 'playCount': { const d = playsEverywhere(a, elsewhere) - playsEverywhere(b, elsewhere); return sortDir === 'asc' ? d : -d }
-        case 'rating': av = a.rating || 0; bv = b.rating || 0; break
-        case 'channelMode': av = a.channelMode || ''; bv = b.channelMode || ''; break
-        default: return 0
-      }
-      const aStr = String(av).toLowerCase()
-      const bStr = String(bv).toLowerCase()
-      const cmp = aStr < bStr ? -1 : aStr > bStr ? 1 : 0
-      return sortDir === 'asc' ? cmp : -cmp
+      const av = a.starredAt || 0
+      const bv = b.starredAt || 0
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0
+      return starredReversed ? cmp : -cmp
     })
-  }, [filteredTracks, sortCol, sortDir, playlistId, starredReversed, elsewhere])
+  }, [filteredTracks, playlistId, starredReversed])
+  // Remembered per smart playlist while the app runs.
+  const [sort, setSort] = useListSort(`smart:${playlistId ?? ''}`)
+  const sortedTracks = useMemo(() => sortSongs(ownOrder, sort, elsewhere), [ownOrder, sort, elsewhere])
 
-  // --- Column resize ---
-  const [colWidthMap, setColWidthMap] = useState<Record<string, number>>({})
-
-  // Top 1000's '#' needs room for "1000 (1000) ▼999"; Top 25 keeps its 80.
-  const colWidths = visibleCols.map(c => colWidthMap[c.key]
-    ?? (c.key === 'rank' && playlistId === 'top-1000' ? TOP_1000_RANK_WIDTH : c.defaultWidth))
-  const gridTemplate = songsGridTemplate(visibleCols, colWidths)
-  const gridTemplateFixed = songsGridTemplateFixed(colWidths)
-
-  const handleColResize = useCallback((colKey: string, colIndex: number, e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    const startX = e.clientX
-    const startWidth = colWidths[colIndex]
-    const col = visibleCols[colIndex]
-    const minW = col.minWidth
-
-    const onMove = (ev: MouseEvent) => {
-      const delta = ev.clientX - startX
-      const newWidth = Math.max(minW, startWidth + delta)
-      setColWidthMap(prev => ({ ...prev, [colKey]: newWidth }))
-    }
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-      document.body.style.cursor = ''
-      lastResizeEndAt.current = Date.now()
-    }
-    document.body.style.cursor = 'col-resize'
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-  }, [colWidths, visibleCols])
+  // The '#' of a ranked list (Top 25, Top 1000): the rank and last week's
+  // movement, a column of this page's own in front of the table's. A song's
+  // rank is its place in the list's own order, whatever the table is sorted by.
+  const ownRank = useMemo(() => new Map(ownOrder.map((t, i) => [t.id, i + 1])), [ownOrder])
+  // Memoized: the rows are, and a new lead each render would redraw them all.
+  const rankLead = useMemo((): SongTableLead | undefined => (isRankedPlaylist(playlistId) ? {
+    label: '#',
+    width: playlistId === 'top-1000' ? TOP_1000_RANK_WIDTH : 80,
+    className: 'songs-cell--rank',
+    render: (track) => {
+      // Top 1000: the quiz's rank (a song homemini ranks but this library
+      // lacks leaves a gap, as it should). Top 25: position.
+      const rank = playlistId === 'top-1000'
+        ? (top1000Ranks?.[String(track.id)] ?? ownRank.get(track.id) ?? 0)
+        : (ownRank.get(track.id) ?? 0)
+      // Top 1000: homemini's weekly movement (green up, red down, NEW);
+      // nothing on a fresh-start week or for a song that held.
+      if (playlistId === 'top-1000') {
+        const mv = top1000Movement(rank, top1000Moves.movement?.[String(track.id)], top1000Moves.comparedTo)
+        return (
+          <>
+            <span className="rank-num">{rank}</span>
+            {mv && <span className={mv.arrowClass} title={mv.lwLabel ? `Last week: ${mv.lwLabel.slice(1, -1)}` : 'New this week'}>{mv.arrow}</span>}
+          </>
+        )
+      }
+      // Top 25: LW arrow only on All Time, and only once there is a snapshot (no flash of NEW).
+      if (topWindow !== 'all' || !rankSnap) return <span className="rank-num">{rank}</span>
+      const { arrow, arrowClass, lwLabel } = rankMovement(rank, rankSnap.prev?.[String(track.id)])
+      return (
+        <>
+          <span className="rank-num">{rank}</span>
+          {lwLabel && <span className="rank-lw">{lwLabel}</span>}
+          <span className={arrowClass}>{arrow}</span>
+        </>
+      )
+    },
+  } : undefined), [playlistId, top1000Ranks, top1000Moves, ownRank, topWindow, rankSnap])
 
   // --- Summary stats ---
   const totalMs = sortedTracks.reduce((sum, t) => sum + (t.duration || 0), 0)
@@ -746,35 +577,6 @@ export default function SmartPlaylistView() {
 
   // Reset saved state when picks change
   useEffect(() => { setPicksSaved(false) }, [picks])
-
-  // Auto-follow now-playing on track change (4.0). Skipped if user
-  // scrolled in last 5s.
-  useEffect(() => {
-    if (libState.currentView !== 'smart-playlist') return
-    if (!pbState.nowPlaying) return
-    if (Date.now() - lastUserActivityAtRef.current < FOLLOW_IDLE_MS) return
-    const idx = sortedTracks.findIndex(t => t.id === pbState.nowPlaying!.id)
-    if (idx < 0) return
-    const el = songsBodyRef.current
-    if (!el) return
-    // An iPod's page (2026-11-14): the ad and the bar are in this scroller above the rows, so the
-    // row's place is read off the page instead of worked out from its number.
-    if (el.classList.contains('songs-view--ipod-ad')) {
-      isAutoScrollAtRef.current = Date.now()
-      scrollListRowIntoView(el, idx)
-      return
-    }
-    // V5 facelift: 18px rows (matches --row-height + SongsView's ROW_HEIGHT).
-    const rowH = 18
-    const rowTop = idx * rowH
-    const rowBottom = rowTop + rowH
-    const scrollTop = el.scrollTop
-    const viewH = el.clientHeight
-    if (rowTop < scrollTop || rowBottom > scrollTop + viewH) {
-      isAutoScrollAtRef.current = Date.now()
-      el.scrollTop = rowTop < scrollTop ? rowTop : rowBottom - viewH
-    }
-  }, [pbState.nowPlaying?.id, libState.currentView, sortedTracks])
 
   const speakCommentary = useCallback(async () => {
     if (!picks?.commentary) return
@@ -842,235 +644,6 @@ export default function SmartPlaylistView() {
     })
     setPicksSaved(true)
   }, [picks, picksSaved, dispatch])
-
-  // --- Selection, context menu, Get Info ---
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
-  const selectedIdsRef = useRef(selectedIds)
-  selectedIdsRef.current = selectedIds
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
-  const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
-  const lastClickedIdx = useRef<number>(-1)
-  // Keyboard cursor for ↑/↓ (hooks/useTrackListKeys.ts); clicks move it too.
-  const focusedIdx = useRef<number>(-1)
-
-  // Auto-follow now-playing (4.0). Mirrors the SongsView pattern:
-  // when the playing track changes and the user has been idle for >5s,
-  // scroll the now-playing row into view. Programmatic scrolls don't
-  // count as user activity (200ms grace window after our scrollTop write).
-  const songsBodyRef = useRef<HTMLDivElement | null>(null)
-  // 4.4.13: per-smart-playlist scroll persistence within the session.
-  useScrollPersistence(`smart-playlist:${libState.activeSmartPlaylist}`, songsBodyRef)
-  const lastUserActivityAtRef = useRef<number>(0)
-  const isAutoScrollAtRef = useRef<number>(0)
-  const FOLLOW_IDLE_MS = 5000
-
-  const handleScroll = useCallback(() => {
-    if (Date.now() - isAutoScrollAtRef.current > 200) {
-      lastUserActivityAtRef.current = Date.now()
-    }
-  }, [])
-
-  // Reset anchor when search/sort changes the visible list
-  useEffect(() => {
-    lastClickedIdx.current = -1
-    setSelectedIds(new Set())
-  }, [libState.searchQuery, sortCol, sortDir])
-  // A different list, or a new order: the keyboard cursor starts over.
-  useEffect(() => { focusedIdx.current = -1 }, [libState.searchQuery, sortCol, sortDir, libState.activeSmartPlaylist])
-
-  // ↑/↓ (⇧ extends), Enter, Space, type-to-find — the same keys as Songs
-  // (Jake 2026-11-07: "i cant go up and down any playlist with the up down
-  // arrows!!!" — they fell through to the global volume). List mode only.
-  useTrackListKeys({
-    enabled: libState.currentView === 'smart-playlist' && viewMode === 'list' && !ctxMenu,
-    tracks: sortedTracks,
-    focusedIdx,
-    lastClickedIdx,
-    selectOne: (id) => setSelectedIds(new Set([id])),
-    selectRange: (ids) => setSelectedIds(new Set(ids)),
-    scrollToIdx: (idx) => {
-      // Arrowing is activity: hold off the now-playing follow, as Songs does.
-      isAutoScrollAtRef.current = Date.now()
-      lastUserActivityAtRef.current = Date.now()
-      scrollListRowIntoView(songsBodyRef.current, idx)
-    },
-    play: (idx) => playTrack(sortedTracks[idx], sortedTracks, idx, undefined, true),
-    getSelectedIds: () => selectedIdsRef.current,
-    hasNowPlaying: () => !!pbState.nowPlaying,
-  })
-
-  const handleClick = (track: Track, idx: number, e: React.MouseEvent) => {
-    if (e.shiftKey && lastClickedIdx.current >= 0 && lastClickedIdx.current < sortedTracks.length) {
-      const from = Math.min(lastClickedIdx.current, idx)
-      const to = Math.max(lastClickedIdx.current, idx)
-      setSelectedIds(new Set(sortedTracks.slice(from, to + 1).map(t => t.id)))
-    } else if (e.metaKey || e.ctrlKey) {
-      setSelectedIds(prev => {
-        const next = new Set(prev)
-        if (next.has(track.id)) next.delete(track.id)
-        else next.add(track.id)
-        return next
-      })
-      lastClickedIdx.current = idx
-    } else {
-      setSelectedIds(new Set([track.id]))
-      lastClickedIdx.current = idx
-    }
-    focusedIdx.current = idx
-  }
-
-  // Keyboard: ⌘A selects every visible track (parity with SongsView).
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (document.querySelector('.getinfo-overlay')) return
-      const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
-      if ((e.metaKey || e.ctrlKey) && e.key === 'a' && sortedTracks.length > 0) {
-        e.preventDefault()
-        setSelectedIds(new Set(sortedTracks.map(t => t.id)))
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown, true)
-    return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [sortedTracks])
-
-  const handleContextMenu = (e: React.MouseEvent, track: Track, idx: number) => {
-    e.preventDefault()
-    if (!selectedIds.has(track.id)) setSelectedIds(new Set([track.id]))
-    setCtxMenu({ x: e.clientX, y: e.clientY, track, idx })
-  }
-
-  const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
-
-  const getContextMenuItems = (): MenuEntry[] => {
-    if (!ctxMenu) return []
-    const { track, idx } = ctxMenu
-    const selected = selectedIds.size > 1 ? sortedTracks.filter(t => selectedIds.has(t.id)) : [track]
-    const count = selected.length
-
-    // Collect unique artist+album combos from all selected tracks for batch artwork
-    const artPairs = new Map<string, { artist: string; album: string }>()
-    for (const t of selected) {
-      if (t.artist && t.album) {
-        const k = `${t.artist.toLowerCase().trim()}|||${t.album.toLowerCase().trim()}`
-        if (!artPairs.has(k)) artPairs.set(k, { artist: t.artist, album: t.album })
-      }
-    }
-
-    const artworkItems: MenuEntry[] = artPairs.size > 0 ? [
-      { separator: true as const },
-      {
-        label: 'Add Artwork…',
-        onClick: async () => {
-          const file = await window.electronAPI.chooseArtworkFile()
-          if (!file.ok || !file.path) return
-          let failed = 0
-          let lastErr = ''
-          for (const { artist, album } of artPairs.values()) {
-            const result = await window.electronAPI.setCustomArtwork(artist, album, file.path)
-            if (result.ok && result.key && result.hash) {
-              dispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-            } else {
-              failed += 1
-              lastErr = result.error || ''
-            }
-          }
-          // 4.4.12: surface failures so the user knows the save didn't stick.
-          if (failed > 0) {
-            setNotice(
-              failed === 1
-                ? (lastErr ? `Couldn't save artwork: ${lastErr}` : "Couldn't save artwork.")
-                : `Couldn't save artwork for ${failed} albums.`,
-              { kind: 'error' }
-            )
-          }
-        },
-      },
-      {
-        label: 'Fetch Artwork from Internet',
-        onClick: async () => {
-          for (const { artist, album } of artPairs.values()) {
-            const result = await window.electronAPI.fetchAlbumArt(artist, album, true)
-            if (result.ok && result.key && result.hash) {
-              dispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-            }
-          }
-        },
-      },
-    ] : []
-
-    return [
-      { label: `Play`, onClick: () => playTrack(track, sortedTracks, idx, undefined, true) },
-      { separator: true as const },
-      ...queueMenuEntries(selected, pbDispatch),
-      addToPlaylistEntry(selected, libState.playlists, (pid, ids) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
-      ...addToIpodPlaylistEntries(selected, libState.tracks),
-      { separator: true as const },
-      { label: 'Go to Artist', onClick: () => dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },
-      { label: 'Go to Album', onClick: () => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(track) }) },
-      ...ratingMenuEntries(selected, dispatch),
-      { separator: true as const },
-      { label: `Get Info`, onClick: () => setGetInfoState({ tracks: selected, index: idx }) },
-      ...artworkItems,
-      ...downloadMenuEntries(selected),
-      { separator: true as const },
-      {
-        label: count > 1 ? `Delete ${count} Songs` : 'Delete Song',
-        onClick: () => setDeleteConfirm({ ids: selected.map(t => t.id), count }),
-      },
-    ]
-  }
-
-  const handleGetInfoSave = useCallback(
-    async (updates: { id: number; field: string; value: string }[]) => {
-      dispatch({ type: 'UPDATE_TRACKS', updates })
-      for (const u of updates) {
-        await window.electronAPI.saveMetadataOverride(u.id, u.field, u.value)
-      }
-    },
-    [dispatch]
-  )
-
-  const handleFetchArt = useCallback(
-    async (artist: string, album: string, force?: boolean): Promise<{ key: string; hash: string } | null> => {
-      const result = await window.electronAPI.fetchAlbumArt(artist, album, force)
-      if (result.ok && result.key && result.hash) {
-        dispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-        return { key: result.key, hash: result.hash }
-      }
-      return null
-    },
-    [dispatch]
-  )
-
-  const handleSetCustomArt = useCallback(
-    async (artist: string, album: string, imagePath: string): Promise<{ key: string; hash: string } | null> => {
-      const result = await window.electronAPI.setCustomArtwork(artist, album, imagePath)
-      if (result.ok && result.key && result.hash) {
-        dispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-        return { key: result.key, hash: result.hash }
-      }
-      // 4.4.12: surface failure (usually sips conversion) so the user
-      // doesn't think the art stuck just because the Get Info preview
-      // still shows it from localArtHash.
-      setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
-      return null
-    },
-    [dispatch]
-  )
-
-  // Cmd+I for Get Info (nothing selected → the now-playing song; see
-  // getInfoTarget)
-  useEffect(() => {
-    if (libState.currentView !== 'smart-playlist') return
-    const handler = () => {
-      const np = pbState.nowPlaying ? libState.tracks.find(t => t.id === pbState.nowPlaying!.id) : undefined
-      const target = getInfoTarget(sortedTracks, selectedIds, np)
-      if (target) setGetInfoState({ tracks: target.tracks, index: target.index })
-    }
-    window.addEventListener('jaketunes-get-info', handler)
-    return () => window.removeEventListener('jaketunes-get-info', handler)
-  }, [libState.currentView, selectedIds, sortedTracks, libState.tracks, pbState.nowPlaying])
 
   const isPicksView = picksConfig !== null
   const displayName = isPicksView && picks?.name ? picks.name : title
@@ -1253,7 +826,7 @@ export default function SmartPlaylistView() {
               Click to flip to oldest first. Only renders on the Starred
               playlist and only when the user hasn't picked an explicit
               column sort (which would override anyway). */}
-          {playlistId === 'top-rated' && !sortCol && (
+          {playlistId === 'top-rated' && !sort && (
             <div className="top25-window-switch" role="group" aria-label="Starred sort order">
               <button
                 className={`top25-window-btn ${!starredReversed ? 'top25-window-btn--active' : ''}`}
@@ -1335,33 +908,6 @@ export default function SmartPlaylistView() {
       )}
     </>
   )
-  const columnsEl = (
-      <div
-        className="songs-header"
-        style={{ gridTemplateColumns: gridTemplate }}
-        onContextMenu={(e) => { e.preventDefault(); setHeaderCtxMenu({ x: e.clientX, y: e.clientY }) }}
-      >
-        {visibleCols.map((col, i) => (
-          <div
-            key={col.key}
-            className={`songs-header-cell songs-header-cell--${col.key} ${sortCol === col.key ? 'sorted' : ''}`}
-            onClick={() => handleSort(col.key)}
-          >
-            {col.label}
-            {sortCol === col.key && (
-              <span className="sort-arrow"><SortArrowIcon direction={sortDir} /></span>
-            )}
-            {col.resizable && (
-              <div
-                className="col-resize-handle"
-                onMouseDown={(e) => handleColResize(col.key, i, e)}
-              />
-            )}
-          </div>
-        ))}
-      </div>
-  )
-
   return (
     <div className="playlist-view">
       {colorPickerEl}
@@ -1379,228 +925,32 @@ export default function SmartPlaylistView() {
           the smart-playlist header. */}
       {viewMode === 'grid' ? (
         <div style={{ flex: 1, minHeight: 0 }}>
-          <TrackGridView tracks={sortedTracks} emptyNoun="tracks" />
+          <TrackGridView tracks={sortedTracks} emptyNoun="songs" />
         </div>
       ) : viewMode === 'coverflow' ? (
         <div style={{ flex: 1, minHeight: 0 }}>
-          <CoverFlowView tracks={sortedTracks} emptyNoun="tracks" stateKey={`smart:${playlistId ?? ''}`} />
+          <CoverFlowView tracks={sortedTracks} emptyNoun="songs" stateKey={`smart:${playlistId ?? ''}`} />
         </div>
       ) : (
-      <div className={`songs-view${showAd ? ' songs-view--ipod-ad' : ''}`} style={{ flex: 1, minHeight: 0 }} ref={songsBodyRef} onScroll={handleScroll}>
-      {showAd && adEl}
-      {showAd ? <div className="songs-pin">{headerEl}{panelsEl}{columnsEl}</div> : columnsEl}
-      <div className="songs-body">
-        {/* Fixed-px width anchor: owns .songs-view scrollWidth so rows
-            (contain:inline-size) can't inflate past the header. */}
-        <div className="songs-body-width-sizer" style={{ gridTemplateColumns: gridTemplateFixed }} aria-hidden="true" />
-        {sortedTracks.map((track, i) => {
-          const isPlaying = pbState.nowPlaying?.id === track.id
-          const isSelected = selectedIds.has(track.id)
-          return (
-            <div
-              key={`${track.id}-${i}`}
-              className={`songs-row ${i % 2 ? 'songs-row--alt' : ''} ${isPlaying ? 'songs-row--playing' : ''} ${isSelected ? 'songs-row--selected' : ''}`}
-              style={{ gridTemplateColumns: gridTemplate }}
-              onClick={(e) => handleClick(track, i, e)}
-              onDoubleClick={() => playTrack(track, sortedTracks, i, undefined, true)}
-              onMouseEnter={() => prefetchTrackForPlay(track)}
-              onMouseDown={() => prefetchTrackImmediate(track)}
-              onContextMenu={(e) => handleContextMenu(e, track, i)}
-              draggable
-              onDragStart={(e) => {
-                const selected = selectedIds.has(track.id) && selectedIds.size > 1
-                  ? sortedTracks.filter(t => selectedIds.has(t.id))
-                  : [track]
-                e.dataTransfer.setData('application/jaketunes-tracks', JSON.stringify(selected.map(t => t.id)))
-                e.dataTransfer.effectAllowed = 'copy'
-              }}
-            >
-              {visibleCols.map(col => {
-                switch (col.key) {
-                  case 'playing':
-                    return <div key={col.key} className="songs-cell songs-cell--icon">{isPlaying && <SpeakerPlayingIcon />}</div>
-                  case 'rank': {
-                    // Top 1000: the quiz's rank (a song homemini ranks but this
-                    // library lacks leaves a gap, as it should). Top 25: position.
-                    const rank = playlistId === 'top-1000'
-                      ? (top1000Ranks?.[String(track.id)] ?? i + 1)
-                      : i + 1
-                    // LW arrow + delta only on All Time (the snapshot
-                    // is keyed to all-time ranks). Week/month views
-                    // get the rank number alone — still meaningful as
-                    // "position 1 through 25 within this lens."
-                    if (playlistId === 'top-25' && topWindow !== 'all') {
-                      return (
-                        <div key={col.key} className="songs-cell songs-cell--rank">
-                          <span className="rank-num">{rank}</span>
-                        </div>
-                      )
-                    }
-                    // Top 1000: homemini's weekly movement (green up, red down,
-                    // NEW); nothing on a fresh-start week or for a song that held.
-                    if (playlistId === 'top-1000') {
-                      const mv = top1000Movement(rank, top1000Moves.movement?.[String(track.id)], top1000Moves.comparedTo)
-                      return (
-                        <div key={col.key} className="songs-cell songs-cell--rank">
-                          <span className="rank-num">{rank}</span>
-                          {mv && <span className={mv.arrowClass} title={mv.lwLabel ? `Last week: ${mv.lwLabel.slice(1, -1)}` : 'New this week'}>{mv.arrow}</span>}
-                        </div>
-                      )
-                    }
-                    // No snapshot yet for this list (first paint): show the
-                    // number alone rather than flash NEW on every row.
-                    if (!rankSnap) {
-                      return (
-                        <div key={col.key} className="songs-cell songs-cell--rank">
-                          <span className="rank-num">{rank}</span>
-                        </div>
-                      )
-                    }
-                    const { arrow, arrowClass, lwLabel } = rankMovement(rank, rankSnap.prev?.[String(track.id)])
-                    return (
-                      <div key={col.key} className="songs-cell songs-cell--rank">
-                        <span className="rank-num">{rank}</span>
-                        {lwLabel && <span className="rank-lw">{lwLabel}</span>}
-                        <span className={arrowClass}>{arrow}</span>
-                      </div>
-                    )
-                  }
-                  case 'title': {
-                    const starred = (Number(track.rating) || 0) > 0
-                    const toggleStar = (e: React.MouseEvent) => {
-                      e.stopPropagation()
-                      const value = String(starred ? 0 : 5)
-                      dispatch({ type: 'UPDATE_TRACKS', updates: [{ id: track.id, field: 'rating', value }] })
-                      window.electronAPI.saveMetadataOverride(track.id, 'rating', value)
-                      // 4.5: stamp starredAt on star-ON for recent-first sort.
-                      if (!starred) {
-                        const stamp = String(Date.now())
-                        dispatch({ type: 'UPDATE_TRACKS', updates: [{ id: track.id, field: 'starredAt', value: stamp }] })
-                        window.electronAPI.saveMetadataOverride(track.id, 'starredAt', stamp)
-                      }
-                    }
-                    return (
-                      <div key={col.key} className="songs-cell songs-cell--title">
-                        <span className="title-row-text">{track.title}</span>
-                        <button
-                          className={`title-row-star ${starred ? 'title-row-star--filled' : ''}`}
-                          onClick={toggleStar}
-                          onDoubleClick={(e) => e.stopPropagation()}
-                          title={starred ? 'Unstar' : 'Star'}
-                          aria-label={starred ? 'Unstar' : 'Star'}
-                        >
-                          <svg width="10" height="10" viewBox="0 0 10 10" fill={starred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round">
-                            <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
-                          </svg>
-                        </button>
-                        {(isDownloaded(track.path) || isDownloading(track.path)) && (
-                          <span
-                            className={isDownloading(track.path) ? 'title-row-dl title-row-dl--loading' : 'title-row-dl'}
-                            title={isDownloading(track.path) ? 'Downloading…' : 'Downloaded for offline — plays instantly'}
-                            aria-label={isDownloading(track.path) ? 'Downloading' : 'Downloaded'}
-                          >
-                            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-                              <circle cx="8" cy="8" r="7" fill="currentColor" />
-                              <path className="dl-arrow" d="M8 4.8v6M5.4 8.2 8 10.8l2.6-2.6" />
-                            </svg>
-                          </span>
-                        )}
-                      </div>
-                    )
-                  }
-                  case 'time':
-                    return <div key={col.key} className="songs-cell songs-cell--time">{formatDuration(track.duration)}</div>
-                  case 'artist':
-                    return <div key={col.key} className="songs-cell">{track.artist}</div>
-                  case 'album':
-                    return <div key={col.key} className="songs-cell">{track.album}</div>
-                  case 'genre':
-                    return <div key={col.key} className="songs-cell">{track.genre}</div>
-                  case 'channelMode':
-                    return <div key={col.key} className="songs-cell">{track.channelMode === 'mono' ? 'Mono' : track.channelMode === 'stereo' ? 'Stereo' : ''}</div>
-                  case 'year':
-                    return <div key={col.key} className="songs-cell">{track.year || ''}</div>
-                  case 'dateAdded':
-                    return <div key={col.key} className="songs-cell">{formatAppDateTime(track.dateAdded)}</div>
-                  case 'lastPlayedAt':
-                    return <div key={col.key} className="songs-cell">{formatAppDateTime(lastPlayedEverywhere(track, elsewhere))}</div>
-                  case 'playCount':
-                    return <div key={col.key} className="songs-cell songs-cell--plays">{playsEverywhere(track, elsewhere) || ''}</div>
-                  default:
-                    return null
-                }
-              })}
-            </div>
-          )
-        })}
-      </div>
-      </div>
-      )} {/* Brief 026 + V5: close the wrapping .songs-view div + the grid-mode ternary */}
-      {ctxMenu && (
-        <ContextMenu
-          x={ctxMenu.x}
-          y={ctxMenu.y}
-          items={getContextMenuItems()}
-          onClose={() => setCtxMenu(null)}
-        />
-      )}
-      {headerCtxMenu && (
-        <ContextMenu
-          x={headerCtxMenu.x}
-          y={headerCtxMenu.y}
-          items={[
-            {
-              label: 'Default Order',
-              checked: sortCol === null,
-              onClick: () => { setSortCol(null); setSortDir('asc') },
-            },
-            { separator: true as const },
-            ...ALL_COLUMN_DEFS
-              .filter(c => !ALWAYS_VISIBLE.has(c.key))
-              .map(c => ({
-                label: c.label,
-                checked: !hiddenCols.has(c.key),
-                onClick: () => {
-                  setHiddenCols(prev => {
-                    const next = new Set(prev)
-                    if (next.has(c.key)) {
-                      next.delete(c.key)
-                    } else {
-                      next.add(c.key)
-                      if (sortCol === c.key) { setSortCol(null); setSortDir('asc') }
-                    }
-                    return next
-                  })
-                },
-              })),
-          ]}
-          onClose={() => setHeaderCtxMenu(null)}
-        />
-      )}
-      {getInfoState && (
-        <GetInfoModal
-          tracks={getInfoState.tracks}
-          allTracks={libState.tracks}
-          initialIndex={libState.tracks.findIndex(t => t.id === getInfoState.tracks[0]?.id)}
-          artworkMap={libState.artworkMap}
-          onClose={() => setGetInfoState(null)}
-          onSave={handleGetInfoSave}
-          onFetchArt={handleFetchArt}
-          onSetCustomArt={handleSetCustomArt}
-        />
-      )}
-      {deleteConfirm && (
-        <ConfirmDialog
-          message={deleteConfirm.count === 1
-            ? 'Are you sure you want to delete this song from your library?'
-            : `Are you sure you want to delete ${deleteConfirm.count} songs from your library?`}
-          detail="This will remove them from all playlists. This cannot be undone."
-          confirmLabel="Delete"
-          onConfirm={() => {
-            dispatch({ type: 'DELETE_TRACKS', ids: deleteConfirm.ids })
-            setDeleteConfirm(null)
-          }}
-          onCancel={() => setDeleteConfirm(null)}
+        // The one song table (V7). Up to 10,000 songs on an iPod list: only
+        // the rows in view are drawn. On an iPod's page the ad sits above the
+        // table and scrolls away; the bar and its panels pin with the header.
+        <SongTable
+          listKey={`smart:${playlistId ?? ''}`}
+          scrollKey={`smart-playlist:${playlistId ?? ''}`}
+          tracks={sortedTracks}
+          active={libState.currentView === 'smart-playlist'}
+          sort={sort}
+          onSort={setSort}
+          lead={rankLead}
+          // A smart list, the Top 1000 and the iPod lists aren't the library:
+          // the Delete key does nothing here. Delete from the library stays in
+          // the right-click menu, and its question names this list.
+          deleteKeyDeletes={false}
+          alsoLeaves={displayName}
+          className={showAd ? 'songs-view--ipod-ad' : undefined}
+          above={showAd ? adEl : undefined}
+          pinned={showAd ? <>{headerEl}{panelsEl}</> : undefined}
         />
       )}
     </div>

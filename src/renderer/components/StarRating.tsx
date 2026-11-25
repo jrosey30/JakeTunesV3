@@ -46,7 +46,7 @@ export default function StarRating({ value, onChange }: Props) {
 import type { MenuEntry } from './ContextMenu'
 import { isStarred, planStarToggle } from '../../common/star-toggle'
 
-type StarDispatch = (action: { type: 'UPDATE_TRACKS'; updates: { id: number; field: string; value: string }[] }) => void
+export type StarDispatch = (action: { type: 'UPDATE_TRACKS'; updates: { id: number; field: string; value: string }[] }) => void
 
 /**
  * Perform a binary star toggle on `tracks` and persist it — the one writer
@@ -83,4 +83,30 @@ export function ratingMenuEntries(
       onClick: () => { applyStarToggle(tracks, dispatch) },
     },
   ]
+}
+
+/**
+ * The star after a song's name in every song list (V7: drawn once — Songs,
+ * the playlists and the album page each had their own copy). Hidden until
+ * hover when unstarred, always shown when starred. A click stars or unstars
+ * through applyStarToggle, so starredAt is stamped the same way as the menu's
+ * Star and ⇧⌘S. It never selects the row or plays it.
+ */
+export function TitleStar({ track, dispatch }: { track: { id: number; rating?: number }; dispatch: StarDispatch }) {
+  const starred = isStarred(track)
+  return (
+    <button
+      type="button"
+      className={`title-row-star ${starred ? 'title-row-star--filled' : ''}`}
+      onClick={(e) => { e.stopPropagation(); applyStarToggle([track], dispatch) }}
+      onDoubleClick={(e) => e.stopPropagation()}
+      title={starred ? 'Unstar' : 'Star'}
+      aria-label={starred ? 'Unstar' : 'Star'}
+      aria-pressed={starred}
+    >
+      <svg width="10" height="10" viewBox="0 0 10 10" fill={starred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round">
+        <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
+      </svg>
+    </button>
+  )
 }

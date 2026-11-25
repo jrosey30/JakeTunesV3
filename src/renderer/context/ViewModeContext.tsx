@@ -1,5 +1,8 @@
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react'
 import { useLibrary } from './LibraryContext'
+import { parseViewModes, VIEW_MODES_KEY, type ViewMode } from '../utils/viewModes'
+
+export type { ViewMode }
 
 /**
  * V5 facelift: List / Grid / Cover Flow view-mode state for the flat-table
@@ -11,12 +14,10 @@ import { useLibrary } from './LibraryContext'
  * makes zero reducer changes.
  *
  * Modes are remembered PER VIEW (Songs can sit in Grid while a playlist
- * stays in List). In-memory only — resets to 'list' each launch. (The
- * renderer can't use localStorage per project rules; if persistence is
- * ever wanted, it goes through electron-store IPC like column state.)
+ * stays in List), and across launches (V7, 2026-11-24): saved in ui-state
+ * under VIEW_MODES_KEY (utils/viewModes.ts), read once at startup. It used to
+ * reset to List on every launch.
  */
-
-export type ViewMode = 'list' | 'grid' | 'coverflow'
 
 interface ViewModeApi {
   mode: ViewMode
@@ -35,9 +36,25 @@ export function ViewModeProvider({ children }: { children: ReactNode }) {
       ? `smart:${lib.activeSmartPlaylist ?? ''}`
       : lib.currentView
 
+  // The saved choices, once. A choice made before they arrive wins.
+  useEffect(() => {
+    let cancelled = false
+    void window.electronAPI.loadUiState().then((r) => {
+      if (cancelled || !r?.ok || !r.state) return
+      const saved = parseViewModes((r.state as Record<string, unknown>)[VIEW_MODES_KEY])
+      setModeByView((prev) => ({ ...saved, ...prev }))
+    }, () => {})
+    return () => { cancelled = true }
+  }, [])
+
   const mode = modeByView[key] ?? 'list'
   const setMode = useCallback((m: ViewMode) => {
-    setModeByView(prev => ({ ...prev, [key]: m }))
+    setModeByView((prev) => {
+      const next = { ...prev, [key]: m }
+      // ui-state merges a partial save (main/ipc/ui-state-ipc.ts), so only this key is written.
+      void window.electronAPI.saveUiState({ [VIEW_MODES_KEY]: next })
+      return next
+    })
   }, [key])
 
   return <ViewModeContext.Provider value={{ mode, setMode }}>{children}</ViewModeContext.Provider>

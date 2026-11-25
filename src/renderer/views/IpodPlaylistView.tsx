@@ -11,41 +11,31 @@
  * What hasn't reached homemini yet says so ("Waiting for homemini"); a playlist
  * homemini held asks its question at the top, in words.
  */
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
-import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
-import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import ConfirmDialog from '../components/ConfirmDialog'
 import MixArtwork from '../components/MixArtwork'
-import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
-import { canonicalArtist } from '../utils/artistAlias'
-import { ratingMenuEntries } from '../components/StarRating'
-import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
-import { setTrackDragPayload } from '../utils/trackDrag'
+import SongTable, { type SongTableLead, type SongTableRemoval } from '../components/SongTable'
+import { useListSort } from '../hooks/useListSort'
+import { filterSongs, moveRows, removedFromListNotice, sortSongs } from '../utils/songTableRules'
+import { usePlaysElsewhere } from '../playsElsewhere'
 import { setNotice } from '../activity'
 import type { Track } from '../types'
 import {
   answerIpodPlaylist, deleteIpodPlaylist, knownIpod, saveIpodPlaylist, useIpodDefaults, useIpodPlaylists, useOpenIpodPlaylist,
 } from '../ipodPlaylists'
-import { addToIpodPlaylistEntries, askToAddToIpodPlaylist } from '../ipodPlaylistAdd'
+import { askToAddToIpodPlaylist } from '../ipodPlaylistAdd'
 import { checkPlaylistName, notOnIpodQuestion } from '../../common/ipod-playlists-view'
 import '../styles/songs.css'
 import '../styles/album-page.css'
 
-const GRID = '44px minmax(0, 1.6fr) minmax(0, 1.1fr) minmax(0, 1.1fr) 60px'
-const REORDER_TYPE = 'application/jaketunes-ipod-playlist-row'
 const NO_IDS: number[] = []
-const fmtDur = (ms?: number): string => {
-  if (!ms || ms <= 0) return ''
-  const s = Math.floor(ms / 1000)
-  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
-}
 
 export default function IpodPlaylistView() {
   const { state: lib, dispatch } = useLibrary()
-  const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
+  const elsewhere = usePlaysElsewhere()
   const open = useOpenIpodPlaylist()
   const ipod = open ? knownIpod(open.device) : null
   const device = open?.device ?? null
@@ -60,13 +50,14 @@ export default function IpodPlaylistView() {
   const byId = useMemo(() => new Map(lib.tracks.map((t) => [t.id, t])), [lib.tracks])
   const ids = def?.trackIds ?? own?.trackIds ?? NO_IDS
   const tracks = useMemo(() => ids.map((id) => byId.get(id)).filter((t): t is Track => !!t), [ids, byId])
+  // The one song table (V7): the "This page" search, then a column sort (null = the playlist's own order).
+  const [sort, setSort] = useListSort(`ipod-playlist:${open?.device ?? ''}:${open?.id ?? ''}`)
+  const shown = useMemo(() => sortSongs(filterSongs(tracks, lib.searchQuery), sort, elsewhere), [tracks, lib.searchQuery, sort, elsewhere])
+  const ownPlace = useMemo(() => new Map(tracks.map((t, i) => [t.id, i + 1])), [tracks])
 
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameError, setRenameError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
-  const [dragOver, setDragOver] = useState<number | null>(null)
-  const lastClickedIdx = useRef(-1)
 
   const goBack = (): void => {
     if (!device) { dispatch({ type: 'SET_VIEW', view: 'songs' }); return }
@@ -79,44 +70,43 @@ export default function IpodPlaylistView() {
     if (!r.ok) setNotice(r.error, { kind: 'error', durationMs: 5000 })
   }, [device, own, ipodName, defaultNames])
 
-  const removeSelected = useCallback((only?: number) => {
-    if (!own || !editable) return
-    const gone = only !== undefined && !lib.selectedTrackIds.has(only) ? new Set([only]) : new Set(lib.selectedTrackIds)
-    const next = own.trackIds.filter((id) => !gone.has(id))
-    if (next.length === own.trackIds.length) return
+  // Delete / "Remove from …": out of this playlist, with Undo. The songs stay on the iPod.
+  const removeSongs = useCallback((songs: Track[]): SongTableRemoval | null => {
+    if (!own || !editable) return null
+    const before = own.trackIds
+    const gone = new Set(songs.map((t) => t.id))
+    const next = before.filter((id) => !gone.has(id))
+    const n = before.length - next.length
+    if (n === 0) return null
     void setSongs(next)
-    setNotice(`Took ${own.trackIds.length - next.length === 1 ? 'a song' : `${own.trackIds.length - next.length} songs`} out of “${own.name}”. ${own.trackIds.length - next.length === 1 ? 'It stays' : 'They stay'} on ${ipodName}.`)
-  }, [own, editable, lib.selectedTrackIds, setSongs, ipodName])
-
-  const handleClick = useCallback((id: number, idx: number, e: React.MouseEvent) => {
-    window.getSelection()?.removeAllRanges()
-    if (e.shiftKey && lastClickedIdx.current >= 0 && lastClickedIdx.current < tracks.length) {
-      const from = Math.min(lastClickedIdx.current, idx)
-      const to = Math.max(lastClickedIdx.current, idx)
-      dispatch({ type: 'SELECT_RANGE', ids: tracks.slice(from, to + 1).map((t) => t.id) })
-    } else {
-      dispatch({ type: 'SELECT_TRACK', id, multi: e.metaKey || e.ctrlKey })
-      lastClickedIdx.current = idx
+    return {
+      message: `${removedFromListNotice(n, own.name)}. ${n === 1 ? 'It stays' : 'They stay'} on ${ipodName}.`,
+      undo: () => { void setSongs(before) },
     }
-  }, [tracks, dispatch])
+  }, [own, editable, setSongs, ipodName])
 
-  const menuItems = useCallback((): MenuEntry[] => {
-    if (!ctxMenu) return []
-    const { track, idx } = ctxMenu
-    const selected = lib.selectedTrackIds.size > 1 ? tracks.filter((t) => lib.selectedTrackIds.has(t.id)) : [track]
-    return [
-      { label: `Play “${selected.length > 1 ? `${selected.length} Songs` : track.title}”`, onClick: () => playTrack(track, tracks, idx, undefined, true, true) },
-      { separator: true as const },
-      ...queueMenuEntries(selected, pbDispatch),
-      addToPlaylistEntry(selected, lib.playlists, (pid, ids2) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids2 })),
-      ...addToIpodPlaylistEntries(selected, lib.tracks),
-      ...(editable ? [{ label: selected.length > 1 ? `Remove ${selected.length} Songs from “${own?.name}”` : `Remove from “${own?.name}”`, onClick: () => removeSelected(track.id) }] : []),
-      { separator: true as const },
-      { label: 'Go to Artist', onClick: () => dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },
-      ...(track.album ? [{ label: 'Go to Album', onClick: () => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: `${(track.albumArtist || track.artist || '').toLowerCase().trim()}|||${(track.album || '').toLowerCase().trim()}` }) }] : []),
-      ...ratingMenuEntries(selected, dispatch),
-    ]
-  }, [ctxMenu, lib.selectedTrackIds, lib.playlists, lib.tracks, tracks, playTrack, pbDispatch, dispatch, editable, own, removeSelected])
+  // Drag rows to reorder, by the songs shown (a song this library lacks keeps its place at the end).
+  const reorder = useCallback((moving: number[], beforeId: number | null) => {
+    if (!own || !editable) return
+    const shownIds = tracks.map((t) => t.id)
+    const to = beforeId === null ? shownIds.length : shownIds.indexOf(beforeId)
+    const next = moveRows(shownIds, moving, to < 0 ? shownIds.length : to)
+    const rest = own.trackIds.filter((id) => !next.includes(id))
+    void setSongs([...next, ...rest])
+  }, [own, editable, tracks, setSongs])
+
+  // Songs dragged in from anywhere: asked about the same way as the menu's "Add to iPod Playlist".
+  const dropSongs = useCallback((dropped: number[]) => {
+    if (!own || !editable || !device || !ipod) return
+    void askToAddToIpodPlaylist({ device, ipodName, ipodIds: ipod.ipodIds, playlist: own, trackIds: dropped, library: lib.tracks })
+  }, [own, editable, device, ipod, ipodName, lib.tracks])
+
+  // '#': the song's place in the playlist's own order, whatever the sort.
+  const lead = useMemo((): SongTableLead => ({
+    label: '#',
+    width: 44,
+    render: (track) => <span className="album-page-tracknum">{ownPlace.get(track.id) ?? ''}</span>,
+  }), [ownPlace])
 
   if (!open || !ipod || (!def && !own)) {
     return (
@@ -153,43 +143,8 @@ export default function IpodPlaylistView() {
     if (!r.ok) setNotice(r.error, { kind: 'error', durationMs: 5000 })
   }
 
-  const onRowDragStart = (e: React.DragEvent, track: Track, idx: number): void => {
-    setTrackDragPayload(e, track.id, lib.selectedTrackIds)
-    if (editable) e.dataTransfer.setData(REORDER_TYPE, String(idx))
-  }
-  const onRowDrop = (e: React.DragEvent, idx: number): void => {
-    setDragOver(null)
-    if (!editable || !own) return
-    const from = e.dataTransfer.getData(REORDER_TYPE)
-    if (from !== '') {
-      e.preventDefault()
-      const f = Number(from)
-      if (!Number.isInteger(f) || f === idx) return
-      // Reorder by the songs shown (a song this library lacks keeps its place at the end).
-      const shownIds = tracks.map((t) => t.id)
-      const [moved] = shownIds.splice(f, 1)
-      shownIds.splice(idx > f ? idx - 1 : idx, 0, moved)
-      const rest = own.trackIds.filter((id) => !shownIds.includes(id))
-      void setSongs([...shownIds, ...rest])
-      return
-    }
-    const raw = e.dataTransfer.getData('application/jaketunes-tracks')
-    if (!raw || !device) return
-    e.preventDefault()
-    try {
-      const dropped = (JSON.parse(raw) as unknown[]).map(Number).filter((n) => Number.isInteger(n))
-      void askToAddToIpodPlaylist({ device, ipodName, ipodIds: ipod.ipodIds, playlist: own, trackIds: dropped, library: lib.tracks })
-    } catch {
-      // Not a list of songs: nothing to add.
-    }
-  }
-
   return (
-    <div
-      className="album-page ipod-playlist-page"
-      tabIndex={-1}
-      onKeyDown={(e) => { if ((e.key === 'Delete' || e.key === 'Backspace') && editable && lib.selectedTrackIds.size) { e.preventDefault(); removeSelected() } }}
-    >
+    <div className="album-page ipod-playlist-page">
       <div className="album-page-topbar">
         <button type="button" className="album-page-back" onClick={goBack}>‹ {ipodName}</button>
       </div>
@@ -250,54 +205,30 @@ export default function IpodPlaylistView() {
         </div>
       )}
 
-      <div
-        className="album-page-tracklist songs-view"
-        onDragOver={(e) => { if (editable && (e.dataTransfer.types.includes('application/jaketunes-tracks') || e.dataTransfer.types.includes(REORDER_TYPE))) e.preventDefault() }}
-        onDrop={(e) => onRowDrop(e, tracks.length)}
-      >
-        <div className="songs-header" style={{ gridTemplateColumns: GRID }}>
-          <div className="songs-header-cell" style={{ textAlign: 'center', justifyContent: 'center' }}>#</div>
-          <div className="songs-header-cell">Name</div>
-          <div className="songs-header-cell">Artist</div>
-          <div className="songs-header-cell">Album</div>
-          <div className="songs-header-cell">Time</div>
-        </div>
-        <div className="album-page-track-body">
-          {tracks.length === 0 && (
-            <div className="album-page-creditline" style={{ padding: '16px 12px' }}>
-              {editable ? `No songs yet. Drag songs here, or right-click any song: Add to ${ipodName} Playlist.` : 'No songs.'}
-            </div>
-          )}
-          {tracks.map((track, idx) => {
-            const isPlaying = pb.nowPlaying?.id === track.id
-            const isSelected = lib.selectedTrackIds.has(track.id)
-            return (
-              <div
-                key={`${track.id}-${idx}`}
-                className={`songs-row ${idx % 2 ? 'songs-row--alt' : ''} ${isPlaying ? 'songs-row--playing' : ''} ${isSelected ? 'songs-row--selected' : ''} ${dragOver === idx ? 'ipod-playlist-row--dropline' : ''}`}
-                style={{ gridTemplateColumns: GRID }}
-                onClick={(e) => handleClick(track.id, idx, e)}
-                onDoubleClick={() => { window.getSelection()?.removeAllRanges(); playTrack(track, tracks, idx, undefined, true, true) }}
-                onContextMenu={(e) => { e.preventDefault(); if (!lib.selectedTrackIds.has(track.id)) dispatch({ type: 'SELECT_TRACK', id: track.id }); setCtxMenu({ x: e.clientX, y: e.clientY, track, idx }) }}
-                draggable
-                onDragStart={(e) => onRowDragStart(e, track, idx)}
-                onDragOver={(e) => { if (editable) { e.preventDefault(); setDragOver(idx) } }}
-                onDragLeave={() => setDragOver(null)}
-                onDrop={(e) => { e.stopPropagation(); onRowDrop(e, idx) }}
-                title={`${track.title} — ${track.artist}`}
-              >
-                <div className="songs-cell songs-cell--icon">{isPlaying ? <SpeakerPlayingIcon /> : <span className="album-page-tracknum">{idx + 1}</span>}</div>
-                <div className="songs-cell songs-cell--title"><span className="title-row-text">{track.title || ''}</span></div>
-                <div className="songs-cell">{track.artist || ''}</div>
-                <div className="songs-cell">{track.album || ''}</div>
-                <div className="songs-cell songs-cell--time">{fmtDur(track.duration)}</div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
+      <SongTable
+        listKey={`ipod-playlist:${device ?? ''}:${open.id}`}
+        scrollKey={`ipod-playlist:${device ?? ''}:${open.id}`}
+        className="album-page-tracklist"
+        tracks={shown}
+        active={lib.currentView === 'ipod-playlist'}
+        sort={sort}
+        onSort={setSort}
+        lead={lead}
+        // A playlist plays in its running order, as the iPod plays it.
+        playFrom={(idx) => { if (shown[idx]) playTrack(shown[idx], shown, idx, undefined, true, true) }}
+        onRemove={editable ? removeSongs : undefined}
+        removeLabel={(n) => (n > 1 ? `Remove ${n} Songs from “${own?.name}”` : `Remove from “${own?.name}”`)}
+        deleteKeyDeletes={false}
+        libraryDeleteInMenu={false}
+        onReorder={editable ? reorder : undefined}
+        onDropSongs={editable ? dropSongs : undefined}
+        empty={(
+          <div className="album-page-creditline" style={{ padding: '16px 12px' }}>
+            {editable ? 'No songs yet. Drag songs here, or right-click any song: Add to iPod Playlist.' : 'No songs.'}
+          </div>
+        )}
+      />
 
-      {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={menuItems()} onClose={() => setCtxMenu(null)} />}
       {confirmDelete && own && device && (
         <ConfirmDialog
           message={`Delete “${own.name}” from ${ipodName}?`}

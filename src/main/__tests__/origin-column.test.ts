@@ -25,10 +25,11 @@ describe('a new column lands next to its neighbour', () => {
   })
 })
 
-describe('wired into Song View', () => {
-  const view = readFileSync(join(R, 'views', 'SongsView.tsx'), 'utf8')
+describe('wired into every song list (V7: the one song table)', () => {
+  const cols = readFileSync(join(R, 'utils', 'songTableRules.ts'), 'utf8')
+  const view = readFileSync(join(R, 'components', 'SongTable.tsx'), 'utf8')
   it('declared after Genre, rendered, and not hidden by default', () => {
-    assert.match(view, /key: 'genre'[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*\{ key: 'origin', label: 'Origin'/)
+    assert.match(cols, /key: 'genre'[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*\{ key: 'origin', label: 'Origin'/)
     assert.match(view, /case 'origin':/)
     assert.ok(!DEFAULT_HIDDEN.includes('origin'), 'he asked for it — visible')
   })
@@ -39,7 +40,7 @@ describe('wired into Song View', () => {
     assert.match(gi, /list=\{key === 'origin' \? 'getinfo-origins' : undefined\}/)
   })
   it('searchable and sortable', () => {
-    assert.match(readFileSync(join(R, 'hooks', 'useSortedTracks.ts'), 'utf8'), /t\.origin \|\| ''/)
+    assert.match(cols, /t\.origin \|\| ''/)
     assert.match(readFileSync(join(R, 'types.ts'), 'utf8'), /SortColumn = [^\n]*'origin'/)
   })
 })

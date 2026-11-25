@@ -13,6 +13,7 @@ import type { Track } from './types'
 import { setNotice } from './activity'
 import { notOnIpodQuestion, type IpodPlaylistRow } from '../common/ipod-playlists-view'
 import { ipodPlaylistsNow, knownIpods, saveIpodPlaylist } from './ipodPlaylists'
+import { ipodPlaylistMenuEntry } from './utils/songTableRules'
 
 export interface IpodQuestion {
   message: string
@@ -96,25 +97,19 @@ export async function askToAddToIpodPlaylist(input: {
 }
 
 /**
- * "Add to <iPod> Playlist ▸" for a song's right-click, one entry per iPod that has
- * playlists of Jake's (the sidebar's iPODS order). None yet: one quiet line saying
- * where they are made.
+ * "Add to iPod Playlist ▸" for a song's right-click: the iPods that have playlists
+ * of Jake's (the sidebar's iPODS order), each with its playlists.
  */
 export function addToIpodPlaylistEntries(tracks: readonly Track[], library: readonly Track[]): MenuEntry[] {
+  // V7: ONE "Add to iPod Playlist ▸" whose flyout names each iPod with its
+  // playlists under it (utils/songTableRules.ts ipodPlaylistMenuEntry) — it
+  // was one entry per iPod. Greyed until a playlist is made under an iPod.
   const ids = tracks.map((t) => t.id)
-  const out: MenuEntry[] = []
-  for (const k of knownIpods()) {
-    const own = ipodPlaylistsNow(k.device).rows.filter((p) => p.source === 'jake')
-    if (!own.length) continue
-    out.push({
-      label: `Add to ${k.ipodName} Playlist`,
-      submenu: own.map((p) => ({
-        label: p.name,
-        onClick: () => { void askToAddToIpodPlaylist({ device: k.device, ipodName: k.ipodName, ipodIds: k.ipodIds, playlist: p, trackIds: ids, library }) },
-      })),
-    })
-  }
-  // None yet: the entry is there, greyed, so it is found (playlists are made under an iPod in the sidebar).
-  if (!out.length) return [{ label: 'Add to iPod Playlist', disabled: true }]
-  return out
+  return [ipodPlaylistMenuEntry(knownIpods().map((k) => ({
+    ipodName: k.ipodName,
+    playlists: ipodPlaylistsNow(k.device).rows.filter((p) => p.source === 'jake').map((p) => ({
+      name: p.name,
+      onClick: () => { void askToAddToIpodPlaylist({ device: k.device, ipodName: k.ipodName, ipodIds: k.ipodIds, playlist: p, trackIds: ids, library }) },
+    })),
+  })))]
 }

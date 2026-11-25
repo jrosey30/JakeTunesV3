@@ -1,38 +1,29 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
-import { useAudio } from '../hooks/useAudio'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
-import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
-import ContextMenu, { MenuEntry } from '../components/ContextMenu'
-import ConfirmDialog from '../components/ConfirmDialog'
-import GetInfoModal from '../components/GetInfoModal'
-import { clearArtworkNegativeCache } from '../utils/artworkLookup'
 import EmptyState from '../components/EmptyState'
-import { Track } from '../types'
-import { setNotice } from '../activity'
+import SongTable from '../components/SongTable'
+import { useListSort } from '../hooks/useListSort'
+import { sortSongs } from '../utils/songTableRules'
+import { usePlaysElsewhere } from '../playsElsewhere'
 import { albumKeyOf } from '../utils/albumKey'
 import { compareNames, compareAlbumNames } from '../utils/artistSort'
 import '../styles/genres.css'
 
 export default function GenresView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
-  const { state: pb, dispatch: pbDispatch } = usePlayback()
-  const { playTrack } = useAudio()
+  const { state: pb } = usePlayback()
+  const elsewhere = usePlaysElsewhere()
   const [selectedGenre, setSelectedGenre] = useState<string | null>(null)
   const [selectedArtist, setSelectedArtist] = useState<string | null>(null)
   const [selectedAlbum, setSelectedAlbum] = useState<string | null>(null)
-  // 2026-08-08 — Genres rows had onDoubleClick + onContextMenu but NO onClick,
-  // so a single click did nothing and the list had no selection at all
-  // (Jake: "when i click a song in genre view....why doesnt it do what it does
-  // on every other page"). Same semantics as PlaylistView/SongsView: plain
-  // click selects, ⌘/ctrl toggles, shift extends from the last anchor.
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
-  const lastClickedIdx = useRef<number>(-1)
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
-  const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
-  const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
+  // V7 (2026-11-24): the songs below the browser are the one song table
+  // (components/SongTable.tsx) — selection, the full song menu, Get Info on
+  // the song right-clicked, sorting, the arrow keys and Delete, like every
+  // other list. Its Delete deletes from the library, after asking.
+  const [sort, setSort] = useListSort('genres')
 
   // 2026-08-08 (Jake's explicit OK to touch this file, as with the 2026-06-24
   // casing fix): a declared concert's songs are hidden from the regular
@@ -97,6 +88,8 @@ export default function GenresView() {
     return filteredByArtist.filter(t => t.album === selectedAlbum)
   }, [filteredByArtist, selectedAlbum])
 
+  const sortedTracks = useMemo(() => sortSongs(filteredTracks, sort, elsewhere), [filteredTracks, sort, elsewhere])
+
   const selectGenre = useCallback((g: string | null) => {
     setSelectedGenre(g)
     setSelectedArtist(null)
@@ -113,151 +106,13 @@ export default function GenresView() {
     if (first) libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(first) })
   }, [filteredByArtist, libDispatch])
 
-  const handleClick = useCallback((track: Track, idx: number, e: React.MouseEvent) => {
-    if (e.shiftKey && lastClickedIdx.current >= 0 && lastClickedIdx.current < filteredTracks.length) {
-      const from = Math.min(lastClickedIdx.current, idx)
-      const to = Math.max(lastClickedIdx.current, idx)
-      setSelectedIds(new Set(filteredTracks.slice(from, to + 1).map(t => t.id)))
-    } else if (e.metaKey || e.ctrlKey) {
-      setSelectedIds(prev => {
-        const next = new Set(prev)
-        if (next.has(track.id)) next.delete(track.id)
-        else next.add(track.id)
-        return next
-      })
-      lastClickedIdx.current = idx
-    } else {
-      setSelectedIds(new Set([track.id]))
-      lastClickedIdx.current = idx
-    }
-  }, [filteredTracks])
-
-  const handleContextMenu = useCallback((e: React.MouseEvent, track: Track, idx: number) => {
-    e.preventDefault()
-    // Right-clicking outside the selection re-targets it, like everywhere else.
-    setSelectedIds(prev => (prev.has(track.id) ? prev : new Set([track.id])))
-    setCtxMenu({ x: e.clientX, y: e.clientY, track, idx })
-  }, [])
-
-  const getContextMenuItems = useCallback((): MenuEntry[] => {
-    if (!ctxMenu) return []
-    const { track, idx } = ctxMenu
-    const artworkItems: MenuEntry[] = track.artist && track.album ? [
-      { separator: true as const },
-      {
-        label: 'Add Artwork…',
-        onClick: async () => {
-          const file = await window.electronAPI.chooseArtworkFile()
-          if (!file.ok || !file.path) return
-          const result = await window.electronAPI.setCustomArtwork(track.artist, track.album, file.path)
-          if (result.ok && result.key && result.hash) {
-            libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-          } else {
-            // 4.4.12: surface failure (usually sips conversion).
-            setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
-          }
-        },
-      },
-      {
-        label: 'Fetch Artwork from Internet',
-        onClick: async () => {
-          const result = await window.electronAPI.fetchAlbumArt(track.artist, track.album, true)
-          if (result.ok && result.key && result.hash) {
-            libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-          }
-        },
-      },
-    ] : []
-    // A multi-selection is what the action applies to; a single row is just a
-    // selection of one. Matches PlaylistView/SongsView.
-    const chosen = selectedIds.size > 1 && selectedIds.has(track.id)
-      ? filteredTracks.filter(t => selectedIds.has(t.id))
-      : [track]
-    const many = chosen.length > 1
-    return [
-      { label: many ? `Play ${chosen.length} songs` : `Play "${track.title}"`,
-        onClick: () => (many
-          ? playTrack(chosen[0], chosen, 0, undefined, true)
-          : playTrack(track, filteredTracks, idx, undefined, true)) },
-      { separator: true as const },
-      { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: chosen }) },
-      { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: chosen }) },
-      { separator: true as const },
-      { label: 'Get Info', onClick: () => setGetInfoState({ tracks: chosen, index: 0 }) },
-      ...artworkItems,
-      { separator: true as const },
-      { label: many ? `Delete ${chosen.length} Songs` : 'Delete Song',
-        onClick: () => setDeleteConfirm({ ids: chosen.map(t => t.id), count: chosen.length }) },
-    ]
-  }, [ctxMenu, playTrack, filteredTracks, pbDispatch, libDispatch, selectedIds])
-
-  const handleGetInfoSave = useCallback(
-    async (updates: { id: number; field: string; value: string }[]) => {
-      // 4.5.0-67 — save-first ordering, see SongsView for full rationale.
-      const oldArtAlbumById = new Map<number, { artist: string; album: string }>()
-      for (const u of updates) {
-        if (oldArtAlbumById.has(u.id)) continue
-        const t = lib.tracks.find(tr => tr.id === u.id)
-        if (t) oldArtAlbumById.set(u.id, { artist: t.artist || '', album: t.album || '' })
-      }
-      for (const u of updates) await window.electronAPI.saveMetadataOverride(u.id, u.field, u.value)
-      if (updates.some(u => u.field === 'artist' || u.field === 'album')) {
-        const newArtAlbumById = new Map<number, { artist: string; album: string }>()
-        for (const [id, old] of oldArtAlbumById) newArtAlbumById.set(id, { ...old })
-        for (const u of updates) {
-          const cur = newArtAlbumById.get(u.id)
-          if (!cur) continue
-          if (u.field === 'artist') cur.artist = u.value
-          else if (u.field === 'album') cur.album = u.value
-        }
-        for (const v of newArtAlbumById.values()) clearArtworkNegativeCache(v.artist, v.album)
-      }
-      libDispatch({ type: 'UPDATE_TRACKS', updates })
-    },
-    [libDispatch, lib.tracks]
-  )
-
-  const handleFetchArt = useCallback(
-    async (artist: string, album: string, force?: boolean): Promise<{ key: string; hash: string } | null> => {
-      const result = await window.electronAPI.fetchAlbumArt(artist, album, force)
-      if (result.ok && result.key && result.hash) {
-        libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-        return { key: result.key, hash: result.hash }
-      }
-      return null
-    },
-    [libDispatch]
-  )
-
-  const handleSetCustomArt = useCallback(
-    async (artist: string, album: string, imagePath: string): Promise<{ key: string; hash: string } | null> => {
-      const result = await window.electronAPI.setCustomArtwork(artist, album, imagePath)
-      if (result.ok && result.key && result.hash) {
-        libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-        return { key: result.key, hash: result.hash }
-      }
-      // 4.4.12: surface failure (usually sips conversion) so the user
-      // doesn't think the art stuck just because the Get Info preview
-      // still shows it from localArtHash.
-      setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
-      return null
-    },
-    [libDispatch]
-  )
-
-  // Auto-follow now-playing (4.0). When the playing track changes and
-  // the user has been idle for >5s, drill the genre/artist/album columns
-  // into the track's location and scroll its row into view. Same idle-
-  // gate pattern as SongsView.
   const viewRootRef = useRef<HTMLDivElement>(null)
   const genreListRef = useRef<HTMLDivElement>(null)
   const artistListRef = useRef<HTMLDivElement>(null)
   const albumListRef = useRef<HTMLDivElement>(null)
-  const tracklistRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('genres-col-genre', genreListRef)
   useScrollPersistence('genres-col-artist', artistListRef)
   useScrollPersistence('genres-col-album', albumListRef)
-  useScrollPersistence('genres-tracklist', tracklistRef)
   const lastUserActivityAtRef = useRef<number>(0)
   const isAutoScrollAtRef = useRef<number>(0)
   const FOLLOW_IDLE_MS = 5000
@@ -280,12 +135,6 @@ export default function GenresView() {
     setSelectedGenre(targetGenre)
     setSelectedArtist(targetArtist)
     setSelectedAlbum(targetAlbum)
-    requestAnimationFrame(() => {
-      const root = tracklistRef.current
-      if (!root) return
-      const row = root.querySelector(`[data-track-id="${t.id}"]`) as HTMLElement | null
-      if (row) row.scrollIntoView({ block: 'nearest', behavior: 'auto' })
-    })
   }, [pb.nowPlaying?.id, lib.currentView])
 
   return (
@@ -334,65 +183,16 @@ export default function GenresView() {
           </div>
         </div>
       </div>
-      <div className="genres-tracklist" ref={tracklistRef}>
-        {filteredTracks.length === 0 && (
-          <EmptyState
-            query={lib.searchQuery}
-            noun={selectedGenre ? `${selectedGenre} tracks` : 'tracks'}
-          />
-        )}
-        {filteredTracks.map((track, i) => {
-          const isPlaying = pb.nowPlaying?.id === track.id
-          return (
-            <div
-              key={track.id}
-              data-track-id={track.id}
-              className={`genres-track-row ${i % 2 ? 'genres-track-row--alt' : ''} ${isPlaying ? 'genres-track-row--playing' : ''} ${selectedIds.has(track.id) ? 'genres-track-row--selected' : ''}`}
-              onClick={(e) => handleClick(track, i, e)}
-              onDoubleClick={() => playTrack(track, filteredTracks, i, undefined, true)}
-              onContextMenu={(e) => handleContextMenu(e, track, i)}
-              draggable
-              onDragStart={(e) => {
-                // Drag the whole selection when this row is part of it.
-                const ids = selectedIds.has(track.id) && selectedIds.size > 1
-                  ? filteredTracks.filter(t => selectedIds.has(t.id)).map(t => t.id)
-                  : [track.id]
-                e.dataTransfer.setData('application/jaketunes-tracks', JSON.stringify(ids))
-                e.dataTransfer.effectAllowed = 'copy'
-              }}
-            >
-              <span className="genres-track-icon">{isPlaying && <SpeakerPlayingIcon />}</span>
-              <span className="genres-track-title">{track.title}</span>
-              <span className="genres-track-artist">{track.artist}</span>
-              <span className="genres-track-album">{track.album}</span>
-            </div>
-          )
-        })}
-      </div>
-      {ctxMenu && (
-        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={getContextMenuItems()} onClose={() => setCtxMenu(null)} />
-      )}
-      {getInfoState && (
-        <GetInfoModal
-          tracks={getInfoState.tracks}
-          allTracks={lib.tracks}
-          initialIndex={lib.tracks.findIndex(t => t.id === getInfoState.tracks[0]?.id)}
-          artworkMap={lib.artworkMap}
-          onClose={() => setGetInfoState(null)}
-          onSave={handleGetInfoSave}
-          onFetchArt={handleFetchArt}
-          onSetCustomArt={handleSetCustomArt}
-        />
-      )}
-      {deleteConfirm && (
-        <ConfirmDialog
-          message="Are you sure you want to delete this song from your library?"
-          detail="This will remove them from all playlists. This cannot be undone."
-          confirmLabel="Delete"
-          onConfirm={() => { libDispatch({ type: 'DELETE_TRACKS', ids: deleteConfirm.ids }); setDeleteConfirm(null) }}
-          onCancel={() => setDeleteConfirm(null)}
-        />
-      )}
+      <SongTable
+        listKey={`genres:${selectedGenre ?? ''}|${selectedArtist ?? ''}|${selectedAlbum ?? ''}`}
+        scrollKey="genres-tracklist"
+        className="genres-tracklist"
+        tracks={sortedTracks}
+        active={lib.currentView === 'genres'}
+        sort={sort}
+        onSort={setSort}
+        empty={<EmptyState query={lib.searchQuery} noun={selectedGenre ? `${selectedGenre} songs` : 'songs'} />}
+      />
     </div>
   )
 }

@@ -45,6 +45,7 @@ import IpodPlaylistsTree, { IpodDisclosure, ipodOpenNow, useIpodOpenVersion } fr
 import IpodPlaylistQuestion from '../IpodPlaylistQuestion'
 import { getOpenIpodPlaylistKey, subscribeOpenIpodPlaylist } from '../../ipodPlaylists'
 import { STORE_ROWS } from '../../../common/shop-names'
+import { shuffle as shuffled } from '../../../common/shuffle'
 
 const NO_IPOD_IDS: number[] = []
 
@@ -504,7 +505,7 @@ export default function Sidebar() {
     if (!pl) return
     const byId = new Map(state.tracks.map(t => [t.id, t]))
     const list = pl.trackIds.map(id => byId.get(id)).filter((t): t is Track => t !== undefined)
-    const q = shuffle ? [...list].sort(() => Math.random() - 0.5) : list
+    const q = shuffle ? shuffled(list) : list
     if (q.length) playTrack(q[0], q, 0, undefined, true)
   }, [state.playlists, state.tracks, playTrack])
 

@@ -20,6 +20,8 @@ import { JUKEBOX_WHEEL_OPTIONS } from '../../common/cover-flow-wheel'
 import { useCoverFlowWheel } from '../hooks/useCoverFlowWheel'
 import { useArrowKeyOwner } from '../hooks/useArrowKeyOwner'
 import { overlayOpen } from '../utils/arrowKeyOwner'
+import { shuffle } from '../../common/shuffle'
+import { formatDuration } from '../../common/format-duration'
 
 /// V5 facelift: Cover Flow — reimagined as THE JUKEBOX ARC (Jake's pick
 /// over the classic Apple side-scroll rolodex). Same capability —
@@ -46,13 +48,6 @@ const WINDOW_RADIUS = 8      // covers mounted each side of center
 const MAX_VISIBLE = 4        // pages shown in the mechanism before fading out
 const DRAG_STEP_PX = 70      // vertical drag distance per page flip
 
-function formatDuration(ms: number): string {
-  if (!ms || ms <= 0) return ''
-  const totalSecs = Math.floor(ms / 1000)
-  const mins = Math.floor(totalSecs / 60)
-  const secs = totalSecs % 60
-  return `${mins}:${secs.toString().padStart(2, '0')}`
-}
 
 interface CoverFlowViewProps {
   tracks: Track[]
@@ -205,7 +200,7 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
     const ordered = album.tracks
     return [
       { label: `Play "${album.name}"`, onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true) } },
-      { label: 'Shuffle', onClick: () => { const s = [...ordered].sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
+      { label: 'Shuffle', onClick: () => { const s = shuffle(ordered); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
       { separator: true as const },
       ...queueMenuEntries(ordered, pbDispatch),
       addToPlaylistEntry(ordered, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),

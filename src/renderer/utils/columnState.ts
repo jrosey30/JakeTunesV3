@@ -40,8 +40,20 @@ export const DEFAULT_HIDDEN = ['channelMode', 'subgenre', 'bpm', 'camelotKey']
 
 let cache: ColumnState | null = null
 
+// V7 (2026-11-24): one layout for every song table, not just Songs. Every
+// page's table reads it (hooks/useColumnLayout.ts) and a change on one page
+// shows on the others — so the cache tells its readers when it moves.
+const listeners = new Set<() => void>()
+
 export function getColumnCache(): ColumnState | null { return cache }
-export function setColumnCache(next: ColumnState): void { cache = next }
+export function setColumnCache(next: ColumnState): void {
+  cache = next
+  for (const l of listeners) l()
+}
+export function subscribeColumnCache(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => { listeners.delete(listener) }
+}
 
 interface UiColumnDetail {
   colWidthMap?: unknown
@@ -80,7 +92,7 @@ export function primeColumnCacheFromUiState(detail: UiColumnDetail): void {
     ? detail.columnOrder.filter((k): k is string => typeof k === 'string')
     : (cache?.order ?? [])
 
-  cache = { hidden: hidden ?? cache?.hidden ?? [...DEFAULT_HIDDEN], widths, order }
+  setColumnCache({ hidden: hidden ?? cache?.hidden ?? [...DEFAULT_HIDDEN], widths, order })
 }
 
 /** A save from before the time-of-day (colsV < 5) has Date Added at about 100. */

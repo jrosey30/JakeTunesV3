@@ -3,14 +3,8 @@ import { usePlayback } from '../../context/PlaybackContext'
 import { useLibrary } from '../../context/LibraryContext'
 import { useAudio } from '../../hooks/useAudio'
 import '../../styles/queue.css'
+import { formatDuration } from '../../../common/format-duration'
 
-function formatDuration(ms: number): string {
-  if (!ms || ms <= 0) return ''
-  const totalSecs = Math.floor(ms / 1000)
-  const mins = Math.floor(totalSecs / 60)
-  const secs = totalSecs % 60
-  return `${mins}:${secs.toString().padStart(2, '0')}`
-}
 
 export type QueuePanelHandle = { requestClose: () => void }
 

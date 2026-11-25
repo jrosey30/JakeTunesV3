@@ -65,15 +65,13 @@ describe('name sort — "The" files under the next word', () => {
 })
 
 describe('name sort — the views use the one helper', () => {
-  it('Songs view (and its Grid / Cover Flow modes) sort Artist and Album with it', () => {
-    const hook = src('hooks/useSortedTracks.ts')
-    assert.match(hook, /from '\.\.\/utils\/artistSort'/)
-    assert.match(hook, /if \(sortColumn === 'artist' \|\| sortColumn === 'album'\) return sortTracksByName\(/)
-  })
-
-  it('playlists and smart playlists too', () => {
-    for (const f of ['views/PlaylistView.tsx', 'views/SmartPlaylistView.tsx']) {
-      assert.match(src(f), /if \(sortCol === 'artist' \|\| sortCol === 'album'\) return sortTracksByName\(/, f)
+  it('every song list sorts Artist and Album with it (V7: one sort, utils/songTableRules.ts)', () => {
+    const rules = src('utils/songTableRules.ts')
+    assert.match(rules, /from '\.\/artistSort\.ts'/)
+    assert.match(rules, /if \(column === 'artist' \|\| column === 'album'\) return sortTracksByName\(/)
+    assert.match(src('hooks/useSortedTracks.ts'), /sortSongs\(/)
+    for (const f of ['views/PlaylistView.tsx', 'views/SmartPlaylistView.tsx', 'views/GenresView.tsx', 'views/AlbumDetailView.tsx', 'views/IpodPlaylistView.tsx']) {
+      assert.match(src(f), /sortSongs\(/, f)
     }
   })
 
@@ -99,7 +97,7 @@ describe('name sort — the views use the one helper', () => {
   })
 
   it('no renderer list strips "The" by hand any more', () => {
-    for (const f of ['views/ConcertsView.tsx', 'hooks/useSortedTracks.ts']) {
+    for (const f of ['views/ConcertsView.tsx', 'hooks/useSortedTracks.ts', 'utils/songTableRules.ts']) {
       assert.doesNotMatch(src(f), /replace\(\/\^the\\s\+\//i, f)
     }
   })
