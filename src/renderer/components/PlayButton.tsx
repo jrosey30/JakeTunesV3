@@ -37,7 +37,9 @@ export default function PlayButton({ onPlay, name = '', variant = 'pill', label 
       // The ▶ never also opens the card it sits on.
       onClick={(e) => { e.stopPropagation(); e.preventDefault(); onPlay() }}
       onDoubleClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => e.stopPropagation()}
+      // Only the keys the button itself handles stop here; Escape and the
+      // app-wide keys pass through to the keyboard host.
+      onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') e.stopPropagation() }}
       draggable={false}
     >
       <PlayIcon size={variant === 'overlay' ? 16 : 12} className="jt-play-icon" />

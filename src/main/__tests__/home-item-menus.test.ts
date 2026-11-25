@@ -61,7 +61,7 @@ describe('the Home\'s items right-click and drag like library items', () => {
     // V7: the shelf card is a Card (components/Card.tsx): onMenu / dragIds.
     assert.match(shelves, /onMenu=\{\(e\) => menus\?\.openSongMenu\(e, c\.track, play, queue, i\)\}/)
     assert.match(shelves, /dragIds=\{\(\) => \[c\.track\.id\]\}/)
-    assert.match(shelves, /title=\{PLAYLIST_ROW_TITLE\['recently-added'\]\} scrollKey="home-row-recent"/)
+    assert.match(shelves, /title=\{HOME_ROW_TITLE\['recently-added'\]\} scrollKey="home-row-recent"/)
   })
   it('the hero cover is an album; the island covers are albums; Now Digging drags as the artist, like an Artists tile', () => {
     // V7: the hero is HomeHero; the island Cover Flow + Now Digging moved to Made for You.

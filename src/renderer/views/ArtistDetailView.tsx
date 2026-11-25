@@ -33,6 +33,7 @@ import '../styles/artist-detail.css'
 import { albumMenuEntries } from '../utils/libraryMenus'
 import { groupTracksIntoAlbums } from '../utils/albumGroups'
 import Card from '../components/Card'
+import { isCompleteRecord } from '../utils/liveSetCompleteness'
 import PlayButton from '../components/PlayButton'
 import { setAlbumDragPayload } from '../utils/trackDrag'
 import { normTitle } from '../utils/normTitle'
@@ -675,7 +676,8 @@ export default function ArtistDetailView() {
         className="ad-cover"
         artClassName="ad-cover-art ad-lift"
         onOpen={() => openAlbum(personaName, g.name)}
-        onPlay={() => playAlbumInOrder(g.tracks)}
+        // Album Mode gate: the ▶ only on a complete record.
+        onPlay={isCompleteRecord(g.tracks) ? () => playAlbumInOrder(g.tracks) : undefined}
         onMenu={(e) => setAlbumCtx({ x: e.clientX, y: e.clientY, name: g.name, tracks: g.tracks })}
         dragIds={() => sortAlbumTracks(g.tracks).map(t => t.id)}
         title={`Open ${g.name}`}

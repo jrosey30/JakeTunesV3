@@ -418,15 +418,16 @@ export default function ListenToTheListView() {
     const isAlbum = recoType(r) === 'album'
     const sentLink = isLinkKind(r) ? linkOf(r) : null
     const dl = dlOf(r.id)
-    const busy = dl.state === 'queued' || dl.state === 'downloading'
+    const queued = dl.state === 'queued'
+    const busy = queued || dl.state === 'downloading'
     return [
       ...(r.previewUrl ? [{ label: preview.playingId === r.id ? 'Stop Preview' : 'Preview', onClick: () => previewReco(r) }] : []),
       ...(isAlbum && r.kind !== 'concert' ? [{ label: 'Show Songs', onClick: () => setSongsOf(r) }] : []),
       ...(sentLink ? [{ label: 'Open Link', onClick: () => { void window.electronAPI.openExternalUrl?.(sentLink) } }] : []),
       { separator: true as const },
       ...(!sentLink && (isAlbum || canDownloadReco(r)) ? [{
-        label: busy ? 'Saving…' : dl.state === 'error' ? 'Try Again' : isAlbum ? 'Save Album' : 'Save',
-        disabled: busy,
+        label: r.kind === 'concert' ? 'Search' : queued ? 'Queued…' : busy ? 'Saving…' : dl.state === 'error' ? 'Retry' : isAlbum ? 'Save Album' : 'Save',
+        disabled: r.kind !== 'concert' && busy,
         onClick: () => { if (r.kind === 'concert') openDownloadForReco(r); else getReco(r) },
       }] : []),
       { label: 'Find in Search', onClick: () => openDownloadForReco(r) },

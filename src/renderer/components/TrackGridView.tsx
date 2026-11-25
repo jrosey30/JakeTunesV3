@@ -11,6 +11,7 @@ import { albumKeyFromStrings } from '../utils/albumKey'
 import { albumMenuEntries } from '../utils/libraryMenus'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import { ensureLiveSetsLoaded } from '../liveSets'
+import { isCompleteRecord } from '../utils/liveSetCompleteness'
 import { groupTracksIntoAlbums, type Album } from '../utils/albumGroups'
 import type { Track } from '../types'
 import '../styles/albums.css'
@@ -71,12 +72,13 @@ export default function TrackGridView({ tracks, emptyNoun }: TrackGridViewProps)
 
   // 2026-10-21: the same windowed, memoized wall as Albums (components/
   // AlbumGrid.tsx) — only rows near the viewport are mounted, and a playback
-  // tick re-renders no cards. V7: click opens the album, the hover ▶ plays it
-  // in running order, as on the Albums view (double-click no longer plays: the
+  // tick re-renders no cards. V7: click opens the album; on a complete record
+  // the hover ▶ plays it in running order, as on the Albums view (double-click no longer plays: the
   // first click had already opened the album, so it never could).
   const scrollRef = useRef<HTMLDivElement>(null)
   const gridItems = useMemo((): AlbumGridItem[] => albums.map((album) => ({
     key: albumKeyFromStrings(album.artist, album.name), album, artHash: findArtHash(album), ordered: sortAlbumTracks(album.tracks),
+    fullAlbum: isCompleteRecord(album.tracks),
   })), [albums, findArtHash])
   const openAlbum = useCallback((key: string) => libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: key }), [libDispatch])
   const openMenu = useCallback((e: ReactMouseEvent, album: Album) => setCtxMenu({ x: e.clientX, y: e.clientY, album }), [])

@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  CARD_KINDS, MENU_FOR, PLAYLIST_ROW_TITLE, PLAY_LABEL, SEE_ALL,
+  CARD_KINDS, HOME_ROW_TITLE, MENU_FOR, PLAY_LABEL, SEE_ALL,
   canDrag, cardAction, playTitle, seeAllShown, songRowAction, type Gesture,
 } from '../../common/card-rules.ts'
 
@@ -73,14 +73,13 @@ describe('See All and the Play button words', () => {
     assert.equal(playTitle('Abbey Road'), 'Play Abbey Road')
     assert.equal(playTitle('  '), 'Play')
   })
-  it("a Home row's name is the sidebar name of the playlist its See All opens", () => {
+  it("the Home's rows have the plan's names, and each See All opens a playlist the sidebar has", () => {
+    assert.deepEqual(Object.values(HOME_ROW_TITLE), ['Listen More', 'On Repeat', 'Recently Added'])
     const sidebar = read('renderer/components/sidebar/Sidebar.tsx')
-    for (const [id, title] of Object.entries(PLAYLIST_ROW_TITLE)) {
-      assert.ok(sidebar.includes(`{ label: '${title}', id: '${id}' }`), `${id} is "${title}" in the sidebar`)
-    }
     const shelves = read('renderer/components/HomeShelves.tsx')
-    for (const id of Object.keys(PLAYLIST_ROW_TITLE)) {
-      assert.match(shelves, new RegExp(`title=\\{PLAYLIST_ROW_TITLE\\['${id}'\\]\\}[^\\n]*\\n[^\\n]*id: '${id}'`), `the ${id} row is named for its playlist`)
+    for (const id of Object.keys(HOME_ROW_TITLE)) {
+      assert.match(sidebar, new RegExp(`id: '${id}' \\}`), `the sidebar has ${id}`)
+      assert.match(shelves, new RegExp(`title=\\{HOME_ROW_TITLE\\['${id}'\\]\\}[^\\n]*\\n[^\\n]*id: '${id}'`), `the ${id} row opens its playlist`)
     }
   })
 })
@@ -118,7 +117,7 @@ const CARD_FILES = [
   'renderer/views/ArtistsView.tsx',
   'renderer/views/ConcertsView.tsx',
   'renderer/views/NewForYouView.tsx',
-  'renderer/views/HomeView.tsx',
+  'renderer/components/HomeHero.tsx',
   'renderer/views/ArtistDetailView.tsx',
   'renderer/views/CoverFlowView.tsx',
 ]
@@ -183,6 +182,40 @@ describe('cards on the pages', () => {
   })
 })
 
+describe('review fixes (V7 #490)', () => {
+  it('Album Mode gate: an album card shows the ▶ only on a complete record', () => {
+    assert.match(read('renderer/components/AlbumGrid.tsx'), /onPlay=\{fullAlbum && onPlayAlbum \?/)
+    assert.match(read('renderer/components/TrackGridView.tsx'), /fullAlbum: isCompleteRecord\(album\.tracks\)/)
+    assert.match(read('renderer/views/CoverFlowView.tsx'), /\{active && isCompleteRecord\(album\.tracks\) && <PlayButton/)
+    assert.match(read('renderer/views/ArtistDetailView.tsx'), /onPlay=\{isCompleteRecord\(g\.tracks\) \?/)
+  })
+  it('Cover Flow: the front cover never drags (a drag up is the flip), and a cancelled pointer ends the drag', () => {
+    const cf = read('renderer/views/CoverFlowView.tsx')
+    assert.match(cf, /draggable=\{false\}/)
+    assert.doesNotMatch(cf, /setAlbumDragPayload/)
+    assert.match(cf, /onPointerCancel=\{onPointerUp\}/)
+  })
+  it('the Play button keeps only its own keys (Escape and the app keys pass)', () => {
+    assert.match(read('renderer/components/PlayButton.tsx'), /onKeyDown=\{\(e\) => \{ if \(e\.key === ' ' \|\| e\.key === 'Enter'\) e\.stopPropagation\(\) \}\}/)
+  })
+  it('the new menus shuffle with the one shuffle, never sort(random)', () => {
+    const menus = read('renderer/utils/libraryMenus.ts')
+    for (const fn of ['artistMenuEntries', 'playlistMenuEntries']) {
+      const at = menus.indexOf(`export function ${fn}`)
+      const body = menus.slice(at, menus.indexOf('\nexport ', at + 1))
+      assert.match(body, /shuffle\(/, fn)
+      assert.doesNotMatch(body, /Math\.random/, fn)
+    }
+  })
+  it('a concert recording is a Live Album', () => {
+    assert.match(read('renderer/utils/libraryMenus.ts'), /label: 'Play Live Album'/)
+    assert.doesNotMatch(read('renderer/utils/libraryMenus.ts'), /Play the Show/)
+  })
+  it('card motion uses the tokens', () => {
+    assert.doesNotMatch(read('renderer/styles/card.css'), /\d+ms/)
+  })
+})
+
 describe('song lists outside the table play on double-click', () => {
   it("an artist's Top Songs", () => {
     const src = read('renderer/views/ArtistDetailView.tsx')
@@ -208,8 +241,6 @@ describe('menu parity: one menu per kind, from utils/libraryMenus.ts', () => {
   })
   it('artist tiles have the artist menu', () => {
     assert.match(read('renderer/views/ArtistsView.tsx'), /artistMenuEntries\(/)
-    const home = read('renderer/views/HomeView.tsx')
-    assert.equal((home.match(/openArtistMenu\(/g) ?? []).length, 2, 'Top Artists and Rediscover')
     assert.match(read('renderer/components/TonightOnJakeTunes.tsx'), /openArtistMenu\(/)
   })
   it('the Home menus host offers every library kind', () => {
@@ -244,6 +275,8 @@ describe('words across the app', () => {
   })
   it('no typed "▶ Play" / "▶ Album": every Play is the PlayButton', () => {
     // PlayButton.tsx names the old ones in its history comment.
-    for (const f of files.filter((x) => !x.endsWith('PlayButton.tsx'))) assert.doesNotMatch(readFileSync(f, 'utf8'), /▶\s*\{?\s*(Play|Album)|▶ \{setPlaying/, f)
+    // Comments may name the old buttons; only code counts.
+    const code = (t: string): string => t.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n')
+    for (const f of files) assert.doesNotMatch(code(readFileSync(f, 'utf8')), /▶\s*\{?\s*(Play|Album)|▶ \{setPlaying/, f)
   })
 })

@@ -330,7 +330,7 @@ export function artistMenuEntries(o: ArtistMenuOptions): MenuEntry[] {
   const label = name || 'this artist'
   return [
     { label: `Play "${label}"`, disabled: !ordered.length, onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true, true) } },
-    { label: 'Shuffle', disabled: !ordered.length, onClick: () => { const s = [...ordered].sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
+    { label: 'Shuffle', disabled: !ordered.length, onClick: () => { const s = shuffle(ordered); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
     ...(ordered.length ? [{
       label: `Start ${label} Radio`,
       onClick: () => { window.dispatchEvent(new CustomEvent('jaketunes-start-artist-radio', { detail: { tracks: ordered, label: name } })) },
@@ -362,7 +362,7 @@ export function playlistMenuEntries(o: PlaylistMenuOptions): MenuEntry[] {
   const { tracks, playTrack, libDispatch, pbDispatch } = o
   return [
     { label: `Play "${o.name}"`, disabled: !tracks.length, onClick: () => { if (tracks.length) playTrack(tracks[0], tracks, 0, undefined, true, true) } },
-    { label: 'Shuffle', disabled: !tracks.length, onClick: () => { const s = [...tracks].sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
+    { label: 'Shuffle', disabled: !tracks.length, onClick: () => { const s = shuffle(tracks); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
     { separator: true as const },
     ...queueMenuEntries(tracks, pbDispatch),
     addToPlaylistEntry(tracks, o.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
@@ -389,7 +389,7 @@ export interface ConcertMenuOptions {
 export function concertMenuEntries(o: ConcertMenuOptions): MenuEntry[] {
   const { merged, playTrack, libDispatch, pbDispatch } = o
   return [
-    { label: 'Play the Show', onClick: () => playTrack(merged, [merged], 0, undefined, true) },
+    { label: 'Play Live Album', onClick: () => playTrack(merged, [merged], 0, undefined, true) },
     { label: 'Open', onClick: o.open },
     { separator: true as const },
     ...queueMenuEntries([merged], pbDispatch),

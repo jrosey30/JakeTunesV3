@@ -55,6 +55,8 @@ describe('the retired names', () => {
     assert.deepEqual(retiredNamesIn('Add it to the Listen List'), ['Listen List'])
     assert.deepEqual(retiredNamesIn('Listen to the List'), ['Listen to the List'])
     assert.deepEqual(retiredNamesIn('already on your list.'), ['your list'])
+    assert.deepEqual(retiredNamesIn('On Your List'), ['your list'], 'any case')
+    assert.deepEqual(retiredNamesIn('LISTEN LIST'), ['Listen List'], 'any case')
     assert.deepEqual(retiredNamesIn('For You · The Racks'), ['The Racks'])
     assert.deepEqual(retiredNamesIn('Bandcamp Store'), ['Bandcamp Store'])
     assert.deepEqual(retiredNamesIn('Get all'), ['Get all'])

@@ -37,7 +37,7 @@ export interface AlbumGridItem {
   artHash?: string
   /** Running order — the drag payload and what the ▶ plays. */
   ordered: Track[]
-  /** Album Mode: a verifiably complete record's ▶ says front to back, gapless. */
+  /** Album Mode gate: only a verifiably complete record shows the ▶. */
   fullAlbum?: boolean
 }
 
@@ -49,7 +49,7 @@ export interface AlbumGridHandle {
 interface CardHandlers {
   onOpen: (key: string) => void
   onContextMenu: (e: React.MouseEvent, album: Album) => void
-  /** The hover ▶: plays the album in running order (V7: every album). */
+  /** The hover ▶ on complete records (the Album Mode gate): plays the album in running order. */
   onPlayAlbum?: (ordered: Track[]) => void
   /** Drag a whole album onto Up Next or a playlist. */
   draggable?: boolean
@@ -75,7 +75,7 @@ const DiscGlyph = (): JSX.Element => (
 
 const AlbumGridCard = memo(function AlbumGridCard({ item, onOpen, onContextMenu, onPlayAlbum, draggable }: CardHandlers & { item: AlbumGridItem }) {
   const { key, album, artHash, ordered, fullAlbum } = item
-  // V7: click opens, the hover ▶ plays (every album, in running order).
+  // V7: click opens; on a complete record the hover ▶ plays it in running order.
   return (
     <Card
       kind="album"
@@ -84,8 +84,8 @@ const AlbumGridCard = memo(function AlbumGridCard({ item, onOpen, onContextMenu,
       artClassName="album-card-art"
       data={{ 'album-key': key }}
       onOpen={() => onOpen(key)}
-      onPlay={onPlayAlbum ? () => onPlayAlbum(ordered) : undefined}
-      playTitle={fullAlbum ? `Play ${album.name} — front to back, in order, gapless` : undefined}
+      // Album Mode gate: the ▶ only on a verifiably complete record, as before.
+      onPlay={fullAlbum && onPlayAlbum ? () => onPlayAlbum(ordered) : undefined}
       onMenu={(e) => onContextMenu(e, album)}
       // In running order, not the grouping order, so a playlist reads the way the record does.
       dragIds={draggable ? () => ordered.map((t) => t.id) : undefined}

@@ -138,7 +138,10 @@ describe('the Home draws only what homeSections allows', () => {
   })
   it('the shelves carry the plan\'s names', () => {
     const shelves = src('components', 'HomeShelves.tsx')
-    for (const t of ['Listen More', 'On Repeat', 'Recently Added']) assert.match(shelves, new RegExp(`title="${t}"`))
+    // V7 #490: the names live in common/card-rules.ts HOME_ROW_TITLE (card-rules.test.ts holds the words).
+    for (const id of ['listen-more-weekly', 'on-repeat', 'recently-added']) assert.match(shelves, new RegExp(`title=\\{HOME_ROW_TITLE\\['${id}'\\]\\}`))
+    const rules = src('..', 'common', 'card-rules.ts')
+    for (const t of ['Listen More', 'On Repeat', 'Recently Added']) assert.match(rules, new RegExp(`: '${t}',`))
   })
   it('Music News is one line with See All to the news page', () => {
     assert.match(home, /\{sections\.includes\('news'\) && headline && \(/)
@@ -147,7 +150,7 @@ describe('the Home draws only what homeSections allows', () => {
   it('the hero has ▶ Play and Shuffle, and the Music Man line only for the album he wrote it about', () => {
     const hero = src('components', 'HomeHero.tsx')
     assert.match(hero, /TONIGHT ON JAKETUNES/)
-    assert.match(hero, /<span>Play<\/span>/)
+    assert.match(hero, /<PlayButton className="home-hero-btn home-hero-btn--play"/)  // the one Play button (V7 #490)
     assert.match(hero, />Shuffle<\/button>/)
     assert.doesNotMatch(hero, /todaysPick|Today.s pick/)
     assert.match(hero, /heroChoice\(\{ answered: homeSpotlightAnswered\(\)/)

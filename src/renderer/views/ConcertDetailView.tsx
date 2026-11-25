@@ -272,7 +272,7 @@ export default function ConcertDetailView() {
             <div><span>{liveSet.cues.length} songs · {hms(liveSet.totalDurationMs)}</span></div>
           </div>
           <div className="cd-actions">
-            <PlayButton className="cd-btn cd-btn--play" name={setPlaying ? '' : 'the show'} label={setPlaying ? 'Playing' : undefined} onPlay={startShow} />
+            <PlayButton className="cd-btn cd-btn--play" name={setPlaying ? '' : 'Live Album'} label={setPlaying ? 'Playing' : undefined} onPlay={startShow} />
             <button
               className={`cd-btn cd-btn--crowd${crowdOn ? ' is-on' : ''}${crowdState === 'preparing' ? ' is-busy' : ''}`}
               onClick={() => { if (crowdState !== 'preparing') toggleCrowd() }}

@@ -254,7 +254,6 @@ function ShowConcertCard({ item, kind, nowMs, today, openLink, going, snippet }:
         stamped={stamped}
         onPlay={() => snippet.toggle(item)}
         onOpen={several ? () => going.openNights(item) : url ? () => openLink(url) : null}
-        openWords={several ? 'pick a night' : 'open the tickets'}
         onMenu={(e) => going.openMenu(e, item, [
           ...(several ? [{ label: 'Pick a Night…', onClick: () => going.openNights(item) }] : url ? [{ label: 'Open Tickets', onClick: () => openLink(url) }] : []),
           { label: playing ? 'Stop the Snippet' : 'Hear Their Song', onClick: () => snippet.toggle(item) },
@@ -320,14 +319,13 @@ interface Snippet {
   toggle: (item: ConcertItem) => void
 }
 
-function ConcertCard({ item, kind, nowMs, today, photo, playing, stamped, onPlay, onOpen, openWords, onMenu }: Omit<CardProps, 'going' | 'openLink'> & {
+function ConcertCard({ item, kind, nowMs, today, photo, playing, stamped, onPlay, onOpen, onMenu }: Omit<CardProps, 'going' | 'openLink'> & {
   photo: JSX.Element | null
   playing: boolean
   stamped: number
   onPlay: () => void
   /** V7: what a click opens (the tickets, or "Pick a night"); null: nothing to open. */
   onOpen: (() => void) | null
-  openWords: string
   onMenu: (e: React.MouseEvent) => void
 }) {
   const stamp = runStamp(item, today)
@@ -346,7 +344,6 @@ function ConcertCard({ item, kind, nowMs, today, photo, playing, stamped, onPlay
     [item.venue, item.room, where].filter(Boolean).join(' · '),
     runNightsLine(item) ?? [longDate(item.date), time].filter(Boolean).join(' · '),
     reason,
-    onOpen ? `Click: ${openWords}` : '',
   ].filter(Boolean).join('\n')
   return (
     <div

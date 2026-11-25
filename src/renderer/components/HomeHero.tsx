@@ -41,6 +41,7 @@ import { setNotice } from '../activity'
 import { heroByline, heroChoice, heroShowLine, HERO_HOLD_MS, type HeroShow } from '../../common/home-layout'
 import { nyDate } from '../../common/concerts-feed'
 import type { Track } from '../types'
+import PlayButton from './PlayButton'
 import '../styles/home-hero.css'
 
 type HeroAction =
@@ -229,15 +230,17 @@ export default function HomeHero({ tracks, allTracks, artworkMap, artIndex, show
 
   return (
     <section className="home-hero" aria-label="Tonight on JakeTunes">
+      {/* V7 (common/card-rules.ts): the cover opens the album; Play beside it plays. */}
       <div
-        className="home-hero-cover"
+        className="jt-card home-hero-cover"
+        data-card-kind="album"
         role="button"
         tabIndex={0}
         aria-label={`Open ${album.name} by ${album.artist}`}
         title={`Open ${album.name}`}
         onClick={open}
         onKeyDown={(e) => {
-          if (e.key !== 'Enter' || e.target !== e.currentTarget) return
+          if ((e.key !== 'Enter' && e.key !== ' ') || e.target !== e.currentTarget) return
           e.preventDefault()
           e.stopPropagation()
           open()
@@ -267,11 +270,7 @@ export default function HomeHero({ tracks, allTracks, artworkMap, artIndex, show
           </button>
         )}
         <div className="home-hero-actions">
-          <button type="button" className="home-hero-btn home-hero-btn--play" onClick={onPlay}>
-            {/* 12×12 play glyph in a 36px-tall pill (1/3 of its height) */}
-            <svg width="12" height="12" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1.5v11l9-5.5z" fill="currentColor" /></svg>
-            <span>Play</span>
-          </button>
+          <PlayButton className="home-hero-btn home-hero-btn--play" name={album.name} onPlay={onPlay} />
           <button type="button" className="home-hero-btn home-hero-btn--shuffle" onClick={onShuffle}>Shuffle</button>
         </div>
       </div>

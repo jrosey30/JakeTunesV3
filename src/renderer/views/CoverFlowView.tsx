@@ -16,13 +16,12 @@ import '../styles/coverflow.css'
 import { albumMenuEntries } from '../utils/libraryMenus'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import { ensureLiveSetsLoaded } from '../liveSets'
-import { setAlbumDragPayload } from '../utils/trackDrag'
+import { isCompleteRecord } from '../utils/liveSetCompleteness'
 import PlayButton from '../components/PlayButton'
 import { JUKEBOX_WHEEL_OPTIONS } from '../../common/cover-flow-wheel'
 import { useCoverFlowWheel } from '../hooks/useCoverFlowWheel'
 import { useArrowKeyOwner } from '../hooks/useArrowKeyOwner'
 import { overlayOpen } from '../utils/arrowKeyOwner'
-import { shuffle } from '../../common/shuffle'
 import { formatDuration } from '../../common/format-duration'
 
 /// V5 facelift: Cover Flow — reimagined as THE JUKEBOX ARC (Jake's pick
@@ -238,6 +237,7 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerLeave={onPointerUp}
+        onPointerCancel={onPointerUp}
       >
         <div className={`coverflow-fan${turbo ? ' coverflow-fan--turbo' : ''}`}>
           {windowed.map((album, wi) => {
@@ -327,8 +327,8 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
                   else libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: key })
                 }}
                 onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, album }) }}
-                draggable={active || undefined}
-                onDragStart={active ? (e) => setAlbumDragPayload(e, sortAlbumTracks(album.tracks).map((t) => t.id)) : undefined}
+                // Never draggable: a drag up on the front cover is the flip.
+                draggable={false}
                 title={active ? `Open "${album.name}"` : album.name}
                 aria-label={album.name}
               >
@@ -359,7 +359,7 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
                     </span>
                   )}
                   <span className="coverflow-dim" style={{ opacity: dim }} aria-hidden="true" />
-                  {active && <PlayButton variant="overlay" className="jt-card-play" name={album.name} onPlay={() => playAlbum(album)} />}
+                  {active && isCompleteRecord(album.tracks) && <PlayButton variant="overlay" className="jt-card-play" name={album.name} onPlay={() => playAlbum(album)} />}
                 </span>
                 <span className="coverflow-face coverflow-face--back" aria-hidden="true">
                   <span className="coverflow-back-ring" />

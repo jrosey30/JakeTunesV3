@@ -389,7 +389,7 @@ export default function NewForYouView() {
         onClick: () => togglePreview(id, sampleUrl, c.type === 'album' && c.hookTitle ? `${c.title} · ${c.hookTitle}` : c.title, c.artist),
       }] : []),
       { separator: true as const },
-      { label: isAdded ? 'On Your List' : 'Add to Your List', disabled: isAdded, onClick: () => { void addToList(c) } },
+      { label: isAdded ? LIST_MARK : 'Add to Listening List', disabled: isAdded, onClick: () => { void addToList(c) } },
       ...(c.lane !== 'ipod-wanted' ? [{ separator: true as const }, { label: `Not for Me — Never Show ${c.artist}`, onClick: () => notForMe(c) }] : []),
     ]
   }
