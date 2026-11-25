@@ -7,14 +7,22 @@
  * they run by themselves, once a day, when nothing is playing and no sync runs.
  *
  * This file is the rules, with no effects: when the check may run, which jobs
- * run on which machine, which files are the app's own leftovers, which songs
- * still need a tempo, and when a tag write would change nothing. The runner
+ * run on which machine, which jobs may touch the music folder, which files are
+ * the app's own leftovers and which songs still need a tempo. The runner
  * (self-care.ts) does the work through an injected host.
+ *
+ * Nothing here writes tags. metadata-overrides.json holds the genre filer's,
+ * Cynthia's and the hub's values as well as Jake's edits, so a nightly
+ * "apply every override to its file" would rewrite ~11,000 masters on the
+ * first night: every iPod re-converts, ~300 GB copies again to the vault and
+ * homemini, and homemini's replace brake trips (review of #489). Jake's own
+ * edits still reach the file one at a time through the per-edit writer
+ * (tag-writeback-queue.ts), as before. Whether anything else should write tags
+ * automatically is Jake's call, later.
  */
-import { createHash } from 'node:crypto'
 
 /** In the order they run. Cheap and local first; the ones that reach out last. */
-export const SELF_CARE_JOBS = ['play-cache', 'orphans', 'file-sizes', 'overrides', 'ai-index', 'analysis'] as const
+export const SELF_CARE_JOBS = ['play-cache', 'orphans', 'leftovers', 'file-sizes', 'ai-index', 'analysis'] as const
 export type SelfCareJob = typeof SELF_CARE_JOBS[number]
 
 /**
@@ -22,7 +30,15 @@ export type SelfCareJob = typeof SELF_CARE_JOBS[number]
  * machine that owns them (the hub). A replica streams its songs: its files are a
  * cache, and the hub's check covers the library. The play cache is per machine.
  */
-export const HUB_ONLY_JOBS: ReadonlySet<SelfCareJob> = new Set(['orphans', 'file-sizes', 'overrides', 'ai-index', 'analysis'])
+export const HUB_ONLY_JOBS: ReadonlySet<SelfCareJob> = new Set(['orphans', 'leftovers', 'file-sizes', 'ai-index', 'analysis'])
+
+/**
+ * Jobs that write or delete anything under the music folder. The runner runs
+ * them only when the machine refusal (offload-audio.ts localAudioDropRefused:
+ * not homemini, the folder on this Mac's own disk) says nothing against it;
+ * a job never asks for itself. `orphans` only counts; `leftovers` deletes.
+ */
+export const MUSIC_FOLDER_JOBS: ReadonlySet<SelfCareJob> = new Set(['leftovers'])
 
 export function jobsFor(isReplica: boolean): SelfCareJob[] {
   return SELF_CARE_JOBS.filter((j) => !isReplica || !HUB_ONLY_JOBS.has(j))
@@ -102,8 +118,8 @@ export function isAppTempFile(name: string, mtimeMs: number, now: number): boole
  * quarter of the cache, or when the library looks too small to trust.
  */
 export function pruneBrake(opts: { libraryTracks: number; entries: number; unclaimed: number }): string | null {
-  if (opts.libraryTracks < 500) return `library has only ${opts.libraryTracks} songs`
-  if (opts.entries >= 20 && opts.unclaimed > opts.entries / 4) return `would remove ${opts.unclaimed} of ${opts.entries}`
+  if (opts.libraryTracks < 500) return `the library read back only ${opts.libraryTracks} songs`
+  if (opts.entries >= 20 && opts.unclaimed > opts.entries / 4) return `it would have removed ${opts.unclaimed} of ${opts.entries} saved songs`
   return null
 }
 
@@ -119,7 +135,10 @@ export interface AnalysisRow {
   audioAnalysisAt?: number | string
 }
 
-/** Songs to measure tonight: never measured, or failed over a month ago. */
+/**
+ * Songs to measure tonight: never measured, or failed over a month ago. The
+ * analysis worker (index.ts) waits for quiet itself: no music and no iPod sync.
+ */
 export function analysisCandidates(rows: readonly AnalysisRow[], now: number): AnalysisRow[] {
   return rows.filter((r) => {
     if (!r.path || typeof r.id !== 'number') return false
@@ -130,52 +149,6 @@ export function analysisCandidates(rows: readonly AnalysisRow[], now: number): A
   })
 }
 
-// ── Overrides: write only what isn't on the file yet ──────────────────────
-
-/** The tag values one entry asks for, as plain strings. */
-export type WantedTags = Record<string, string | number>
-
-function norm(v: unknown): string {
-  if (v === undefined || v === null) return ''
-  if (Array.isArray(v)) return v.map(norm).join('; ')
-  return String(v).trim()
-}
-
-/** Fields whose value on the file isn't the wanted one. Numbers compare as numbers ("07" = 7). */
-export function fieldsToWrite(onFile: Record<string, unknown>, wanted: WantedTags): string[] {
-  const out: string[] = []
-  for (const [k, v] of Object.entries(wanted)) {
-    const want = norm(v)
-    const have = norm(onFile[k])
-    const wn = Number(want)
-    const hn = Number(have)
-    if (want !== '' && have !== '' && Number.isFinite(wn) && Number.isFinite(hn) && /^\d+$/.test(want) && /^\d+$/.test(have)) {
-      if (wn !== hn) out.push(k)
-    } else if (want !== have) {
-      out.push(k)
-    }
-  }
-  return out
-}
-
-/** One entry's wanted values, for the ledger: the same values to the same file are written once. */
-export function overrideHash(path: string, wanted: WantedTags): string {
-  const keys = Object.keys(wanted).sort()
-  const body = keys.map((k) => `${k}=${norm(wanted[k])}`).join('\n')
-  return createHash('sha1').update(`${path}\n${body}`).digest('hex').slice(0, 16)
-}
-
-/**
- * Whether tonight writes this entry. Already written with these exact values
- * (the ledger) → no, even if a reader reports a field differently (that would
- * rewrite the file every night). Otherwise only when a field differs.
- */
-export function overrideNeedsWrite(opts: { ledgerHash: string | undefined; hash: string; onFile: Record<string, unknown> | null; wanted: WantedTags }): string[] {
-  if (opts.ledgerHash === opts.hash) return []
-  if (!opts.onFile) return Object.keys(opts.wanted)
-  return fieldsToWrite(opts.onFile, opts.wanted)
-}
-
 // ── What the check remembers ──────────────────────────────────────────────
 
 export interface JobResult { at: number; ok: boolean; note: string }
@@ -184,6 +157,8 @@ export interface NeedsYou {
   /** Song files in the music folder that no library song points at. */
   orphanFiles: number
   orphanBytes: number
+  /** The play-cache prune held its brake: why, in plain words; null when it ran. */
+  playCacheHeld: string | null
 }
 
 export interface SelfCareStatus {
@@ -196,7 +171,7 @@ export interface SelfCareStatus {
 }
 
 export function emptyStatus(): SelfCareStatus {
-  return { lastRunAt: null, cycleStartedAt: null, jobs: {}, needsYou: { orphanFiles: 0, orphanBytes: 0 } }
+  return { lastRunAt: null, cycleStartedAt: null, jobs: {}, needsYou: { orphanFiles: 0, orphanBytes: 0, playCacheHeld: null } }
 }
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
@@ -217,7 +192,7 @@ export function parseStatus(raw: string | null): SelfCareStatus {
       lastRunAt: num(o.lastRunAt),
       cycleStartedAt: num(o.cycleStartedAt),
       jobs,
-      needsYou: { orphanFiles: num(ny.orphanFiles) ?? 0, orphanBytes: num(ny.orphanBytes) ?? 0 },
+      needsYou: { orphanFiles: num(ny.orphanFiles) ?? 0, orphanBytes: num(ny.orphanBytes) ?? 0, playCacheHeld: typeof ny.playCacheHeld === 'string' ? ny.playCacheHeld : null },
     }
   } catch {
     return emptyStatus()

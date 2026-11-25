@@ -984,8 +984,10 @@ declare global {
       onTagWritebackFileChanged: (callback: (m: { id: number; fileSize: number; audioFingerprint?: string; fileVersion?: string }) => void) => () => void
       // V7 nightly check (main/self-care.ts).
       onSelfCareMeasured: (callback: (measured: Array<{ id: number; fileSize: number; audioFingerprint?: string; fileVersion?: string }>) => void) => () => void
-      selfCareStatus: () => Promise<{ lastRunAt: number | null; needsYou: { orphanFiles: number; orphanBytes: number } } | null>
+      selfCareStatus: () => Promise<{ lastRunAt: number | null; needsYou: { orphanFiles: number; orphanBytes: number; playCacheHeld: string | null } } | null>
       // Settings › Storage (V7).
+      offloadCheck: () => Promise<{ ok: boolean; counts?: { ready: number; notYet: number; alreadyMoved: number }; error?: string }>
+      offloadConfirm: () => Promise<{ ok: boolean; reason?: 'count-failed' | 'nothing-ready'; counts?: { ready: number; notYet: number; alreadyMoved: number } }>
       offloadStart: (opts?: { settingJustSaved?: boolean }) => Promise<{ ok: boolean; error?: string }>
       offloadBringBack: () => Promise<{ ok: boolean; restored?: number; error?: string }>
       importResolvePaths: (paths: string[]) => Promise<{ ok: boolean; paths?: string[]; error?: string }>

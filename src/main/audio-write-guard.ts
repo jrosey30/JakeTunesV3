@@ -21,7 +21,6 @@
  * Leaf module: node built-ins only, so plain-Node tests can load it.
  */
 import { spawn } from 'child_process'
-import { atBackgroundPriority } from './background-priority.ts'
 import { constants as fsConstants } from 'fs'
 import { copyFile, lstat, rename, rm } from 'fs/promises'
 import { randomBytes } from 'crypto'
@@ -77,7 +76,7 @@ export function onlyAlacFlushFrame(errorLines: string[]): boolean {
 
 export async function decodeCheck(
   path: string,
-  opts: { timeoutMs?: number; ffmpeg?: string; background?: boolean } = {},
+  opts: { timeoutMs?: number; ffmpeg?: string } = {},
 ): Promise<DecodeCheck> {
   if (!CHECKED_EXT.test(path)) return { ok: null, reason: 'container not checked' }
   const timeoutMs = opts.timeoutMs ?? 120000
@@ -89,10 +88,7 @@ export async function decodeCheck(
       clearTimeout(timer)
       done(r)
     }
-    // The nightly check (self-care-overrides.ts) runs it at background priority.
-    const args = ['-nostdin', '-v', 'error', '-i', path, '-map', '0:a:0', '-f', 'null', '-']
-    const [cmd, argv] = opts.background ? atBackgroundPriority(opts.ffmpeg ?? 'ffmpeg', args) : [opts.ffmpeg ?? 'ffmpeg', args]
-    const child = spawn(cmd, argv, {
+    const child = spawn(opts.ffmpeg ?? 'ffmpeg', ['-nostdin', '-v', 'error', '-i', path, '-map', '0:a:0', '-f', 'null', '-'], {
       stdio: ['ignore', 'ignore', 'pipe'],
     })
     let stderr = ''

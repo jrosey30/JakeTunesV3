@@ -6,7 +6,9 @@
  *
  *   - Songs that may be in the library twice: Jake picks which copy goes.
  *   - Song files in the music folder that no song points at, when the night
- *     found any: Jake decides whether they go.
+ *     found any, and songs whose file is gone (counted when this opens, whatever
+ *     the night found): Jake decides whether they go. Both open the same review.
+ *   - A play-cache tidy the night held back (its brake): shown, so it isn't silent.
  *   - Albums the genre filer wasn't sure about (GenreCheckList, moved here
  *     from Settings › Library).
  */
@@ -21,7 +23,7 @@ interface Props {
   onShowOrphans: () => void
 }
 
-type Status = { lastRunAt: number | null; needsYou: { orphanFiles: number; orphanBytes: number } } | null
+type Status = { lastRunAt: number | null; needsYou: { orphanFiles: number; orphanBytes: number; playCacheHeld: string | null } } | null
 
 function lastChecked(at: number | null): string {
   if (!at) return 'Not checked yet. It runs at night, when no music is playing.'
@@ -34,9 +36,12 @@ function lastChecked(at: number | null): string {
 
 export default function NeedsYouSheet({ onClose, onShowDuplicates, onShowOrphans }: Props): JSX.Element {
   const [status, setStatus] = useState<Status>(null)
+  const [deadCount, setDeadCount] = useState(0)
   useEffect(() => {
     let live = true
     window.electronAPI.selfCareStatus().then((s) => { if (live) setStatus(s) }).catch(() => { /* shows "not checked yet" */ })
+    // Fresh each time the list opens, not last night's number.
+    window.electronAPI.scanDeadTracks().then((r) => { if (live && r.ok) setDeadCount(r.count ?? 0) }).catch(() => { /* row stays hidden */ })
     return () => { live = false }
   }, [])
   useEffect(() => {
@@ -63,6 +68,18 @@ export default function NeedsYouSheet({ onClose, onShowDuplicates, onShowOrphans
               <span>{orphans === 1 ? 'One song file in your music folder isn’t in your library.' : `${orphans.toLocaleString()} song files in your music folder aren’t in your library.`}</span>
               <button type="button" className="imp-btn" onClick={onShowOrphans}>Review…</button>
             </div>
+          )}
+          {deadCount > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
+              <span>{deadCount === 1 ? 'One song has no file and can’t play.' : `${deadCount.toLocaleString()} songs have no file and can’t play.`}</span>
+              <button type="button" className="imp-btn" onClick={onShowOrphans}>Review…</button>
+            </div>
+          )}
+          {/* Shown, never "tidied anyway": a brake that holds is often a library that read back short. */}
+          {status?.needsYou.playCacheHeld && (
+            <p className="imp-help" style={{ fontSize: 13, color: '#3a3a3a' }}>
+              Last night’s tidy of the saved copies for quick play was held back: {status.needsYou.playCacheHeld}. Nothing was deleted, and it tries again tonight.
+            </p>
           )}
           <GenreCheckList />
           <p className="imp-help" style={{ marginTop: 8 }}>{lastChecked(status?.lastRunAt ?? null)}</p>

@@ -56,7 +56,7 @@ import { atBackgroundPriority } from './background-priority.ts'
 import { startSyncConvertCache } from './ipc/sync-cache-ipc.ts'
 import { touchUsed } from './sync-convert-cache.ts'
 import { AacEncoderMissingError, IPOD_ALAC_MIRROR_TOKEN, MP3_MIRROR_TOKEN, aacMirrorCacheName, afconvertAacArgs, createAfconvertCheck, pcmDecodeArgs } from './aac-mirror-recipe.ts'
-import { startSelfCare } from './self-care.ts'; import { analysisCandidates, pruneBrake } from './self-care-core.ts'; import { runTagJob } from './self-care-overrides.ts'; import { removeAppTempFiles } from './self-care-files.ts'
+import { startSelfCare } from './self-care.ts'; import { analysisCandidates, pruneBrake } from './self-care-core.ts'; import { removeAppTempFiles } from './self-care-files.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
 import { mergeQueuedDuringPass, runConvertPass, type ConvertOutcome, type QueueTrack, type StreamConvertItem } from './stream-convert-pass.ts'; import { confirmHomeminiHoldsFile, keptLocalMessage, USER_PENDING_RETRIES, type RefusalMemo } from './offload-confirm.ts'
@@ -378,7 +378,6 @@ import { libraryPublishTargets } from '../common/replica-library-push'
 import {
   WRITABLE_FIELDS,
   writeTagsToFile,
-  readWritableTags,
   colonPathToAbsolute,
   augmentPairFields,
 } from './tag-writer'
@@ -987,6 +986,8 @@ async function processAudioAnalysisBatch(jobs: AudioAnalysisJob[]): Promise<(Aud
   return out
 }
 
+/** Set once the sync engine exists (it is created further down this file). */
+let analysisSyncBusy: () => boolean = () => false
 async function audioAnalysisWorker(): Promise<void> {
   if (audioAnalysisRunning) return
   audioAnalysisRunning = true
@@ -1005,7 +1006,7 @@ async function audioAnalysisWorker(): Promise<void> {
       // don't.
       let inactiveSince = 0
       while (true) {
-        if (playbackActive) {
+        if (playbackActive || analysisSyncBusy()) {   // music or an iPod sync: wait (V7 review of #489)
           inactiveSince = 0
           await new Promise(r => setTimeout(r, 2000))
           continue
@@ -3479,7 +3480,7 @@ let prewarmAlacCache: (paths: string[]) => Promise<void> = async () => { /* not 
 let registerKnownCodec: (path: string, mtime: number, codec: string) => void = () => {}
 let selfCare: ReturnType<typeof startSelfCare> | null = null
 ipc.handle('self-care-status', async () => (selfCare ? selfCare.status() : null), { public: true })
-let prunePlayCache: (brake: boolean) => Promise<{ ok: boolean; pruned?: number; bytesFreed?: number; held?: string; error?: string }> = async () => ({ ok: false, error: 'not ready' })
+let prunePlayCache: (brake: boolean, stillQuiet?: () => boolean) => Promise<{ ok: boolean; pruned?: number; bytesFreed?: number; held?: string; stopped?: boolean; error?: string }> = async () => ({ ok: false, error: 'not ready' })
 
 // Read directly from iPod database (used for sync only).
 // If the mount hasn't been detected yet (e.g. load-tracks fires before
@@ -5274,6 +5275,7 @@ const syncEngine = createSyncEngine({
 // The convert cache's upkeep: leftover partials swept, a size cap (off until Jake sets one), clear (Brief 265 Part 5).
 startSyncConvertCache(ipc, { userData: app.getPath('userData'), syncInFlight: () => syncEngine.isSyncInFlight() })
 const { handleSyncToIpod, handleSyncIpodFromDevice } = syncEngine
+analysisSyncBusy = () => syncEngine.isSyncInFlight()   // tempo/key analysis waits out an iPod sync
 
 // (Removed: the 'alac-compat-scan' / 'alac-compat-fix' IPC handlers and
 // core/alac_compat_fix.py. They rewrote the library's master ALAC files
@@ -9185,7 +9187,7 @@ async function applyMetadataOverrideInternal(trackId: number, field: string, val
 // saved the new title/artist and the edit's own fingerprint no longer matches).
 // What is still owed to a file is kept in tag-writeback-pending.json.
 const tagWritebackPendingPath = (): string => join(app.getPath('userData'), TAG_WRITEBACK_PENDING_FILE)
-/** Is the player using this song's file? (song-in-use.ts) The per-edit line and "Apply Overrides to Files…" both ask. */
+/** Is the player using this song's file? (song-in-use.ts) The per-edit line asks. */
 const playerUsing = (colonPath: string, durationMs: number): boolean => songInUse({ colonPath, durationMs, now: Date.now(), lastTouchAt: playerTouches.lastAt(colonPath), heldOpen: audioLoadHold.holdsSource(colonPath) })
 const tagWriteback = createTagWritebackQueue({
   findTrack: async (trackId) => (((await libraryCache.get()) as { tracks?: Array<Record<string, unknown>> }).tracks || []).find((t) => t.id === trackId),
@@ -9623,24 +9625,27 @@ app.whenReady().then(async () => {
   void startOvernightPreload({ userData: app.getPath('userData'), audioBase: HOMEMINI_AUDIO_BASE, isPlaying: () => playbackActive, streamCompressed: readStreamCompressedCached, isStreamingClient: isHomeminiPlaybackClientCached,
     library: () => libraryCache.get(), playlists: () => playlistsCache.get(), playEventsPath: getPlayEventsPath(), liveSets: () => liveSetsCache.get() }).catch((err) => console.warn('[preload] schedule failed:', err instanceof Error ? err.message : err))
   // V7: the library looks after itself — one quiet check a night (self-care.ts; rules in self-care-core.ts).
-  const selfCareFile = join(app.getPath('userData'), 'self-care.json'), tagLedgerFile = join(app.getPath('userData'), 'self-care-tags.json')
+  const selfCareFile = join(app.getPath('userData'), 'self-care.json')
   const libRows = async (): Promise<Array<Record<string, unknown>>> => ((await libraryCache.get()) as CachedLibrary).tracks as Array<Record<string, unknown>> ?? []
   selfCare = startSelfCare({
     now: () => Date.now(), hour: () => new Date().getHours(), playing: () => playbackActive, lastMusicAt: () => musicSeenAt,
-    syncInFlight: () => syncEngine.isSyncInFlight(), isReplica: isHomeminiPlaybackClientCached,
+    syncInFlight: () => syncEngine.isSyncInFlight(), isReplica: isHomeminiPlaybackClientCached, musicFolderRefused: () => localAudioDropRefused(MUSIC_DIR),
     readStatus: () => readFile(selfCareFile, 'utf-8').catch(() => null), writeStatus: (st) => writeJsonAtomic(selfCareFile, st),
     log: (m) => console.log(m),
     jobs: {
-      'play-cache': async () => {
-        const r = await prunePlayCache(true)
-        return { ok: r.ok, note: r.held ? `held: ${r.held}` : r.ok ? `${r.pruned ?? 0} removed (${((r.bytesFreed ?? 0) / 1e6).toFixed(0)} MB)` : String(r.error) }
+      'play-cache': async (ctx) => {
+        const r = await prunePlayCache(true, ctx.stillQuiet)
+        // A held brake is Jake's to decide (Needs You), never a quiet "ok".
+        if (r.held) return { ok: false, note: `held: ${r.held}`, needsYou: { playCacheHeld: r.held } }
+        return { ok: r.ok, interrupted: r.stopped, needsYou: { playCacheHeld: null }, note: r.ok ? `${r.pruned ?? 0} removed (${((r.bytesFreed ?? 0) / 1e6).toFixed(0)} MB)` : String(r.error) }
       },
-      orphans: async (ctx) => {
+      orphans: async () => {   // read-only: counts, never deletes
         const scan = await scanLibraryOrphans()
-        const refused = await localAudioDropRefused(MUSIC_DIR)
-        const temp = refused ? null : await removeAppTempFiles(MUSIC_DIR, { now: Date.now(), stillQuiet: ctx.stillQuiet, log: (m) => console.log(m) })
-        return { ok: true, interrupted: temp?.stopped, needsYou: { orphanFiles: scan.orphanCount, orphanBytes: scan.orphanBytes },
-          note: `${scan.orphanCount} song files not in the library (shown to Jake); ${refused ? `no leftovers removed: ${refused}` : `${temp!.removed} leftovers removed`}` }
+        return { ok: true, needsYou: { orphanFiles: scan.orphanCount, orphanBytes: scan.orphanBytes }, note: `${scan.orphanCount} song files not in the library (shown to Jake)` }
+      },
+      leftovers: async (ctx) => {   // deletes: a MUSIC_FOLDER_JOB, so the runner asked localAudioDropRefused first
+        const temp = await removeAppTempFiles(MUSIC_DIR, { now: Date.now(), stillQuiet: ctx.stillQuiet, log: (m) => console.log(m) })
+        return { ok: true, interrupted: temp.stopped, note: `${temp.removed} of the app's own leftovers removed` }
       },
       'file-sizes': async () => {
         if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, note: 'no window to save the sizes' }
@@ -9649,14 +9654,6 @@ app.whenReady().then(async () => {
         sendToRenderer('self-care:measured', scan.measured)   // the renderer applies the differences and saves (common/library-file-sizes.ts)
         return { ok: true, note: `${scan.stale} sizes out of date, ${scan.missing} missing, ${scan.streamed} streamed` }
       },
-      overrides: (ctx) => runTagJob({
-        tracks: libRows, overrides: async () => (await overridesCache.get()) as Record<string, { fp?: string; fields?: Record<string, string> }>,
-        playerUsing, queueEdit: (e) => tagWriteback.edit(e), toAbs: (c) => colonPathToAbsolute(c, MUSIC_DIR), readTags: readWritableTags,
-        writeTags: async (abs, fields) => { const r = await writeTagsToFile({ audioFilePath: abs, overrides: fields }, { background: true }); return { ok: r.ok, written: r.fieldsWritten.length, error: r.error } },
-        remeasure: async (paths) => { const m = await measureFileSizesOnDisk((a) => paths.has(a), undefined, true); if (m?.measured.length) sendToRenderer('self-care:measured', m.measured) },
-        readLedger: async () => JSON.parse(await readFile(tagLedgerFile, 'utf-8').catch(() => '{}')) as Record<string, string>,
-        writeLedger: (l) => writeJsonAtomic(tagLedgerFile, l),
-      }, ctx),
       'ai-index': async (ctx) => {
         if (!ragIsConfigured()) return { ok: true, note: 'not set up on this Mac' }
         const r = await runEmbeddingBackfill({ stillQuiet: ctx.stillQuiet })
@@ -10197,7 +10194,7 @@ app.whenReady().then(async () => {
   }, { refuse: REFUSED_SENDER })
 
   // The nightly check calls the same prune with its brake on (self-care-core.ts pruneBrake).
-  prunePlayCache = async (brake: boolean) => {
+  prunePlayCache = async (brake: boolean, stillQuiet?: () => boolean) => {
     // Delete cache entries whose hashed source path doesn't match any
     // current library track. After 4.0.x rounds of import / dedup /
     // path-collision-cleanup, the cache typically has hundreds of
@@ -10247,12 +10244,14 @@ app.whenReady().then(async () => {
     }
 
     const cached = entries.filter((f) => f.endsWith('.m4a') || f.endsWith('.flac'))   // cache holds both eras
-    const unclaimed = cached.filter((f) => ![...expected].some((h) => isEntryFor(f, h)))
+    // One lookup per entry: an entry's path hash is its first 16 characters (cacheNameFor), and isEntryFor is a prefix test.
+    const unclaimed = cached.filter((f) => { const h = f.slice(0, 16); return !(expected.has(h) && isEntryFor(f, h)) })
     const held = brake ? pruneBrake({ libraryTracks: (lib.tracks || []).length, entries: cached.length, unclaimed: unclaimed.length }) : null
     if (held) return { ok: true, pruned: 0, bytesFreed: 0, held }
     let pruned = 0
     let bytesFreed = 0
     for (const f of unclaimed) {
+      if (stillQuiet && pruned % 25 === 0 && !stillQuiet()) return { ok: true, pruned, bytesFreed, stopped: true }
       const fp = join(PLAY_CACHE, f)
       const s = await stat(fp).catch(() => null)
       if (s) bytesFreed += s.size

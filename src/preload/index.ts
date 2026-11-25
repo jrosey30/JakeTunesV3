@@ -644,9 +644,13 @@ const electronAPI = {
     ipcRenderer.on('self-care:measured', handler)
     return () => { ipcRenderer.removeListener('self-care:measured', handler) }
   },
-  selfCareStatus: (): Promise<{ lastRunAt: number | null; needsYou: { orphanFiles: number; orphanBytes: number } } | null> =>
+  selfCareStatus: (): Promise<{ lastRunAt: number | null; needsYou: { orphanFiles: number; orphanBytes: number; playCacheHeld: string | null } } | null> =>
     ipcRenderer.invoke('self-care-status'),
   // Settings › Storage (V7): the one switch, and bringing songs back.
+  offloadCheck: (): Promise<{ ok: boolean; counts?: { ready: number; notYet: number; alreadyMoved: number }; error?: string }> =>
+    ipcRenderer.invoke('offload-audio-dry-run'),
+  offloadConfirm: (): Promise<{ ok: boolean; reason?: 'count-failed' | 'nothing-ready'; counts?: { ready: number; notYet: number; alreadyMoved: number } }> =>
+    ipcRenderer.invoke('offload-audio-confirm'),
   offloadStart: (opts?: { settingJustSaved?: boolean }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('offload-audio-start', opts),
   offloadBringBack: (): Promise<{ ok: boolean; restored?: number; error?: string }> =>

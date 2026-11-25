@@ -2008,6 +2008,7 @@ function AppInner() {
             initial={appSettings}
             initialTab={settingsTab}
             onClose={() => setSettingsOpen(false)}
+            onApplied={(next) => setAppSettings(next)}
             onSaved={(next) => {
               setAppSettings(next)
               setCrossfadeSettings(next.crossfade)

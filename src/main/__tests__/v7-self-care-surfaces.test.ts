@@ -49,6 +49,19 @@ describe('File › Library', () => {
     assert.match(sheet, /<GenreCheckList \/>/)
   })
 
+  test('songs with no file can be removed from Needs You whatever the orphan count, counted when it opens (3)', () => {
+    const sheet = read('renderer/components/NeedsYouSheet.tsx')
+    const effect = sheet.slice(sheet.indexOf('useEffect(() => {'), sheet.indexOf('}, [])'))
+    assert.match(effect, /window\.electronAPI\.scanDeadTracks\(\)\.then/, 'counted on open')
+    const row = sheet.slice(sheet.indexOf('{deadCount > 0 && ('), sheet.indexOf('{deadCount > 0 && (') + 400)
+    assert.ok(row.includes('onClick={onShowOrphans}'), 'opens the review that removes them')
+    assert.ok(!row.includes('orphans'), 'not hidden behind the orphan count')
+  })
+
+  test('a held play-cache brake is shown in Needs You (4)', () => {
+    assert.match(read('renderer/components/NeedsYouSheet.tsx'), /\{status\?\.needsYou\.playCacheHeld && \(/)
+  })
+
   test('the hand-built maintenance progress windows are gone from App.tsx', () => {
     const app = read('renderer/App.tsx')
     for (const gone of ['applyOverridesProgress', 'refreshSizesProgress', 'PlayCacheModal', 'applyOverridesBatch', 'refreshFileSizes(']) {
@@ -136,6 +149,26 @@ describe('the Music Man page is the chat', () => {
 
 describe('offload keeps its rules', () => {
   const ipc = read('main/ipc/offload-ipc.ts')
+  const settings = read('renderer/components/SettingsModal.tsx')
+  test('a dry run is reachable ("Check first") and turning the switch on counts, then asks natively with the count (2)', async () => {
+    assert.match(settings, />Check first<\/button>/)
+    assert.match(settings, /window\.electronAPI\.offloadCheck\(\)/)
+    assert.match(settings, /window\.electronAPI\.offloadConfirm\(\)\.then\(\(r\) => \{[\s\S]*?if \(r\.ok\) setDraft/, 'only a yes turns the switch on')
+    const confirm = ipc.slice(ipc.indexOf("ipc.handle('offload-audio-confirm'"), ipc.indexOf("ipc.handle('offload-audio-start'"))
+    assert.match(confirm, /const dry = await runDry\(false\)/)
+    assert.match(confirm, /confirmStart\(startConfirmMessage\(dry\.counts\), true\)/, 'a native dialog, always shown')
+    assert.match(confirm, /if \(dry\.counts\.ready === 0\) return \{ ok: false, reason: 'nothing-ready'/)
+    const { startConfirmMessage, countsFromReport } = await import('../offload-counts.ts')
+    assert.equal(startConfirmMessage({ ready: 1234, notYet: 3, alreadyMoved: 0 }), 'Move 1,234 songs to the home server? Each one leaves this Mac only once the home server has the exact same file.')
+    assert.equal(startConfirmMessage({ ready: 1, notYet: 0, alreadyMoved: 0 }).startsWith('Move one song'), true)
+    assert.deepEqual(countsFromReport({ matchingOnHomemini: 10, missingOnHomemini: 2, differentOnHomemini: 1, needsFingerprint: 3, notProbed: 4, alreadyStreamed: 5 }), { ready: 10, notYet: 10, alreadyMoved: 5 })
+  })
+  test('Bring back turns the switch off (and saves it) before bringing songs back (2)', () => {
+    const at = settings.indexOf("setBringBackMsg('Bringing songs back…')\n")
+    const flow = settings.slice(at, settings.indexOf('offloadBringBack()', at) + 20)
+    assert.match(flow, /offloadAudioToHomemini: false/)
+    assert.ok(flow.indexOf('saveAppSettings(off') < flow.indexOf('offloadBringBack()'), 'saved off first')
+  })
   test('the Settings switch starts through runStart, which still refuses a replica or a switch that is off', () => {
     assert.match(ipc, /ipc\.handle\('offload-audio-start', async \(_e, opts\?: \{ settingJustSaved\?: boolean \}\) => \{[\s\S]*?return runStart\(false\)/)
     const start = ipc.slice(ipc.indexOf('async function runStart('), ipc.indexOf('async function runStart(') + 600)

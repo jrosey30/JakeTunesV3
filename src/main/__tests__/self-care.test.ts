@@ -10,12 +10,12 @@ import { mkdtemp, mkdir, writeFile, utimes, symlink, readdir, rm } from 'node:fs
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { existsSync } from 'node:fs'
 import {
-  analysisCandidates, fieldsToWrite, isAppTempFile, jobsFor, overrideHash, overrideNeedsWrite, parseStatus, pruneBrake, selfCareGate,
-  OVERDUE_MS, QUIET_MS, SELF_CARE_JOBS, TEMP_MIN_AGE_MS, type SelfCareJob, type SelfCareStatus,
+  analysisCandidates, isAppTempFile, jobsFor, parseStatus, pruneBrake, selfCareGate,
+  MUSIC_FOLDER_JOBS, OVERDUE_MS, QUIET_MS, SELF_CARE_JOBS, TEMP_MIN_AGE_MS, type SelfCareJob, type SelfCareStatus,
 } from '../self-care-core.ts'
 import { createSelfCare, type JobRunner, type SelfCareHost } from '../self-care.ts'
-import { runTagJob, type TagJobHost } from '../self-care-overrides.ts'
 import { removeAppTempFiles } from '../self-care-files.ts'
 
 const H = 3_600_000
@@ -57,7 +57,7 @@ function rig(over: Partial<SelfCareHost> = {}) {
   const host: SelfCareHost = {
     now: () => state.now, hour: () => new Date(state.now).getHours(),
     playing: () => state.playing, lastMusicAt: () => NIGHT - QUIET_MS - 1, syncInFlight: () => state.sync,
-    isReplica: async () => false,
+    isReplica: async () => false, musicFolderRefused: async () => null,
     readStatus: async () => stored, writeStatus: async (s: SelfCareStatus) => { stored = JSON.stringify(s) },
     jobs, log: (m) => log.push(m),
     ...over,
@@ -89,11 +89,11 @@ describe('the runner', () => {
     r.jobs['file-sizes'] = async () => { r.ran.push('file-sizes'); r.state.playing = true; return { ok: true, note: '' } }
     const care = createSelfCare(r.host)
     assert.equal(await care.tick(), 'interrupted')
-    assert.deepEqual(r.ran, ['play-cache', 'orphans', 'file-sizes'])
+    assert.deepEqual(r.ran, ['play-cache', 'orphans', 'leftovers', 'file-sizes'])
     r.state.playing = false
     r.state.now += 20 * 60_000
     assert.equal(await care.tick(), 'done')
-    assert.deepEqual(r.ran, ['play-cache', 'orphans', 'file-sizes', 'overrides', 'ai-index', 'analysis'])
+    assert.deepEqual(r.ran, ['play-cache', 'orphans', 'leftovers', 'file-sizes', 'ai-index', 'analysis'])
   })
 
   it('a sync starting stops it the same way', async () => {
@@ -106,11 +106,11 @@ describe('the runner', () => {
   it('a job that stopped itself for music runs again next time', async () => {
     const r = rig()
     let first = true
-    r.jobs.overrides = async () => { r.ran.push('overrides'); if (first) { first = false; return { ok: true, note: '', interrupted: true } } return { ok: true, note: '' } }
+    r.jobs['ai-index'] = async () => { r.ran.push('ai-index'); if (first) { first = false; return { ok: true, note: '', interrupted: true } } return { ok: true, note: '' } }
     const care = createSelfCare(r.host)
     assert.equal(await care.tick(), 'interrupted')
     assert.equal(await care.tick(), 'done')
-    assert.deepEqual(r.ran.filter((j) => j === 'overrides').length, 2)
+    assert.deepEqual(r.ran.filter((j) => j === 'ai-index').length, 2)
     assert.deepEqual(r.ran.filter((j) => j === 'play-cache').length, 1)
   })
 
@@ -126,8 +126,21 @@ describe('the runner', () => {
   it('what needs Jake is kept for the Needs You list', async () => {
     const r = rig()
     r.jobs.orphans = async () => ({ ok: true, note: '', needsYou: { orphanFiles: 3, orphanBytes: 9e6 } })
+    r.jobs['play-cache'] = async () => ({ ok: false, note: 'held', needsYou: { playCacheHeld: 'it would have removed 3900 of 4000 saved songs' } })
     await createSelfCare(r.host).tick()
-    assert.deepEqual(r.stored().needsYou, { orphanFiles: 3, orphanBytes: 9e6 })
+    assert.deepEqual(r.stored().needsYou, { orphanFiles: 3, orphanBytes: 9e6, playCacheHeld: 'it would have removed 3900 of 4000 saved songs' })
+    assert.equal(r.stored().jobs['play-cache']?.ok, false, 'a held brake is never logged as ok')
+  })
+
+  it('the runner, not the job, refuses to touch the music folder on homemini or a folder off this Mac (5)', async () => {
+    const r = rig({ musicFolderRefused: async () => 'this machine serves /audio' })
+    assert.equal(await createSelfCare(r.host).tick(), 'done')
+    for (const j of MUSIC_FOLDER_JOBS) assert.ok(!r.ran.includes(j), `${j} ran on a refused machine`)
+    assert.match(r.stored().jobs.leftovers?.note ?? '', /this machine serves \/audio/)
+    assert.ok(r.ran.includes('orphans') && r.ran.includes('file-sizes'), 'the read-only jobs still run')
+    const ok = rig()
+    await createSelfCare(ok.host).tick()
+    assert.ok(ok.ran.includes('leftovers'))
   })
 
   it('on a replica it never touches the music files', async () => {
@@ -185,7 +198,7 @@ describe('orphans: only the app\'s own leftovers are removed', () => {
 
 test('play cache: the night never empties the cache on a short library read', () => {
   assert.equal(pruneBrake({ libraryTracks: 9700, entries: 4000, unclaimed: 120 }), null)
-  assert.match(String(pruneBrake({ libraryTracks: 9700, entries: 4000, unclaimed: 3900 })), /would remove 3900 of 4000/)
+  assert.match(String(pruneBrake({ libraryTracks: 9700, entries: 4000, unclaimed: 3900 })), /would have removed 3900 of 4000/)
   assert.match(String(pruneBrake({ libraryTracks: 12, entries: 4000, unclaimed: 0 })), /only 12 songs/)
 })
 
@@ -201,90 +214,20 @@ test('tempo and key: never-measured songs, and failures only once a month', () =
   assert.deepEqual(analysisCandidates(rows, NIGHT).map((r) => r.id), [1, 4])
 })
 
-describe('tags: a file is written only when it differs, and never twice', () => {
-  test('numbers compare as numbers, words as words', () => {
-    assert.deepEqual(fieldsToWrite({ trackNumber: 7, year: 1972, title: 'Reelin' }, { trackNumber: '07', year: '1972', title: 'Reelin' }), [])
-    assert.deepEqual(fieldsToWrite({ title: 'Reelin', genre: 'Rock' }, { title: 'Reelin’ in the Years', genre: 'Rock' }), ['title'])
+describe('nothing writes tags (review of #489: metadata-overrides.json is not only Jake\'s edits)', () => {
+  const src = (p: string): string => readFileSync(join(import.meta.dirname, '..', p), 'utf8')
+  test('no nightly job writes tags, and the tag job module is gone', () => {
+    for (const j of SELF_CARE_JOBS) assert.ok(!/tag|override/i.test(j), `${j} looks like a tag job`)
+    assert.equal(existsSync(join(import.meta.dirname, '..', 'self-care-overrides.ts')), false)
+    const index = src('index.ts')
+    const at = index.indexOf('startSelfCare({')
+    const wiring = index.slice(at, index.indexOf('\n  })\n', at))
+    for (const w of ['writeTagsToFile', 'writeTagsBatch', 'tagWriteback', 'overridesCache.get()) as Record<string, { fp']) assert.ok(!wiring.includes(w), `the nightly check reaches ${w}`)
+    for (const f of ['self-care.ts', 'self-care-core.ts', 'self-care-files.ts']) assert.ok(!/writeTags|tag_writer|mutagen/.test(src(f).replace(/\/\*[\s\S]*?\*\//g, '')), f)
   })
-
-  function tagHost(over: Partial<TagJobHost> = {}) {
-    const files = new Map<string, Record<string, unknown>>([['/m/F01/A.m4a', { title: 'Old', genre: 'Rock' }], ['/m/F01/B.m4a', { title: 'Same' }]])
-    let ledger: Record<string, string> = {}
-    const writes: Array<[string, Record<string, unknown>]> = []
-    const queued: unknown[] = []
-    const host: TagJobHost = {
-      tracks: async () => [{ id: 1, path: ':F01:A.m4a', title: 'Old', duration: 1000 }, { id: 2, path: ':F01:B.m4a', title: 'Same', duration: 1000 }],
-      overrides: async () => ({ '1': { fields: { title: 'New', bpm: '120' } }, '2': { fields: { title: 'Same' } } }),
-      playerUsing: () => false,
-      queueEdit: async (e) => { queued.push(e) },
-      toAbs: (c) => '/m' + c.replace(/:/g, '/'),
-      readTags: async (abs) => files.get(abs) ?? null,
-      writeTags: async (abs, f) => { writes.push([abs, f]); files.set(abs, { ...files.get(abs), ...f }); return { ok: true, written: Object.keys(f).length } },
-      remeasure: async () => {},
-      readLedger: async () => ({ ...ledger }),
-      writeLedger: async (l) => { ledger = { ...l } },
-      ...over,
-    }
-    return { host, writes, queued, ledger: () => ledger }
-  }
-
-  test('first night writes the one field that differs; the second writes nothing', async () => {
-    const t = tagHost()
-    const ctx = { stillQuiet: () => true }
-    const one = await runTagJob(t.host, ctx)
-    assert.deepEqual(t.writes, [['/m/F01/A.m4a', { title: 'New' }]], 'only the differing field, never an analysis field')
-    assert.match(one.note, /1 written, 1 already right/)
-    const two = await runTagJob(t.host, ctx)
-    assert.equal(t.writes.length, 1)
-    assert.match(two.note, /0 written, 2 already right/)
-  })
-
-  test('the second night doesn\'t even open a file it already wrote', async () => {
-    const t = tagHost()
-    let reads = 0
-    const readTags = t.host.readTags
-    t.host.readTags = async (abs) => { reads++; return readTags(abs) }
-    await runTagJob(t.host, { stillQuiet: () => true })
-    reads = 0
-    await runTagJob(t.host, { stillQuiet: () => true })
-    assert.equal(reads, 0)
-  })
-
-  test('the ledger alone says "already written", whatever the reader says', () => {
-    const wanted = { title: 'New' }
-    const hash = overrideHash(':F01:A.m4a', wanted)
-    assert.deepEqual(overrideNeedsWrite({ ledgerHash: hash, hash, onFile: { title: 'Old' }, wanted }), [])
-    assert.deepEqual(overrideNeedsWrite({ ledgerHash: undefined, hash, onFile: { title: 'Old' }, wanted }), ['title'])
-    assert.deepEqual(overrideNeedsWrite({ ledgerHash: undefined, hash, onFile: null, wanted }), ['title'])
-  })
-
-  test('a reader that reports a field differently can\'t make it rewrite every night (the ledger)', async () => {
-    const t = tagHost({ readTags: async () => ({ title: 'something the reader made up' }) })
-    await runTagJob(t.host, { stillQuiet: () => true })
-    await runTagJob(t.host, { stillQuiet: () => true })
-    assert.equal(t.writes.filter(([p]) => p === '/m/F01/A.m4a').length, 1)
-    assert.equal(t.ledger()['1'], overrideHash(':F01:A.m4a', { title: 'New' }))
-  })
-
-  test('an entry that names another song is never written', async () => {
-    const t = tagHost({ overrides: async () => ({ '1': { fp: 'some other song|someone|999', fields: { genre: 'Jazz' } } }) })
-    const r = await runTagJob(t.host, { stillQuiet: () => true })
-    assert.equal(t.writes.length, 0)
-    assert.match(r.note, /1 no longer that song/)
-  })
-
-  test('a song the player is using goes on the per-edit line, not written now', async () => {
-    const t = tagHost({ playerUsing: (c) => c === ':F01:A.m4a' })
-    await runTagJob(t.host, { stillQuiet: () => true })
-    assert.equal(t.writes.length, 0)
-    assert.deepEqual(t.queued, [{ trackId: 1, field: 'title', value: 'New' }])
-  })
-
-  test('music starting stops it', async () => {
-    const t = tagHost()
-    const r = await runTagJob(t.host, { stillQuiet: () => false })
-    assert.equal(t.writes.length, 0)
-    assert.equal(r.interrupted, true)
+  test('the per-edit writer is as it was: no background mode, no batch caller', () => {
+    assert.ok(!src('tag-writer.ts').includes('background'))
+    assert.ok(!src('index.ts').includes("ipc.handle('apply-overrides-batch'"))
   })
 })
 
@@ -292,16 +235,20 @@ describe('background priority and wiring', () => {
   const src = (p: string): string => readFileSync(join(import.meta.dirname, '..', p), 'utf8')
   const index = src('index.ts')
 
-  test('the tag writer and its decode check run at background priority when the night asks', () => {
-    const tw = src('tag-writer.ts')
-    assert.match(tw, /background \? atBackgroundPriority\(PYTHON_CMD \?\? 'python3', \[script, audioFilePath\]\)/)
-    assert.match(tw, /opts\.background \? \{ check: \(p\) => decodeCheck\(p, \{ background: true \}\) \}/)
-    assert.match(src('audio-write-guard.ts'), /opts\.background \? atBackgroundPriority\(opts\.ffmpeg \?\? 'ffmpeg', args\)/)
-    assert.match(index, /writeTagsToFile\(\{ audioFilePath: abs, overrides: fields \}, \{ background: true \}\)/)
+  test('tempo and key analysis runs at background priority, and waits for music and for an iPod sync (6)', () => {
+    assert.match(index, /spawn\(\.\.\.atBackgroundPriority\(PYTHON_CMD \?\? 'python3', \[scriptPath, \.\.\.paths\]\)/)
+    const worker = index.slice(index.indexOf('async function audioAnalysisWorker('), index.indexOf('const AUDIO_BATCH = 12'))
+    assert.match(worker, /if \(playbackActive \|\| analysisSyncBusy\(\)\) \{/)
+    assert.match(index, /\nanalysisSyncBusy = \(\) => syncEngine\.isSyncInFlight\(\)/)
+    assert.ok(index.indexOf('analysisSyncBusy = () => syncEngine') > index.indexOf('const syncEngine = createSyncEngine('), 'wired after the engine exists')
   })
 
-  test('tempo and key analysis runs at background priority', () => {
-    assert.match(index, /spawn\(\.\.\.atBackgroundPriority\(PYTHON_CMD \?\? 'python3', \[scriptPath, \.\.\.paths\]\)/)
+  test('the play-cache prune builds its set once, stops for music partway, and reports a held brake (4)', () => {
+    const prune = index.slice(index.indexOf('prunePlayCache = async (brake: boolean, stillQuiet'), index.indexOf("ipc.handle('prune-alac-cache'"))
+    assert.ok(!prune.includes('[...expected]'), 'no copy of the whole set per entry')
+    assert.match(prune, /return !\(expected\.has\(h\) && isEntryFor\(f, h\)\)/)
+    assert.match(prune, /if \(stillQuiet && pruned % 25 === 0 && !stillQuiet\(\)\) return \{ ok: true, pruned, bytesFreed, stopped: true \}/)
+    assert.match(index, /if \(r\.held\) return \{ ok: false, note: `held: \$\{r\.held\}`, needsYou: \{ playCacheHeld: r\.held \} \}/)
   })
 
   test('index.ts starts the check once, with the real gates and every job', () => {
@@ -312,8 +259,14 @@ describe('background priority and wiring', () => {
     assert.match(wiring, /syncInFlight: \(\) => syncEngine\.isSyncInFlight\(\), isReplica: isHomeminiPlaybackClientCached/)
     for (const j of SELF_CARE_JOBS) assert.ok(wiring.includes(`'${j}':`) || wiring.includes(`\n      ${j}:`) || wiring.includes(` ${j}: `), `job ${j} wired`)
     assert.match(index, /playbackActive = !!active\n\s*musicSeenAt = Date\.now\(\)/)
-    // The play cache prune runs with its brake; leftovers are removed only on a disk of this Mac's own.
-    assert.match(wiring, /prunePlayCache\(true\)/)
-    assert.match(wiring, /const refused = await localAudioDropRefused\(MUSIC_DIR\)\n\s*const temp = refused \? null : await removeAppTempFiles\(MUSIC_DIR/)
+    // The play cache prune runs with its brake; the runner gets the machine refusal for music-folder jobs.
+    assert.match(wiring, /prunePlayCache\(true, ctx\.stillQuiet\)/)
+    assert.match(wiring, /musicFolderRefused: \(\) => localAudioDropRefused\(MUSIC_DIR\)/)
+    // Anything that deletes under the music folder lives in a MUSIC_FOLDER_JOB.
+    const leftovers = wiring.slice(wiring.indexOf('leftovers: async'), wiring.indexOf("'file-sizes': async"))
+    assert.equal((wiring.match(/removeAppTempFiles\(/g) || []).length, 1)
+    assert.ok(leftovers.includes('removeAppTempFiles('), 'leftovers are removed only by the leftovers job')
+    assert.ok(MUSIC_FOLDER_JOBS.has('leftovers'))
+    assert.ok(!/unlink|rm\(|removeAppTempFiles/.test(wiring.slice(wiring.indexOf('orphans: async'), wiring.indexOf('leftovers: async'))), 'orphans only counts')
   })
 })

@@ -470,7 +470,7 @@ describe('one bad write does not hold the line', () => {
   })
 })
 
-describe('the nightly tag job (once "Apply Overrides to Files…"): an entry still names its song after the song was corrected', () => {
+describe('overrideNamesTrack: an entry still names its song after the song was corrected', () => {
   const row = { id: 1, title: 'Marionette', artist: 'Twisted Teens', duration: 181919 }
   const cases: Array<[string, { fp?: string; fields?: Record<string, unknown> } | undefined, boolean]> = [
     ['no fingerprint recorded', { fields: { genre: 'Rock' } }, true],
@@ -581,21 +581,6 @@ describe('index.ts goes through the queue', () => {
     assert.match(quit, /flush,\s*\/\/[^\n]*\n\s*tagWriteback\.stop\(2000\)\.catch\(\(\) => undefined\),/)
   })
 
-  // V7: the menu tool is gone; the nightly check's tag job (self-care-overrides.ts) keeps both guards.
-  const job = readFileSync(join(import.meta.dirname, '..', 'self-care-overrides.ts'), 'utf8')
-  test('the nightly tag job asks whether the entry names the song, not whether the song is unedited', () => {
-    assert.match(job, /if \(!overrideNamesTrack\(entry, track\)\) \{ notThisSong\+\+; continue \}/)
-    assert.doesNotMatch(job, /entry\.fp !== trackFp/)
-  })
-
-  test('the nightly tag job sends a song the player is using to the per-edit line, which waits for it', () => {
-    const asks = job.indexOf('if (host.playerUsing(colonPath, Number(track.duration) || 0)) {')
-    assert.ok(asks > 0, 'the job never asks whether the song is playing')
-    assert.ok(asks > job.indexOf('if (!overrideNamesTrack(entry, track))'), 'asked after the identity guard, so only the right song is queued')
-    const branch = job.slice(asks, job.indexOf('const r = await host.writeTags(', asks))
-    assert.match(branch, /for \(const f of fields\) await host\.queueEdit\(\{ trackId, field: f, value: String\(wanted\[f\]\) \}\)\s*continue/, 'queued and NOT also written now')
-    assert.match(src, /playerUsing, queueEdit: \(e\) => tagWriteback\.edit\(e\)/, 'index.ts wires the real player check and the per-edit line')
-  })
 })
 
 describe('a song that is playing is not rewritten under the player (2026-11-14)', () => {

@@ -24,9 +24,8 @@ import { stat, readFile, writeFile, access } from 'fs/promises'
 import { spawn } from 'child_process'
 import { PYTHON_CMD, IS_WINDOWS } from './platform.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
-import { decodeCheck, withFileWriteLock, writeVerified } from './audio-write-guard.ts'
+import { withFileWriteLock, writeVerified } from './audio-write-guard.ts'
 import { noteAudioEditOwed } from './audio-edits-owed.ts'
-import { atBackgroundPriority } from './background-priority.ts'
 
 // Fields safe to propagate to embedded file tags. Anything not in this
 // set is JakeTunes-internal (analysis results, listener stats, ratings)
@@ -129,22 +128,6 @@ async function backupOriginalTags(audioFilePath: string): Promise<string | undef
   }
 }
 
-/** A file's tags under WRITABLE_FIELDS names (the nightly check compares them with Jake's edits). Null when unreadable. */
-export async function readWritableTags(audioFilePath: string): Promise<Record<string, unknown> | null> {
-  try {
-    const mm = await import('music-metadata')
-    const c = (await mm.parseFile(audioFilePath, { duration: false, skipCovers: true })).common || {}
-    return {
-      title: c.title, artist: c.artist, album: c.album, albumArtist: c.albumartist,
-      genre: Array.isArray(c.genre) ? c.genre.join('; ') : c.genre, year: c.year,
-      trackNumber: c.track?.no ?? undefined, trackCount: c.track?.of ?? undefined,
-      discNumber: c.disk?.no ?? undefined, discCount: c.disk?.of ?? undefined,
-    }
-  } catch {
-    return null
-  }
-}
-
 // Electron is imported lazily so plain-Node tests can load this module
 // (they pass the script path to writeTagsToFile instead).
 async function defaultTagWriterScript(): Promise<string> {
@@ -163,12 +146,9 @@ async function defaultTagWriterScript(): Promise<string> {
 // the song's file is untouched; the result says `timedOut` so the caller can
 // try again later.
 export const TAG_WRITER_TIMEOUT_MS = 120_000   // the decode check's own limit (audio-write-guard.ts)
-function runPythonTagWriter(script: string, audioFilePath: string, payload: Record<string, string | number>, timeoutMs: number = TAG_WRITER_TIMEOUT_MS, background = false): Promise<{ ok: boolean; error?: string; timedOut?: boolean }> {
+function runPythonTagWriter(script: string, audioFilePath: string, payload: Record<string, string | number>, timeoutMs: number = TAG_WRITER_TIMEOUT_MS): Promise<{ ok: boolean; error?: string; timedOut?: boolean }> {
   return new Promise((done) => {
-    // The nightly check writes at background priority (self-care-overrides.ts);
-    // a per-edit write-back stays at normal priority.
-    const [cmd, argv] = background ? atBackgroundPriority(PYTHON_CMD ?? 'python3', [script, audioFilePath]) : [PYTHON_CMD ?? 'python3', [script, audioFilePath]]
-    const py = spawn(cmd, argv)
+    const py = spawn(PYTHON_CMD ?? 'python3', [script, audioFilePath])
     let settled = false
     const clock = setTimeout(() => {
       if (settled) return
@@ -205,7 +185,7 @@ function runPythonTagWriter(script: string, audioFilePath: string, payload: Reco
   })
 }
 
-export async function writeTagsToFile(req: TagWriteRequest, opts: { script?: string; noteEdit?: (path: string) => Promise<void>; timeoutMs?: number; background?: boolean } = {}): Promise<TagWriteResult> {
+export async function writeTagsToFile(req: TagWriteRequest, opts: { script?: string; noteEdit?: (path: string) => Promise<void>; timeoutMs?: number } = {}): Promise<TagWriteResult> {
   const { audioFilePath, overrides } = req
   // Absolute-path sanity check. iPod colon-paths would silently fail
   // here ("file not found" deep in mutagen), so reject up front with a
@@ -252,10 +232,10 @@ export async function writeTagsToFile(req: TagWriteRequest, opts: { script?: str
     // never a throw: a vanished file or a refused rename is a failed write.
     let timedOut = false
     const writeResult = await writeVerified(audioFilePath, async (target) => {
-      const w = await runPythonTagWriter(script, target, payload, opts.timeoutMs, opts.background === true)
+      const w = await runPythonTagWriter(script, target, payload, opts.timeoutMs)
       if (w.timedOut) timedOut = true
       return { ok: w.ok, error: w.error }
-    }, opts.background ? { check: (p) => decodeCheck(p, { background: true }) } : {})
+    })
       .catch((err: unknown) => ({ ok: false, error: safeIpcError(err, 'io-failed') }))
     // The quick leg carries a rewrite to the NAS, whenever it next runs.
     if (writeResult.ok) await (opts.noteEdit ?? noteAudioEditOwed)(audioFilePath)

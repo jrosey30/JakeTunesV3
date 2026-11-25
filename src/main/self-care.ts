@@ -16,7 +16,7 @@
  * drives it on a fake clock.
  */
 import {
-  jobsFor, jobsLeft, parseStatus, selfCareGate, stillQuiet, LOOK_EVERY_MS,
+  jobsFor, jobsLeft, parseStatus, selfCareGate, stillQuiet, LOOK_EVERY_MS, MUSIC_FOLDER_JOBS,
   type NeedsYou, type SelfCareJob, type SelfCareStatus,
 } from './self-care-core.ts'
 
@@ -44,6 +44,8 @@ export interface SelfCareHost {
   lastMusicAt: () => number
   syncInFlight: () => boolean
   isReplica: () => Promise<boolean>
+  /** Why this machine may not write or delete under its music folder; null when it may (localAudioDropRefused). */
+  musicFolderRefused: () => Promise<string | null>
   readStatus: () => Promise<string | null>
   writeStatus: (s: SelfCareStatus) => Promise<void>
   jobs: Record<SelfCareJob, JobRunner>
@@ -89,7 +91,12 @@ export function createSelfCare(host: SelfCareHost): SelfCare {
         }
         const t0 = host.now()
         let out: JobOutcome
-        try {
+        // The runner's rule, never left to a job: nothing writes or deletes
+        // under the music folder on homemini or on a folder off this Mac's disk.
+        const refused = MUSIC_FOLDER_JOBS.has(job) ? await host.musicFolderRefused() : null
+        if (refused) {
+          out = { ok: true, note: `skipped, the music folder is not this Mac's to change: ${refused}` }
+        } else try {
           out = await host.jobs[job]({ stillQuiet: quiet })
         } catch (err) {
           out = { ok: false, note: err instanceof Error ? err.message : String(err) }

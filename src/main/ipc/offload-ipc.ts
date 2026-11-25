@@ -18,6 +18,7 @@ import { colonPathToAbs } from '../activity-boardable.ts'
 import { emptyLedger, parseLedger, returnedLately, returnRecentSongs, RETURN_LEDGER_FILE, type ReturnLedger } from '../offload-recent-return.ts'
 import { askAudioIdentity, hubBaseFromAudioBase } from '../audio-identity.ts'
 import { writeJsonAtomic } from '../atomic-write.ts'
+import { countsFromReport, startConfirmMessage, type OffloadCounts } from '../offload-counts.ts'
 import {
   bootOffloadIntent,
   compareLocalToRaw,
@@ -135,16 +136,16 @@ async function confirmStart(message: string, interactive: boolean): Promise<bool
   if (!interactive) return true
   const r = await dialog.showMessageBox({
     type: 'question',
-    buttons: ['Cancel', 'Start Offload'],
+    buttons: ['Cancel', 'Move'],
     defaultId: 0,
     cancelId: 0,
-    title: 'Offload Audio',
+    title: 'Keep songs on the home server',
     message,
   })
   return r.response === 1
 }
 
-async function runDry(interactive: boolean): Promise<{ ok: boolean; report?: string; error?: string }> {
+async function runDry(interactive: boolean): Promise<{ ok: boolean; report?: string; counts?: OffloadCounts; error?: string }> {
   if (!host) return { ok: false, error: 'offload is not ready' }
   const source = await host.readStreamSource()
   const offload = await host.readOffloadAudio()
@@ -172,7 +173,7 @@ async function runDry(interactive: boolean): Promise<{ ok: boolean; report?: str
     console.warn('[offload] could not write dry-run report:', err instanceof Error ? err.message : err)
   }
   await showText('Offload dry run', text, interactive)
-  return { ok: true, report: text }
+  return { ok: true, report: text, counts: countsFromReport(report) }
 }
 
 async function resumeDrain(state: OffloadMigrationState): Promise<void> {
@@ -356,7 +357,18 @@ export function registerOffloadIpc(ipc: IpcRegistrar, h: OffloadIpcHost): void {
   // gone). Settings asks Jake first with its own confirm, so these show no
   // dialogs of their own. Every refusal rule is runStart's and the convert
   // pass's, unchanged (hubOffloadActive here; dropAudioRefusal per file).
+  // "Check first": the dry run, counts only (its report file is written as before).
   ipc.handle('offload-audio-dry-run', async () => runDry(false), { refuse: REFUSED_SENDER })
+  // Turning the switch on: count first, then a native confirm naming the
+  // count. Only a yes lets Settings turn the switch on; Save then starts.
+  ipc.handle('offload-audio-confirm', async () => {
+    const dry = await runDry(false)
+    if (!dry.ok || !dry.counts) return { ok: false, reason: 'count-failed' as const }
+    if (dry.counts.ready === 0) return { ok: false, reason: 'nothing-ready' as const, counts: dry.counts }
+    return { ok: await confirmStart(startConfirmMessage(dry.counts), true), counts: dry.counts }
+  }, { refuse: REFUSED_SENDER })
+  // Start after Save: runStart, with every one of its refusals (a replica,
+  // the switch off). The convert pass's per-file refusal (dropAudioRefusal) is unchanged.
   ipc.handle('offload-audio-start', async (_e, opts?: { settingJustSaved?: boolean }) => {
     if (opts?.settingJustSaved) await new Promise((resolve) => setTimeout(resolve, SETTING_CACHE_WAIT_MS))
     return runStart(false)

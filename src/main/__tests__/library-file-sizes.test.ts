@@ -146,15 +146,13 @@ describe('refresh is saved by the renderer, not written by main', () => {
     assert.match(body, /if \(sizeUpdates\.length\) dispatch\(\{ type: 'UPDATE_TRACKS', updates: sizeUpdates \}\)/)
   })
 
-  test('tag write-back re-measures size and fingerprint; the nightly size check measures sizes only', () => {
+  test('per-edit tag write-back re-measures size and fingerprint; the nightly size check measures sizes only', () => {
     const hookStart = index.indexOf('const result = await writeTagsToFile({ audioFilePath: absPath, overrides })')
     assert.ok(hookStart > 0, 'per-edit write-back still writes tags')
     const hook = index.slice(hookStart, index.indexOf('} else if (!result.ok)', hookStart))
     assert.match(hook, /measureLibraryFileSizes\(\[track\], \(\) => absPath, \(\) => true, lstat, undefined, computeAudioFingerprint\)/)
     assert.match(hook, /sendToRenderer\('tag-writeback:file-changed', measured\[0\]\)/)
-    // The nightly tag job re-measures what it wrote, fingerprints included…
-    assert.match(index, /measureFileSizesOnDisk\(\(a\) => paths\.has\(a\), undefined, true\)/)
-    // …and the nightly size job measures every file without re-stamping fingerprints.
+    // The nightly size job measures every file without re-stamping fingerprints.
     const job = index.slice(index.indexOf("'file-sizes': async () => {"), index.indexOf("'file-sizes': async () => {") + 600)
     assert.match(job, /measureFileSizesOnDisk\(\(\) => true\)/)
     assert.match(job, /sendToRenderer\('self-care:measured', scan\.measured\)/)

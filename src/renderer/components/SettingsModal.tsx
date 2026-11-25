@@ -27,6 +27,8 @@ interface Props {
   initial: AppSettings
   onClose: () => void
   onSaved: (next: AppSettings) => void
+  /** A setting saved on its own while Preferences stays open (Bring back turns offload off). */
+  onApplied?: (next: AppSettings) => void
   /** Open on a given tab (a notice deep-links to Music Sources). */
   initialTab?: Tab
 }
@@ -69,6 +71,15 @@ function CorrelationMeter() {
       </div>
     </div>
   )
+}
+
+/** "Check first" in one line: how many can move now, how many can't yet. */
+export function countsLine(c: { ready: number; notYet: number; alreadyMoved: number }): string {
+  const songs = (n: number): string => (n === 1 ? 'one song' : `${n.toLocaleString()} songs`)
+  const parts = [`${songs(c.ready)} can move now`]
+  if (c.notYet) parts.push(`${songs(c.notYet)} can’t yet`)
+  if (c.alreadyMoved) parts.push(`${songs(c.alreadyMoved)} already moved`)
+  return parts.join(', ') + '.'
 }
 
 function bandLabel(hz: number): string {
@@ -131,7 +142,7 @@ interface LastSync {
   remote?: boolean
 }
 
-export default function SettingsModal({ initial, onClose, onSaved, initialTab }: Props) {
+export default function SettingsModal({ initial, onClose, onSaved, onApplied, initialTab }: Props) {
   // The width/crossfeed sliders apply LIVE while dragging (tuning by ear needs
   // to be audible), so Cancel must put the sound back the way it was. Wrap
   // onClose: revert the audio chain to the settings the modal OPENED with.
@@ -211,8 +222,10 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
   } | null>(null)
   const [reconcileRunning, setReconcileRunning] = useState(false)
 
-  // Storage: the offload switch asks first, and starts after Save.
-  const [confirmOffload, setConfirmOffload] = useState(false)
+  // Storage: "Check first" counts; turning the switch on counts and asks
+  // (a native confirm naming the count, main/ipc/offload-ipc.ts); Save starts.
+  const [offloadBusy, setOffloadBusy] = useState(false)
+  const [offloadMsg, setOffloadMsg] = useState<string | null>(null)
   const [confirmBringBack, setConfirmBringBack] = useState(false)
   const [bringBackMsg, setBringBackMsg] = useState<string | null>(null)
   const [confirmRestore, setConfirmRestore] = useState<{ file: string; date: string; trackCount: number } | null>(null)
@@ -752,9 +765,17 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                 <input
                   type="checkbox"
                   checked={draft.library.offloadAudioToHomemini === true}
+                  disabled={offloadBusy}
                   onChange={(e) => {
-                    if (e.target.checked && initial.library.offloadAudioToHomemini !== true) { setConfirmOffload(true); return }
-                    setDraft({ ...draft, library: { ...draft.library, offloadAudioToHomemini: e.target.checked } })
+                    if (!e.target.checked || initial.library.offloadAudioToHomemini === true) {
+                      setDraft({ ...draft, library: { ...draft.library, offloadAudioToHomemini: e.target.checked } })
+                      return
+                    }
+                    setOffloadBusy(true); setOffloadMsg('Checking…')
+                    void window.electronAPI.offloadConfirm().then((r) => {
+                      setOffloadMsg(r.counts ? countsLine(r.counts) : 'Couldn’t check. Nothing was changed.')
+                      if (r.ok) setDraft((d) => ({ ...d, library: { ...d.library, offloadAudioToHomemini: true } }))
+                    }).catch(() => setOffloadMsg('Couldn’t check. Nothing was changed.')).finally(() => setOffloadBusy(false))
                   }}
                 />
                 <span>Keep songs on the home server</span>
@@ -762,19 +783,14 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
               <p className="imp-help" style={{ marginTop: 8 }}>
                 Frees space on this Mac. A song leaves this Mac only once the home server has the exact same file, and it plays the same. Turning this off stops moving songs; the ones already moved keep playing.
               </p>
-              {confirmOffload && (
-                <ConfirmDialog
-                  message="Keep songs on the home server?"
-                  detail="Songs move a few at a time, in the background, starting after you press Save. Each one is checked first."
-                  confirmLabel="OK"
-                  destructive={false}
-                  onCancel={() => setConfirmOffload(false)}
-                  onConfirm={() => {
-                    setConfirmOffload(false)
-                    setDraft({ ...draft, library: { ...draft.library, offloadAudioToHomemini: true } })
-                  }}
-                />
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+                <button type="button" className="imp-btn" disabled={offloadBusy} onClick={() => {
+                  setOffloadBusy(true); setOffloadMsg('Checking…')
+                  void window.electronAPI.offloadCheck().then((r) => setOffloadMsg(r.ok && r.counts ? countsLine(r.counts) : 'Couldn’t check. Try again later.'))
+                    .catch(() => setOffloadMsg('Couldn’t check. Try again later.')).finally(() => setOffloadBusy(false))
+                }}>Check first</button>
+                {offloadMsg && <span style={{ color: '#555' }}>{offloadMsg}</span>}
+              </div>
 
               {/* V7: the engineer controls, folded away in plain words. */}
               <details className="settings-advanced" style={{ marginTop: 18, borderTop: '1px solid #d0d0d0', paddingTop: 12 }}>
@@ -797,7 +813,7 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
 
                 <div style={{ marginTop: 12, fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                   <span>
-                    <span style={{ fontWeight: 600 }}>Music Man’s song index: </span>
+                    <span style={{ fontWeight: 600 }}>The Music Man’s song index: </span>
                     {!embedStatus ? '—'
                       : !embedStatus.configured ? 'not set up on this Mac.'
                       : embedRunning && embedProgress && embedProgress.total > 0
@@ -832,7 +848,11 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                     onConfirm={() => {
                       setConfirmBringBack(false)
                       setBringBackMsg('Bringing songs back…')
-                      void window.electronAPI.offloadBringBack().then((r) => {
+                      // Bringing them back turns the switch off first and saves it, so nothing moves them out again.
+                      const off: AppSettings = { ...initial, library: { ...initial.library, offloadAudioToHomemini: false } }
+                      setDraft((d) => ({ ...d, library: { ...d.library, offloadAudioToHomemini: false } }))
+                      void window.electronAPI.saveAppSettings(off as unknown as Record<string, unknown>)
+                        .then(() => { onApplied?.(off); return window.electronAPI.offloadBringBack() }).then((r) => {
                         const n = r.restored ?? 0
                         const songs = n === 1 ? 'one song' : `${n.toLocaleString()} songs`
                         setBringBackMsg(r.ok ? `Brought back ${songs}.` : n > 0 ? `Brought back ${songs}, then stopped. Try again later.` : 'Nothing to bring back.')
