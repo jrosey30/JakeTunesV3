@@ -114,24 +114,53 @@ export function askedWords(asked?: string, askedCount?: number, clean?: boolean)
   return 'This edition'
 }
 
+/** "The Deluxe isn’t on Qobuz. The Standard (11 songs) is." — `of` names the record ("The Deluxe of Animals"). */
+function editionSentence(o: Extract<ShopOffer, { kind: 'edition' }>, ctx: { asked?: string; askedCount?: number; of?: string }): string {
+  const n = o.edition.trackCount
+  // The clean edit of the very edition asked for: "The explicit edition isn't on Qobuz".
+  // A clean edition of another size: the asked one by name, the offer called clean.
+  const sameSize = !n || !ctx.askedCount || n === ctx.askedCount
+  const name = o.clean && !sameSize ? cleanName(o, ctx.asked) : offeredName(o, ctx.asked)
+  const asked = askedWords(ctx.asked, ctx.askedCount, o.clean && sameSize)
+  // The size once: "The 12-song edition is", never "The 12-song edition (12 songs) is" (review of #496).
+  const sized = n && !/^\d+-song\b/.test(name) ? ` (${songs(n)})` : ''
+  return `${ctx.of ? `${asked} of ${ctx.of}` : asked} isn’t on Qobuz. The ${name}${sized} is.`
+}
+
 /** The one line that asks. */
 export function offerLine(o: ShopOffer, ctx: { asked?: string; askedCount?: number } = {}): string {
   switch (o.kind) {
-    case 'edition': {
-      const n = o.edition.trackCount
-      // The clean edit of the very edition asked for: "The explicit edition isn't on Qobuz".
-      // A clean edition of another size: the asked one by name, the offer called clean.
-      const sameSize = !n || !ctx.askedCount || n === ctx.askedCount
-      const name = o.clean && !sameSize ? cleanName(o, ctx.asked) : offeredName(o, ctx.asked)
-      return `${askedWords(ctx.asked, ctx.askedCount, o.clean && sameSize)} isn’t on Qobuz. The ${name}${n ? ` (${songs(n)})` : ''} is. Save that?`
-    }
+    case 'edition': return `${editionSentence(o, ctx)} Save that?`
     case 'songs': {
       const got = o.have.length + o.owned
-      if (!o.missing.length) return `Qobuz has all ${o.of} songs, on ${o.from && o.from !== o.of ? `a ${o.from}-song edition` : 'another edition'}. Save ${o.have.length === 1 ? 'it' : `those ${o.have.length}`}?`
+      if (!o.missing.length) return `Qobuz has every song, on ${o.from && o.from !== o.of ? `a ${o.from}-song edition` : 'another edition'}. Save ${o.have.length === 1 ? 'it' : `those ${o.have.length}`}?`
       return `Qobuz has ${got} of ${o.of} songs. Save ${o.have.length === 1 ? 'that one' : `those ${o.have.length}`} and keep the other ${o.missing.length} on your Listening List?`
     }
     case 'bandcamp': return 'Only Bandcamp has it, as a lossy MP3. Save that?'
     case 'songs-each': return 'Try its songs one at a time?'
+  }
+}
+
+/**
+ * The Record Shop's banner, shown the moment a save from Search is refused
+ * (Record Shop Phase 4, Jake's approved picture: "The Deluxe of Animals isn’t
+ * on Qobuz. The Standard (5 songs) is." and one button, "Save the
+ * Standard"). It names the record, and asks nothing: the button is the
+ * question.
+ */
+export function offerBanner(o: ShopOffer, ctx: { album: string; asked?: string; askedCount?: number }): string {
+  const album = ctx.album.trim()
+  switch (o.kind) {
+    case 'edition': return editionSentence(o, { ...ctx, of: album || undefined })
+    case 'songs': {
+      const got = o.have.length + o.owned
+      if (!o.missing.length) return `Qobuz has every song of ${album}, on ${o.from && o.from !== o.of ? `a ${o.from}-song edition` : 'another edition'}.`
+      // Nothing happens before a press: the rest *would* go on the list.
+      return `Qobuz has ${got} of the ${o.of} songs on ${album}. ${o.missing.length === 1 ? 'The other one would go' : `The other ${o.missing.length} would go`} on your Listening List.`
+    }
+    case 'bandcamp': return `${album} isn’t on Qobuz. Bandcamp has it, as a lossy MP3.`
+    // Said whether or not anything downloaded (a refusal from memory downloaded nothing).
+    case 'songs-each': return `${album} didn’t save as a whole album. Save its songs one at a time?`
   }
 }
 

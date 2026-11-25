@@ -59,7 +59,7 @@ describe('the question and the button', () => {
     assert.equal(offerButton(std(11), { asked: 'Deluxe' }), 'Save the Standard')
   })
   it('two plain editions are told apart by size', () => {
-    assert.equal(offerLine(std(12), { asked: 'Standard', askedCount: 11 }), 'The 11-song edition isn’t on Qobuz. The 12-song edition (12 songs) is. Save that?')
+    assert.equal(offerLine(std(12), { asked: 'Standard', askedCount: 11 }), 'The 11-song edition isn’t on Qobuz. The 12-song edition is. Save that?')
     assert.equal(offerButton(std(12), { asked: 'Standard' }), 'Save the 12-song one')
     assert.equal(offerButton({ ...std(20), edition: edition(2, 'X', 20, { label: 'Deluxe' }) }, { asked: 'Deluxe' }), 'Save the 20-song Deluxe')
   })
@@ -474,7 +474,7 @@ describe('a clean edition of another size', () => {
     assert.equal(offerLine(o, { asked: 'Expanded edition', askedCount: 15 }), 'The Expanded edition isn’t on Qobuz. The clean 9-song edition (9 songs) is. Save that?')
   })
   it('all the songs on an edition of the same size reads "another edition"', () => {
-    assert.equal(offerLine({ kind: 'songs', have: tracks(['a', 'b']), missing: [], owned: 0, of: 2, from: 2 }), 'Qobuz has all 2 songs, on another edition. Save those 2?')
+    assert.equal(offerLine({ kind: 'songs', have: tracks(['a', 'b']), missing: [], owned: 0, of: 2, from: 2 }), 'Qobuz has every song, on another edition. Save those 2?')
   })
 })
 
