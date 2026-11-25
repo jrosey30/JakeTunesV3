@@ -153,6 +153,8 @@ export interface WavesJournal {
   version: 1
   rows: JournalRow[]
   committed: { md5: string; bytes: number; backupDir: string | null }
+  /** The song list being written to the card right now (not yet proven), if any. */
+  inflight?: { md5: string } | null
   history: { swapsSinceFull: number; bytesRemovedSinceFull: number }
   open: { state: 'staged' | 'committed'; items: JournalItem[] } | null
 }
@@ -183,27 +185,28 @@ export function md5Of(buf: Buffer): string {
   return createHash('md5').update(buf).digest('hex')
 }
 
-export interface RecoveryReport { restored: string[]; released: string[]; removed: string[]; dbRestored: boolean; kept: string[] }
+export interface RecoveryReport { restored: string[]; released: string[]; removed: string[]; dbRestored: boolean; kept: string[]; stale: boolean }
 
 /**
- * Settle the wave a run left open, from the journal:
+ * Settle what a run left, from the journal. First, which song list is on the card:
+ *   • the committed one: nothing to undo there;
+ *   • the one the run was writing (`inflight`, never proven): the committed one comes back from
+ *     its Mac backup;
+ *   • neither: the card was changed elsewhere (another Mac, iTunes, a restore). The journal no
+ *     longer describes it: nothing is touched and the caller drops the journal (`stale`).
+ * Then the open wave:
  *   • committed → its originals go (the hidden `.jtorig`, or the old path of a new extension);
- *   • staged    → never committed: if the catalog on the card isn't the last committed one (the
- *                 run died while writing or proving the new one), the committed catalog comes
- *                 back from its Mac backup first; then every original goes back under its own
- *                 name (one rename over the new copy) and new-path copies go.
+ *   • staged    → never committed: every original goes back under its own name (one rename
+ *                 over the new copy) and new-path copies go.
  * Staged copies (`.jtnew`) of the wave go either way. Anything that can't be done is left as
- * found and reported; nothing is deleted on a guess. Returns ok:false when the committed
- * catalog had to come back and couldn't (the caller then can't trust the card).
+ * found and reported; nothing is deleted on a guess. ok:false = the card can't be trusted.
  */
 export async function recoverFromJournal(
   mount: string,
   j: WavesJournal,
   restoreDb: (backupDir: string) => Promise<void>,
 ): Promise<{ ok: boolean; report: RecoveryReport }> {
-  const rep: RecoveryReport = { restored: [], released: [], removed: [], dbRestored: false, kept: [] }
-  const open = j.open
-  if (!open) return { ok: true, report: rep }
+  const rep: RecoveryReport = { restored: [], released: [], removed: [], dbRestored: false, kept: [], stale: false }
   const tryDo = async (label: string, f: () => Promise<void>): Promise<boolean> => {
     try { await f(); return true } catch (err) {
       console.warn(`[ipod-waves] ${label} left as found:`, err instanceof Error ? err.message : err)
@@ -211,6 +214,21 @@ export async function recoverFromJournal(
       return false
     }
   }
+  const db = await readFile(join(mount, 'iPod_Control', 'iTunes', 'iTunesDB')).catch(() => null)
+  const onCard = db ? md5Of(db) : null
+  const inflight = j.inflight?.md5 ?? null
+  if (onCard !== j.committed.md5) {
+    if (!onCard || onCard !== inflight) {
+      rep.stale = true
+      return { ok: false, report: rep }
+    }
+    if (!j.committed.backupDir) return { ok: false, report: rep }
+    const ok = await tryDo('the committed song list', async () => { await restoreDb(j.committed.backupDir!) })
+    if (!ok) return { ok: false, report: rep }
+    rep.dbRestored = true
+  }
+  const open = j.open
+  if (!open) return { ok: true, report: rep }
   const items = open.items.map((it) => ({ dst: absOnCard(mount, it.dstColon), oldAbs: absOnCard(mount, it.oldColon) }))
   for (const it of items) {
     const staged = sideName(it.dst, NEW_TAG)
@@ -222,14 +240,6 @@ export async function recoverFromJournal(
       if (await stat(gone).catch(() => null)) await tryDo(gone, async () => { await unlink(gone); rep.released.push(gone) })
     }
     return { ok: true, report: rep }
-  }
-  // Staged, never committed: the committed catalog first, then the originals.
-  const db = await readFile(join(mount, 'iPod_Control', 'iTunes', 'iTunesDB')).catch(() => null)
-  if (!db || md5Of(db) !== j.committed.md5) {
-    if (!j.committed.backupDir) return { ok: false, report: rep }
-    const ok = await tryDo('the committed song list', async () => { await restoreDb(j.committed.backupDir!) })
-    if (!ok) return { ok: false, report: rep }
-    rep.dbRestored = true
   }
   for (const it of items) {
     if (it.dst === it.oldAbs) {

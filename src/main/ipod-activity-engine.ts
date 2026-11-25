@@ -1058,8 +1058,15 @@ async function runActivitySyncHolding(
     const fixed = await recoverFromJournal(IPOD_MOUNT, priorJournal, async (dir) => { await restoreItunesDbBackup(dir, IPOD_MOUNT) })
     const r = fixed.report
     console.log(`activity-sync: a stopped replacement was settled from its journal — ${r.restored.length} original(s) back, ${r.released.length} released, ${r.removed.length} unfinished copy(ies) removed${r.dbRestored ? ', the last committed song list put back' : ''}${r.kept.length ? `, ${r.kept.length} left as found` : ''}`)
-    if (!fixed.ok) journalUsable = false
-    else if (priorJournal.open) {
+    if (r.stale) {
+      // The card was changed elsewhere since this Mac's run stopped: the journal no longer
+      // describes it. Nothing on the card was touched; the journal goes.
+      console.warn('activity-sync: the iPod\'s song list is neither the one the stopped replacement committed nor the one it was writing — left as it is, the journal dropped')
+      await deleteWavesJournal(host.stateDir)
+      journalUsable = false
+    } else if (!fixed.ok) journalUsable = false
+    else if (priorJournal.open || priorJournal.inflight) {
+      priorJournal.inflight = null
       priorJournal.open = null
       await writeWavesJournal(host.stateDir, priorJournal).catch((err) => { journalUsable = false; console.warn('activity-sync: waves journal update failed:', err instanceof Error ? err.message : err) })
     }
@@ -1078,6 +1085,8 @@ async function runActivitySyncHolding(
   })()
   /** Songs whose card file changes at the same card path: replaced in waves, originals kept until committed. */
   let replaceIds = new Set<number>()
+  /** Songs whose new copy couldn't be made: they kept their copy on the iPod (said in the result). */
+  const keptOldCopies: string[] = []
   /** The ones a wave actually replaced (counted as one out and one in, like any changed song). */
   const replacedIds = new Set<number>()
   let swap: SwapPlan | null = null
@@ -1623,6 +1632,18 @@ async function runActivitySyncHolding(
         console.warn(`activity-sync: ${kind} manifest write failed (non-fatal):`, mErr)
       }
     }
+    // While songs are being replaced, the journal names this song list before it goes on the
+    // card, so a run that dies while writing or proving it is settled from the journal.
+    if (journal) {
+      const next: WavesJournal = { ...journal, inflight: { md5: contig.md5 } }
+      try {
+        await writeWavesJournal(host.stateDir, next)
+        journal = next
+      } catch (err) {
+        try { await unlink(localDb) } catch { /* temp */ }
+        return stop(false, { copied, copyErrors, target, error: `Couldn’t write this iPod’s replacement record on this Mac (${err instanceof Error ? err.message : String(err)}). Nothing on the iPod was changed.` })
+      }
+    }
     let catalogConsecutive = 0
     let readback: { tracks: Array<Record<string, unknown>> } | null = null
     let cardBytes: Buffer | null = null
@@ -1782,7 +1803,7 @@ async function runActivitySyncHolding(
         const id = Number(t.id)
         return { id, destPath: relOf(dstById.get(id) || ''), identity: identityById.get(id) || '', size: expectedSize.get(id) ?? 0, sourceSize: masterSizeById.get(id) || 0 }
       })
-      const next: WavesJournal = { ...journal, rows, committed: { md5: contig.md5, bytes: contig.bytes, backupDir: b.dir }, open: journal.open ? { ...journal.open, state: 'committed' } : null }
+      const next: WavesJournal = { ...journal, rows, committed: { md5: contig.md5, bytes: contig.bytes, backupDir: b.dir }, inflight: null, open: journal.open ? { ...journal.open, state: 'committed' } : null }
       try {
         await writeWavesJournal(host.stateDir, next)
         journal = next
@@ -1808,7 +1829,7 @@ async function runActivitySyncHolding(
     const st = await readCardState(IPOD_MOUNT)
     try {
       if (!st.catalog) throw new Error('the song list on the iPod can’t be read')
-      journal = { version: 1, rows: [...proof.rows.values()], committed: { ...st.catalog, backupDir: b.dir }, history: proof.history, open: null }
+      journal = { version: 1, rows: [...proof.rows.values()], committed: { ...st.catalog, backupDir: b.dir }, inflight: null, history: proof.history, open: null }
       await writeWavesJournal(host.stateDir, journal)
     } catch (err) {
       await host.writeJournal(null)
@@ -1866,6 +1887,7 @@ async function runActivitySyncHolding(
       const row = proven.rows.get(id)
       if (!e || !row) return
       console.warn(`activity-sync: "${e.title}" keeps its copy on the iPod (${why})`)
+      keptOldCopies.push(e.title)
       e.dstToCopy = absOf(row.destPath)
       dstById.set(id, e.dstToCopy)
       const t = tracks.find((x) => Number(x.id) === id)
@@ -1905,6 +1927,27 @@ async function runActivitySyncHolding(
       const next: WavesJournal = { ...journal!, open }
       await writeWavesJournal(host.stateDir, next)
       journal = next
+    }
+    /**
+     * Before a commit: each original straight back over its new copy (one rename, never a delete
+     * first). A rename that fails (a card dropping out) falls back to copying the original over
+     * it, so the song list on the card still describes the files on it. true only when every
+     * original went back by rename: anything less leaves the journal open for the next sync.
+     */
+    const putBack = async (placed: Array<{ dst: string; orig: string | null }>): Promise<boolean> => {
+      let all = true
+      for (const pl of [...placed].reverse()) {
+        if (pl.orig) {
+          const moved = await rename(pl.orig, pl.dst).then(() => true, () => false)
+          if (moved) continue
+          all = false
+          await copyFile(pl.orig, pl.dst).catch((e) => console.error(`activity-sync: couldn't put ${pl.dst} back yet (the next sync does, from the journal):`, e instanceof Error ? e.message : e))
+        } else {
+          const gone = await unlink(pl.dst).then(() => true, (e: NodeJS.ErrnoException) => e.code === 'ENOENT')
+          if (!gone) all = false
+        }
+      }
+      return all
     }
     const total = pending.length
     let replaced = 0
@@ -1977,13 +2020,10 @@ async function runActivitySyncHolding(
           await rename(sideName(dst, NEW_TAG), dst)
         }
       } catch (err) {
-        for (const pl of [...placed].reverse()) {
-          if (pl.orig) await rename(pl.orig, pl.dst).catch((e) => console.error(`activity-sync: couldn't put ${pl.dst} back yet (the next sync does, from the journal):`, e instanceof Error ? e.message : e))
-          else await unlink(pl.dst).catch(() => undefined)
-        }
+        const allBack = await putBack(placed)
         for (const w of wave) await unlink(sideName(w.e.dstToCopy, NEW_TAG)).catch(() => undefined)
-        await setOpen(null).catch(() => undefined)
-        const msg = `Couldn't put the new copies on the iPod (${err instanceof Error ? err.message : String(err)}). Every song is as it was.`
+        if (allBack) await setOpen(null).catch(() => undefined)
+        const msg = `Couldn't put the new copies on the iPod (${err instanceof Error ? err.message : String(err)}). ${allBack ? 'Every song is as it was.' : 'Some songs couldn\'t be put back yet; the next sync puts them back first.'}`
         console.error(`activity-sync: ${msg}`)
         cataloguedAbs = await listedOnCard()
         return swapStop(fail({ copied: 0, target, error: msg }))
@@ -2006,12 +2046,9 @@ async function runActivitySyncHolding(
       for (const p of waiting) { const t = tracks.find((x) => Number(x.id) === p.id); if (t) t.path = colonOf(p.e.dstToCopy); dstById.set(p.id, p.e.dstToCopy) }
       if (!committed.ok) {
         if (!committed.touchedCard) {
-          // The card's song list is untouched: every original of the wave goes back now.
-          for (const pl of [...placed].reverse()) {
-            if (pl.orig) await rename(pl.orig, pl.dst).catch((e) => console.error(`activity-sync: couldn't put ${pl.dst} back yet (the next sync does, from the journal):`, e instanceof Error ? e.message : e))
-            else await unlink(pl.dst).catch(() => undefined)
-          }
-          await setOpen(null).catch(() => undefined)
+          // The card's song list is untouched: every original of the wave goes back now. The
+          // journal is closed only when all of them did; otherwise the next sync finishes it.
+          if (await putBack(placed)) await setOpen(null).catch(() => undefined)
         } else {
           // The new song list may be on the card: nothing is put back now. The journal still says
           // the wave is open (staged), so the next sync puts the committed song list and the
@@ -2783,8 +2820,11 @@ async function runActivitySyncHolding(
   const changedNote = counts && counts.changed > 0
     ? ` ${counts.changed.toLocaleString()} of them ${counts.changed === 1 ? 'was' : 'were'} re-copied because the library file changed.`
     : ''
+  const keptNote = keptOldCopies.length > 0
+    ? ` ${keptOldCopies.length.toLocaleString()} kept ${keptOldCopies.length === 1 ? 'its' : 'their'} old copy (the new one couldn't be made): ${keptOldCopies.slice(0, 3).join(', ')}${keptOldCopies.length > 3 ? '…' : ''}.`
+    : ''
   const summary = counts
-    ? swapResultLine(counts.out, counts.in, counts.stayed) + changedNote
+    ? swapResultLine(counts.out, counts.in, counts.stayed) + changedNote + keptNote
     : fullCopyLine(fullReason || 'nothing to keep')
   console.log(`activity-sync: ${summary}`)
   host.sendProgress({ phase: 'verify', current: 1, total: 1, title: 'Sealed', mode, summary })

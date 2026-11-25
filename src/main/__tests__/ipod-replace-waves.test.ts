@@ -267,13 +267,14 @@ describe('the waves journal: a commit is known from it, never from sizes', () =>
     assert.deepEqual((await readdir(music)).sort(), ['A.m4a'])
     assert.equal((await readFile(join(music, 'A.m4a')))[0], 2, 'the original')
   })
-  it('staged, a newer unproven song list on the card: the committed one comes back from its Mac backup, then the originals', async () => {
+  it('staged, the song list the run was writing is on the card: the committed one comes back from its Mac backup, then the originals', async () => {
     const { root, music } = await mk()
     await writeFile(join(root, 'iPod_Control', 'iTunes', 'iTunesDB'), Buffer.from('REJECTED-BY-THE-RUN'))
     await writeFile(join(music, 'A.m4a'), Buffer.alloc(400, 1))
     await writeFile(join(music, '.A.m4a.jtorig'), Buffer.alloc(300, 2))
     let from = ''
-    const r = await recoverFromJournal(root, journal('staged'), async (dir) => { from = dir; await writeFile(join(root, 'iPod_Control', 'iTunes', 'iTunesDB'), Buffer.from('COMMITTED')) })
+    const j = journal('staged'); j.inflight = { md5: md5('REJECTED-BY-THE-RUN') }
+    const r = await recoverFromJournal(root, j, async (dir) => { from = dir; await writeFile(join(root, 'iPod_Control', 'iTunes', 'iTunesDB'), Buffer.from('COMMITTED')) })
     assert.equal(r.ok, true)
     assert.equal(from, '/backup')
     assert.equal(r.report.dbRestored, true)
@@ -284,10 +285,25 @@ describe('the waves journal: a commit is known from it, never from sizes', () =>
     await writeFile(join(root, 'iPod_Control', 'iTunes', 'iTunesDB'), Buffer.from('OTHER'))
     await writeFile(join(music, 'A.m4a'), Buffer.alloc(400))
     await writeFile(join(music, '.A.m4a.jtorig'), Buffer.alloc(300))
-    const j = journal('staged'); j.committed.backupDir = null
+    const j = journal('staged'); j.committed.backupDir = null; j.inflight = { md5: md5('OTHER') }
     const r = await recoverFromJournal(root, j, async () => {})
     assert.equal(r.ok, false)
     assert.deepEqual((await readdir(music)).sort(), ['.A.m4a.jtorig', 'A.m4a'])
+  })
+  it('the song list on the card is neither the committed nor the in-flight one (changed elsewhere): stale, nothing touched', async () => {
+    for (const state of ['staged', 'committed'] as const) {
+      const { root, music } = await mk()
+      await writeFile(join(root, 'iPod_Control', 'iTunes', 'iTunesDB'), Buffer.from('REBUILT-BY-ITUNES'))
+      await writeFile(join(music, 'A.m4a'), Buffer.alloc(400))
+      await writeFile(join(music, '.A.m4a.jtorig'), Buffer.alloc(300))
+      let restores = 0
+      const j = journal(state); j.inflight = { md5: md5('SOMETHING-ELSE') }
+      const r = await recoverFromJournal(root, j, async () => { restores++ })
+      assert.equal(r.ok, false, state)
+      assert.equal(r.report.stale, true, state)
+      assert.equal(restores, 0, `${state}: this Mac's old song list never goes over it`)
+      assert.deepEqual((await readdir(music)).sort(), ['.A.m4a.jtorig', 'A.m4a'], `${state}: nothing deleted or moved`)
+    }
   })
   it('a new extension, staged: the new-path copy goes, the original stays at its path', async () => {
     const { root, music } = await mk()
