@@ -729,6 +729,10 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
 
     # Bitrate (kbps) at 0x38; sample rate as (Hz << 16) at 0x3C; mediatype 0xD0.
     # ⚠️ TWIN: sampleRateForItunesDb / mediaTypeForItunesDb in ipod-reconcile.ts
+    # Brief 265 Part 3: the sync engines lay the FILE ON THE iPOD's own sampleRate,
+    # bitRate and duration over each row before --write (src/main/ipod-file-stamps.ts
+    # stampRowFromFile), so these pack the converted file's facts, not the master's.
+    # This writer packs what it is given; keep it that way.
     sr = sample_rate_for_itunesdb(track.get('sampleRate', 0))
     br = _safe_int(track.get('bitRate', 0)) or _safe_int(track.get('bitrate', 0))
     if br <= 0 and fs > 0 and dur > 0:

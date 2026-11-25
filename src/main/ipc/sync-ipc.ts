@@ -14,6 +14,7 @@ import type { IpcMainInvokeEvent } from 'electron'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
+import { aacMirrorCacheName } from '../aac-mirror-recipe.ts'
 import { withDisplayAwake } from '../sync-keep-awake.ts'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted } from '../state-dir.ts'
 import { resolveIpodState } from '../ipod-identity.ts'
@@ -116,7 +117,6 @@ async function previewIpodSync(
     const LOCAL_MOUNT = host.getLocalLibraryRoot()
     const pathSep = host.getPathSep()
     const { readdir: rd } = await import('fs/promises')
-    const { createHash } = await import('crypto')
 
     // Ground truth: every real audio file on the device, by basename.
     const filesByBasename = new Map<string, { path: string; size: number }>()
@@ -159,8 +159,8 @@ async function previewIpodSync(
         // Mirrors the copy loop's last-mile skip: a cached AAC mirror
         // whose size matches the device file means zero bytes move.
         if (convertOptions?.enabled) {
-          const hash = createHash('sha1').update(`${localFile}|${convertOptions.targetKbps}|afenc-cbr-44100-2-v3`).digest('hex').slice(0, 16)
-          const cs = await stat(join(app.getPath('userData'), SYNC_CONVERT_CACHE_SUBDIR, `${hash}.m4a`)).catch(() => null)
+          // The same key buildAacMirror writes (aac-mirror-recipe.ts), never a copy of its token.
+          const cs = await stat(join(app.getPath('userData'), SYNC_CONVERT_CACHE_SUBDIR, aacMirrorCacheName(localFile, convertOptions.targetKbps))).catch(() => null)
           if (cs && dev.size === cs.size) { action = 'keep'; break }
         }
       }

@@ -41,7 +41,9 @@ describe('the iPod sync’s converters go through it', () => {
     const body = src.slice(src.indexOf('async function buildAacMirror('), src.indexOf('async function buildIpodSafeAlacMirror('))
     assert.match(body, /const bgExec = \(cmd: string, args: string\[\], o: \{ timeout: number \}\) => \{ const \[f, a\] = atBackgroundPriority\(cmd, args\); return execP\(f, a, o\) \}/)
     assert.doesNotMatch(body, /execP\('(ffmpeg|afconvert)'/, 'no converter at normal priority')
-    assert.equal((body.match(/bgExec\('(ffmpeg|afconvert)'/g) || []).length, 4)
+    // 3 since Brief 265: decode + afconvert for AAC, ffmpeg for Gen 1's MP3. The ffmpeg AAC
+    // fallback is gone (aac-mirror-recipe.ts): no afconvert is a refusal, never an ffmpeg AAC.
+    assert.equal((body.match(/bgExec\('(ffmpeg|afconvert)'/g) || []).length, 3)
   })
 
   it('the iPod-safe ALAC mirror (convertToIpodSafeAlac): the decode and the encode', async () => {
