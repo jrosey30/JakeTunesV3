@@ -1,3 +1,4 @@
+import { addKeyLayer } from '../keyboard'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
@@ -359,24 +360,18 @@ export default function DJView() {
       // way in. Swallow it rather than let the booth restart the thing it muted.
       else if (ev.key === ' ') { claim() }
     }
-    // CAPTURE phase, and stopPropagation on anything we claim.
-    //
-    // The app's transport shortcuts live on the window and BUBBLE, so a bubble
-    // listener here fires alongside them rather than instead of them: pressing
-    // an arrow in the booth nudged the crossfader AND skipped the library to
-    // the next song. preventDefault does nothing about that -- it cancels the
-    // default action, not other listeners. Capturing means we see the event
-    // first and can stop it before the transport ever hears it.
+    // A page layer on the keyboard host, and stopPropagation on anything we
+    // claim: the layer sees the key before the app's shortcuts (which run
+    // last), so pressing an arrow in the booth nudges the crossfader and
+    // nothing else.
     const onKeyUp = (ev: KeyboardEvent) => {
       const k = ev.key.toLowerCase()
       if (k === 'z' || k === 'x') endBend('A')
       else if (k === ',' || k === '.') endBend('B')
     }
-    window.addEventListener('keydown', onKey, true)
-    window.addEventListener('keyup', onKeyUp, true)
+    const releaseLayer = addKeyLayer('dj-booth', onKey, { keyUp: onKeyUp })
     return () => {
-      window.removeEventListener('keydown', onKey, true)
-      window.removeEventListener('keyup', onKeyUp, true)
+      releaseLayer()
       // A bend still held when the view unmounts would leave the deck
       // permanently detuned. Release both on the way out.
       endBend('A'); endBend('B')

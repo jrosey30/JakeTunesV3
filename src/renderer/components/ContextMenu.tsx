@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useEscape } from '../hooks/useKeyboard'
 import '../styles/contextmenu.css'
 
 export interface MenuItem {
@@ -47,16 +48,12 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
         onClose()
       }
     }
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
     window.addEventListener('mousedown', handleClick)
-    window.addEventListener('keydown', handleKey)
     return () => {
       window.removeEventListener('mousedown', handleClick)
-      window.removeEventListener('keydown', handleKey)
     }
   }, [onClose])
+  useEscape('context-menu', true, onClose)
 
   // Adjust position so the menu never overflows the viewport.
   // 4.5.0-108: full rewrite. The previous version only nudged the top

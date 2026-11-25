@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useUndoShortcut } from '../hooks/useKeyboard'
 import '../styles/toast.css'
 
 interface UndoToastProps {
@@ -23,6 +24,8 @@ export default function UndoToast({ message, duration = 5000, onUndo, onDismiss 
     onUndo()
     onDismiss()
   }
+  // ⌘Z outside a text field presses the newest Undo on screen (keyboard.ts).
+  useUndoShortcut('undo-toast', !exiting, handleUndo)
 
   return (
     <div className={`undo-toast ${exiting ? 'undo-toast--exiting' : ''}`}>

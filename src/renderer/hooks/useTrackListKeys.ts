@@ -4,10 +4,12 @@
  * 2026-11-07: "i cant go up and down any playlist with the up down
  * arrows!!!"). Rules and the pure part: utils/trackListKeys.ts.
  *
- * A capture-phase window listener, like SongsView's was: it runs before
- * App.tsx's document handler, and ↑/↓ are CLAIMED (stopPropagation) so the
- * global ↑/↓ = volume doesn't also fire. ←/→ are never touched (transport,
- * or an on-screen Cover Flow's — utils/arrowKeyOwner.ts).
+ * A list layer on the keyboard host (keyboard.ts, rules in
+ * common/keymap.ts): offered keys ahead of the focused element and the app's
+ * globals, and never while a dialog is open. ↑/↓ always move the selection
+ * (volume is ⌘↑/⌘↓). A key it uses it CLAIMS (stopPropagation), so nothing
+ * else answers it. ←/→ are never touched (an on-screen Cover Flow's —
+ * utils/arrowKeyOwner.ts; skip is ⌘←/⌘→).
  *
  * The caller owns the refs (its click handler sets them too) and says how
  * selecting, scrolling and playing work for its list. `enabled` must be
@@ -16,6 +18,7 @@
 import { useEffect, useRef, type MutableRefObject } from 'react'
 import type { Track } from '../types'
 import { listKeyIntent, nextListIndex, shiftRange, typeToFindIndex, isTypingTarget } from '../utils/trackListKeys'
+import { addKeyLayer } from '../keyboard'
 
 export interface TrackListKeysOptions {
   enabled: boolean
@@ -54,7 +57,7 @@ export function useTrackListKeys(opts: TrackListKeysOptions): void {
 
       if (intent.kind === 'move') {
         e.preventDefault()
-        // Claim ↑/↓: without this App.tsx's global handler moves the volume too.
+        // Claim ↑/↓: nothing else answers the key.
         e.stopPropagation()
         const next = nextListIndex(o.focusedIdx.current, intent.dir, tracks.length)
         const track = next >= 0 ? tracks[next] : undefined
@@ -95,7 +98,7 @@ export function useTrackListKeys(opts: TrackListKeysOptions): void {
             : tracks.findIndex(t => sel.has(t.id))
           if (idx >= 0 && tracks[idx]) {
             e.preventDefault()
-            e.stopPropagation()   // we're starting playback; App.tsx must not also toggle
+            e.stopPropagation()   // we're starting playback; the global play/pause must not also toggle
             o.focusedIdx.current = idx
             o.play(idx)
           }
@@ -120,9 +123,9 @@ export function useTrackListKeys(opts: TrackListKeysOptions): void {
       }
     }
 
-    window.addEventListener('keydown', handleKeyDown, true)
+    const releaseLayer = addKeyLayer('track-list', handleKeyDown)
     return () => {
-      window.removeEventListener('keydown', handleKeyDown, true)
+      releaseLayer()
       if (typeTimer.current) clearTimeout(typeTimer.current)
       typeBuffer.current = ''
     }

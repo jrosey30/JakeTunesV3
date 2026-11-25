@@ -154,13 +154,13 @@ describe('the registry', () => {
 
 describe('wiring', () => {
   const src = (p: string): string => readFileSync(join(import.meta.dirname, '..', '..', 'renderer', p), 'utf-8')
-  test('App.tsx: the transport handler asks the owner first — after the typing check, before ←/→ skip tracks', () => {
-    const app = src('App.tsx')
-    const handler = app.slice(app.indexOf('if (shouldYieldToClaim(e.code)) return'), app.indexOf("document.addEventListener('keydown', handler)"))
-    const typing = handler.indexOf('if (typing) return')
-    const owned = handler.indexOf('if (handleOwnedArrowKey(e)) return')
-    const right = handler.indexOf("if (e.key === 'ArrowRight')")
-    assert.ok(typing >= 0 && owned > typing && right > owned, `order: typing ${typing}, owner ${owned}, ArrowRight ${right}`)
+  test('keyboard.ts: the late handler asks the owner after the layers and the focused element, before the app\'s shortcuts', () => {
+    const host = src('keyboard.ts')
+    const handler = host.slice(host.indexOf('const late = (e: KeyboardEvent)'), host.indexOf('const up = (e: KeyboardEvent)'))
+    const layers = handler.indexOf("if (offerToLayers(e, 'late')) return")
+    const owned = handler.indexOf('if (!e.defaultPrevented && handleOwnedArrowKey(e)) return')
+    const globals = handler.indexOf('applyRoute(routeGlobal(e), e, actions)')
+    assert.ok(layers >= 0 && owned > layers && globals > owned, `order: layers ${layers}, owner ${owned}, globals ${globals}`)
   })
   test('both Cover Flows own the arrows while on screen; focused, they let ⌘/Ctrl/⌥ arrows through and stand down under a menu', () => {
     for (const f of ['components/TonightOnJakeTunes.tsx', 'views/CoverFlowView.tsx']) {

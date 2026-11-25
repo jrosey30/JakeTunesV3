@@ -1,3 +1,4 @@
+import { addKeyLayer } from '../../keyboard'
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { audioFromBase64Mpeg } from '../../audio/base64-audio'
 import { claimTransportKeys } from '../../input-mode'
@@ -168,9 +169,9 @@ export default function ScotusView() {
       else if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); seekBy(-15) }
       else if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); seekBy(15) }
     }
-    window.addEventListener('keydown', onKey, true)
+    const releaseLayer = addKeyLayer('scotus', onKey)
     return () => {
-      window.removeEventListener('keydown', onKey, true)
+      releaseLayer()
       release()
     }
   }, [toggle, seekBy])

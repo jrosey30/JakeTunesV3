@@ -7,7 +7,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { showsSharedBack, viewHasOwnBack, VIEWS_WITH_OWN_BACK } from '../../renderer/backPill.ts'
+import { reservesBackStrip, showsSharedBack, viewHasOwnBack, VIEWS_WITH_OWN_BACK } from '../../renderer/backPill.ts'
 
 const src = (...p: string[]): string => readFileSync(join(import.meta.dirname, '..', '..', 'renderer', ...p), 'utf-8')
 const allViews = (): string[] => {
@@ -32,13 +32,20 @@ describe('backPill — which pages the shell puts the pill on', () => {
   it('hidden everywhere when the history is empty (fresh launch)', () => {
     for (const v of allViews()) assert.equal(showsSharedBack(v, false), false, v)
   })
+  it('V7: the strip keeps its height on every page that can show the pill, so nothing jumps when history appears', () => {
+    for (const v of allViews()) {
+      assert.equal(reservesBackStrip(v), !viewHasOwnBack(v), v)
+      if (showsSharedBack(v, true)) assert.equal(reservesBackStrip(v), true, `${v}: a pill with no reserved strip moves the page`)
+    }
+  })
 })
 
 describe('wiring — one pill, one look', () => {
   it('the shell renders BackButton in its strip, gated by showsSharedBack, as a flex sibling above the view box', () => {
     const s = src('components', 'MainContent.tsx')
     assert.match(s, /const backStrip = showsSharedBack\(view, canGoBack\) && backLabel !== null/)
-    assert.match(s, /\{backStrip && \(\s*<div className="view-back-strip">\s*<BackButton label=\{backLabel\} onClick=\{goBack\} \/>/)
+    // V7: the strip is drawn whenever it's reserved; only the pill waits for history.
+    assert.match(s, /\{reservesBackStrip\(view\) && \(\s*<div className="view-back-strip">\s*\{backStrip && <BackButton label=\{backLabel\} onClick=\{goBack\} \/>\}/)
     assert.equal(s.match(/<BackButton /g)?.length, 1, 'exactly one shared pill in the shell')
     assert.ok(s.indexOf('view-back-strip') < s.indexOf('<div className="main-content-shell-view">'), 'strip comes before the view box')
   })

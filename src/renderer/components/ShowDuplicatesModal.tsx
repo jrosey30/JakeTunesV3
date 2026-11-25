@@ -1,3 +1,4 @@
+import { useEscape } from '../hooks/useKeyboard'
 import { useEffect, useMemo, useState } from 'react'
 import ConfirmDialog from './ConfirmDialog'
 import { setNotice } from '../activity'
@@ -98,6 +99,7 @@ export default function ShowDuplicatesModal({ tracks, onClose, onDelete }: Props
   const [dismissed, setDismissed] = useState<Map<string, string>>(new Map())
   const [dismissedLoaded, setDismissedLoaded] = useState(false)
   const [showHidden, setShowHidden] = useState(false)
+  useEscape('show-duplicates', true, onClose)
 
   // Renderer localStorage is unreliable in Electron; use ui-state IPC.
   useEffect(() => {

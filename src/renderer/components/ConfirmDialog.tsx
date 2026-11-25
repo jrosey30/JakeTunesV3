@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { defaultButton, enterPresses } from '../confirm-keys'
+import { useEscape, useKeyLayer } from '../hooks/useKeyboard'
 import '../styles/confirm.css'
 
 interface ConfirmDialogProps {
@@ -37,27 +38,22 @@ export default function ConfirmDialog({
     // button (and an informational one has nothing else to focus).
     if (defaultButton(destructive, hideCancel) === 'cancel') cancelRef.current?.focus()
     else confirmRef.current?.focus()
+  }, [hideCancel, destructive])
 
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        e.stopImmediatePropagation()
-        onCancel()
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault()
-        e.stopImmediatePropagation()
-        // Enter presses the button that has focus (spec-03). It used to
-        // confirm every time — with Cancel focused, Enter deleted.
-        const active = document.activeElement
-        const focused = active === cancelRef.current ? 'cancel' : active === confirmRef.current ? 'confirm' : null
-        if (enterPresses(focused, destructive, hideCancel) === 'cancel') onCancel()
-        else onConfirm()
-      }
-    }
-    window.addEventListener('keydown', handleKey, true)
-    return () => window.removeEventListener('keydown', handleKey, true)
-  }, [onConfirm, onCancel, hideCancel, destructive])
+  // Escape cancels (it's the top-most surface while it's open); Return
+  // presses the focused button (spec-03). Through the keyboard host, so the
+  // list and the page under the dialog never see either key.
+  useEscape('confirm', true, onCancel)
+  useKeyLayer('confirm', true, (e) => {
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    // It used to confirm every time — with Cancel focused, Enter deleted.
+    const active = document.activeElement
+    const focused = active === cancelRef.current ? 'cancel' : active === confirmRef.current ? 'confirm' : null
+    if (enterPresses(focused, destructive, hideCancel) === 'cancel') onCancel()
+    else onConfirm()
+  }, { modal: true })
 
   return (
     <div className="confirm-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel() }}>

@@ -17,6 +17,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { UpdateReadyState } from '../../types'
+import { useEscape } from '../../hooks/useKeyboard'
 import { defaultInstallAt, formatInstallAt, installAtAllowed, INSTALL_AT_MAX_AHEAD_MS } from '../../../common/update-ready'
 
 export interface UpdateChoicesProps {
@@ -76,12 +77,11 @@ export default function UpdateChoices(p: UpdateChoicesProps) {
 
   useEffect(() => {
     if (!panel) return
-    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setPanel(null) }
     const onDown = (e: MouseEvent): void => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setPanel(null) }
-    window.addEventListener('keydown', onKey)
     window.addEventListener('mousedown', onDown)
-    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('mousedown', onDown) }
+    return () => { window.removeEventListener('mousedown', onDown) }
   }, [panel])
+  useEscape('update-choices', panel !== null, () => setPanel(null))
 
   const openAt = (): void => {
     const s = ready.at ? Date.parse(ready.at) : defaultInstallAt(Date.now())

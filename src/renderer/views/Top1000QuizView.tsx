@@ -31,6 +31,7 @@
  * Every undecided song gets one heat a round; the meter shows the round and
  * what is left of it.
  */
+import { addKeyLayer } from '../keyboard'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { useLibrary } from '../context/LibraryContext'
@@ -373,8 +374,8 @@ export default function Top1000QuizView(): JSX.Element {
       if (e.repeat || !ready()) return
       act()
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    // Late: after the focused element, as it always ran.
+    return addKeyLayer('top1000-quiz', onKey, { late: true })
   }, [tab, auditOpen, phase, choose, send, undo, backFromWhy, ready, toggleHeat, lockIn])
 
   // ── the list ──

@@ -1,7 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { LibraryProvider, useLibrary } from './context/LibraryContext'
-import { shouldYieldToClaim } from './input-mode'
-import { handleOwnedArrowKey } from './utils/arrowKeyOwner'
+import { installKeyboard } from './keyboard'
+import { useEscape } from './hooks/useKeyboard'
+import GoAnywhere from './components/GoAnywhere'
+import KeyboardShortcutsSheet from './components/KeyboardShortcutsSheet'
 import { primeColumnCacheFromUiState } from './utils/columnState'
 import { savedSongsSort } from './utils/songTableRules'
 import { PlaybackProvider, usePlayback } from './context/PlaybackContext'
@@ -30,7 +32,7 @@ import ImportConvertModal from './components/ImportConvertModal'
 import ShowDuplicatesModal from './components/ShowDuplicatesModal'
 import PlayCacheModal from './components/PlayCacheModal'
 import OrphanCleanupModal from './components/OrphanCleanupModal'
-import SettingsModal from './components/SettingsModal'
+import SettingsModal, { type SettingsTab } from './components/SettingsModal'
 import ImportQueuePanel from './components/ImportQueuePanel'
 import Breadcrumb from './components/chrome/Breadcrumb'
 import StatusBar from './components/chrome/StatusBar'
@@ -101,9 +103,15 @@ let startupNetworkArtStarted = false
 // strand the version. Main resends while this stays false.
 let hubCatalogMayApply = false
 
+/** ⌘F with no page find bar, and "/": the toolbar's Search. */
+function focusSearchPill(): void {
+  const el = document.querySelector<HTMLInputElement>('.search-pill .search-input')
+  if (el) { el.focus(); el.select() }
+}
+
 function AppInner() {
   const { state: libState, dispatch } = useLibrary()
-  const { canGoBack, canGoForward, goBack, goForward, beginHistory } = useNavigation()
+  const { beginHistory } = useNavigation()
   // Brief 033c: App is the single "primary" useAudio consumer — it owns
   // the heartbeat diagnostic/recovery interval. App never unmounts, so
   // exactly one interval runs regardless of how many other components
@@ -156,13 +164,36 @@ function AppInner() {
   }
   const toggleLyricsRef = useRef(toggleLyrics)
   toggleLyricsRef.current = toggleLyrics
+  // Up Next (⌥⌘U, the toolbar button) and the Music Man (⇧⌘M): one drawer at
+  // a time. Menu actions reach these through refs, so they read today's state.
+  const toggleQueue = () => {
+    if (showQueue) queueRef.current?.requestClose()
+    else { if (showMusicMan) musicManRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); lyricsRef.current?.requestClose(); setShowQueue(true) }
+  }
+  const toggleQueueRef = useRef(toggleQueue)
+  toggleQueueRef.current = toggleQueue
+  const toggleMusicMan = () => {
+    if (showMusicMan) musicManRef.current?.requestClose()
+    else { if (showQueue) queueRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); lyricsRef.current?.requestClose(); setShowMusicMan(true) }
+  }
+  const toggleMusicManRef = useRef(toggleMusicMan)
+  toggleMusicManRef.current = toggleMusicMan
+  // Escape closes the top-most surface (keyboard.ts). The drawers sit beside
+  // the page, so they don't silence its lists (modal: false).
+  useEscape('up-next', showQueue, () => queueRef.current?.requestClose(), { modal: false })
+  useEscape('music-man', showMusicMan, () => musicManRef.current?.requestClose(), { modal: false })
+  useEscape('downloads', showDownloads, () => downloadsRef.current?.requestClose(), { modal: false })
+  useEscape('lyrics', showLyrics, () => lyricsRef.current?.requestClose(), { modal: false })
+  // ⌘K Go Anywhere and ⌘/ Keyboard Shortcuts (menu-wired, common/keymap.ts).
+  const [goAnywhereOpen, setGoAnywhereOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [importConvertOpen, setImportConvertOpen] = useState(false)
   const [playCacheMode, setPlayCacheMode] = useState<'prepare' | 'prune' | null>(null)
   const [orphanCleanupOpen, setOrphanCleanupOpen] = useState(false)
   const [showDuplicatesOpen, setShowDuplicatesOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   // A notice can ask for Preferences on a specific tab (Music Sources).
-  const [settingsTab, setSettingsTab] = useState<'Music Sources' | undefined>(undefined)
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined)
   useEffect(() => {
     const onOpen = (e: Event) => { setSettingsTab((e as CustomEvent<{ tab?: 'Music Sources' }>).detail?.tab); setSettingsOpen(true) }
     window.addEventListener(OPEN_PREFERENCES_EVENT, onOpen)
@@ -656,105 +687,27 @@ function AppInner() {
     return () => window.removeEventListener('jaketunes-show-now-playing', onShowNowPlaying)
   }, [dispatch])
 
-  // 4.5: global keyboard shortcuts. Bound to document.keydown so they
-  // fire from anywhere in the app, but every transport key bails when
-  // focus is inside a text input — otherwise Space typed into the
-  // search field would steal the keypress and toggle playback instead
-  // of inserting a space character. ⌘F always works; "/" only works
-  // outside text inputs so it can still be typed normally in search
-  // boxes, tag fields, Get Info, etc. Esc both blurs the focused
-  // input and clears the search query for a one-stroke reset.
-  useEffect(() => {
-    function isTypingTarget(t: EventTarget | null): boolean {
-      if (!(t instanceof HTMLElement)) return false
-      const tag = t.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
-      if (t.isContentEditable) return true
-      return false
-    }
-    function focusSearch() {
-      const el = document.querySelector<HTMLInputElement>('.search-pill .search-input')
-      if (el) {
-        el.focus()
-        el.select()
-      }
-    }
-    const handler = (e: KeyboardEvent) => {
-      const meta = e.metaKey || e.ctrlKey
-      const typing = isTypingTarget(e.target)
-
-      // A view that claims the transport keys (Step Inside, the Listen
-      // List's Inbox) owns them while it holds the claim (see
-      // input-mode.ts). Media keys, Escape and Cmd+F still work.
-      if (shouldYieldToClaim(e.code)) return
-
-      if (e.key === 'Escape') {
-        if (typing && e.target instanceof HTMLElement) e.target.blur()
-        if (libStateRef.current.searchQuery) dispatch({ type: 'SET_SEARCH', query: '' })
-        return
-      }
-      if (meta && e.key.toLowerCase() === 'f') {
-        e.preventDefault()
-        focusSearch()
-        return
-      }
-      if (!typing && e.key === '/') {
-        e.preventDefault()
-        focusSearch()
-        return
-      }
-      if (typing) return
-      // An on-screen Cover Flow owns plain ←/→/Enter (utils/arrowKeyOwner.ts).
-      if (handleOwnedArrowKey(e)) return
-
-      // Dedicated media keys (some keyboards deliver these to the renderer).
-      if (e.key === 'MediaPlayPause' || e.code === 'MediaPlayPause') {
-        e.preventDefault()
-        togglePlayPause()
-        return
-      }
-      if (e.key === 'MediaTrackNext' || e.code === 'MediaTrackNext' || e.key === 'MediaNextTrack' || e.code === 'MediaNextTrack') {
-        e.preventDefault()
-        nextTrack()
-        return
-      }
-      if (e.key === 'MediaTrackPrevious' || e.code === 'MediaTrackPrevious' || e.key === 'MediaPreviousTrack' || e.code === 'MediaPreviousTrack') {
-        e.preventDefault()
-        prevTrack()
-        return
-      }
-
-      if (e.key === ' ') {
-        e.preventDefault()
-        togglePlayPause()
-        return
-      }
-      if (e.key === 'ArrowRight') {
-        e.preventDefault()
-        nextTrack()
-        return
-      }
-      if (e.key === 'ArrowLeft') {
-        e.preventDefault()
-        prevTrack()
-        return
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        const v = pbStateRef.current.volume
-        setVolume(stepVolume(v, 1))
-        return
-      }
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        const v = pbStateRef.current.volume
-        setVolume(stepVolume(v, -1))
-        return
-      }
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [togglePlayPause, nextTrack, prevTrack, setVolume, dispatch])
+  // ONE KEYBOARD (V7). The app's only window keyboard listeners are the
+  // keyboard host's (keyboard.ts); what each key means is common/keymap.ts.
+  // Here: what the keymap-wired shortcuts DO. Menu-wired ones (⌘I, ⌘L, ⌘K,
+  // ⌘1–⌘6, ⌘[ ⌘] …) arrive as menu actions below and never as keys.
+  const keyActionsRef = useRef<Record<string, () => void>>({})
+  keyActionsRef.current = {
+    'play-pause': () => togglePlayPause(),
+    'previous': () => prevTrack(),
+    'next': () => nextTrack(),
+    'volume-up': () => setVolume(stepVolume(pbStateRef.current.volume, 1)),
+    'volume-down': () => setVolume(stepVolume(pbStateRef.current.volume, -1)),
+    // No page find bar took ⌘F (they're layers, offered first): Search.
+    'find': () => focusSearchPill(),
+    'search': () => focusSearchPill(),
+    'visualizer': () => window.dispatchEvent(new CustomEvent('toggle-visualizer')),
+  }
+  useEffect(() => installKeyboard({
+    shortcut: (id) => keyActionsRef.current[id]?.(),
+    // Escape with nothing open (or out of a field): one stroke clears Search.
+    clearSearch: () => { if (libStateRef.current.searchQuery) dispatch({ type: 'SET_SEARCH', query: '' }) },
+  }), [dispatch])
 
   // Plug-in is inspect-only. Auto-repair used to start a second writer on
   // remount (500/500 → 492 / 33). TSA sealed the last Activity Sync; if
@@ -1627,10 +1580,21 @@ function AppInner() {
         case 'import-files': window.dispatchEvent(new Event('jaketunes-import-files')); break
         case 'show-now-playing': window.dispatchEvent(new Event('jaketunes-show-now-playing')); break
         case 'star-current-song': starNowPlayingRef.current(); break
+        // Go → ⌘1–⌘6 (common/keymap.ts), plus Genres.
+        case 'view-home': dispatch({ type: 'SET_VIEW', view: 'home' }); break
         case 'view-songs': dispatch({ type: 'SET_VIEW', view: 'songs' }); break
         case 'view-artists': dispatch({ type: 'SET_VIEW', view: 'artists' }); break
         case 'view-albums': dispatch({ type: 'SET_VIEW', view: 'albums' }); break
+        case 'view-concerts': dispatch({ type: 'SET_VIEW', view: 'concerts' }); break
+        case 'view-record-shop': dispatch({ type: 'SET_VIEW', view: 'discovery' }); break
         case 'view-genres': dispatch({ type: 'SET_VIEW', view: 'genres' }); break
+        // Edit → Find… picked with the mouse: the same key, through the host, so
+        // a page's own find bar still answers first.
+        case 'find': window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', code: 'KeyF', metaKey: true, bubbles: true, cancelable: true })); break
+        case 'go-anywhere': setShortcutsOpen(false); setGoAnywhereOpen((o) => !o); break
+        case 'keyboard-shortcuts': setGoAnywhereOpen(false); setShortcutsOpen((o) => !o); break
+        case 'toggle-up-next': toggleQueueRef.current(); break
+        case 'toggle-downloads': window.dispatchEvent(new CustomEvent(DOWNLOADS_PANEL_EVENT, { detail: 'toggle' })); break
         case 'view-device': dispatch({ type: 'SET_VIEW', view: 'device' }); break   // the "ready for an updated sync" notification
         case 'toggle-visualizer': window.dispatchEvent(new CustomEvent('toggle-visualizer')); break
         // Controls → Radio Mode (⇧⌘R) / DJ Mode (⇧⌘D). Toolbar owns both
@@ -1638,11 +1602,7 @@ function AppInner() {
         // window events its buttons and the sidebar vinyl already use.
         case 'toggle-radio-mode': window.dispatchEvent(new CustomEvent('toggle-radio-mode')); break
         case 'toggle-dj-mode': window.dispatchEvent(new CustomEvent('toggle-dj-mode')); break
-        case 'toggle-music-man': {
-          if (showMusicMan) musicManRef.current?.requestClose()
-          else { if (showQueue) queueRef.current?.requestClose(); lyricsRef.current?.requestClose(); setShowMusicMan(true) }
-          break
-        }
+        case 'toggle-music-man': toggleMusicManRef.current(); break
         case 'toggle-lyrics': toggleLyricsRef.current(); break
         case 'open-import-convert': setImportConvertOpen(true); break
         case 'prepare-alac-cache':  setPlayCacheMode('prepare'); break
@@ -1819,58 +1779,6 @@ function AppInner() {
       setNotice(n.text, { kind: n.kind ?? 'info', durationMs: n.durationMs })
     })
     return () => { off?.() }
-  }, [])
-
-  // Global keyboard shortcuts
-  const toggleRef = useRef(togglePlayPause)
-  toggleRef.current = togglePlayPause
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName
-      const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable
-
-      // Capture phase beats every view listener, so a claim has to be
-      // checked HERE too — this is the handler that was eating the game's
-      // Space before its own keydown ever ran.
-      if (shouldYieldToClaim(e.code)) return
-
-      // Space = play/pause (unless typing in an input)
-      if (e.code === 'Space' && !isInput) {
-        e.preventDefault()
-        e.stopPropagation()
-        toggleRef.current()
-        return
-      }
-
-      // Cmd+I = Get Info (dispatched as custom event, SongsView/PlaylistView handles it)
-      if ((e.metaKey || e.ctrlKey) && e.key === 'i' && !e.shiftKey) {
-        // Don't intercept if Alt is held (DevTools toggle is Alt+Cmd+I)
-        if (e.altKey) return
-        e.preventDefault()
-        window.dispatchEvent(new Event('jaketunes-get-info'))
-        return
-      }
-
-      // Cmd+L = scroll to now-playing track. Not with Shift: ⇧⌘L is View →
-      // Lyrics (the menu accelerator), and one press must do one thing.
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'l') {
-        e.preventDefault()
-        window.dispatchEvent(new Event('jaketunes-show-now-playing'))
-        return
-      }
-
-      // Shift+Cmd+S = star / unstar the playing song. The menu item shows
-      // the shortcut without registering it (registerAccelerator: false),
-      // so this is the only key path — one press, one toggle.
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') {
-        e.preventDefault()
-        starNowPlayingRef.current()
-        return
-      }
-    }
-    // Use capture phase to beat scrollable div's default behavior
-    window.addEventListener('keydown', handleKeyDown, true)
-    return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [])
 
   const handleSidebarDrag = useCallback((e: React.MouseEvent) => {
@@ -2077,25 +1985,16 @@ function AppInner() {
           <button onClick={() => setPreservedOrphanBanner(null)}>Dismiss</button>
         </div>
       )}
+      {/* V7: no ‹ › here. Back is the pill above each page, ⌘[ ⌘] and Go → Back / Forward. */}
       <div className="titlebar">
-        <div className="titlebar-nav">
-          <button className="titlebar-nav-btn" disabled={!canGoBack} onClick={goBack} title="Back  ⌘[" aria-label="Back">‹</button>
-          <button className="titlebar-nav-btn" disabled={!canGoForward} onClick={goForward} title="Forward  ⌘]" aria-label="Forward">›</button>
-        </div>
         <Breadcrumb />
       </div>
       <div className="toolbar-area">
         <Toolbar
-          onToggleQueue={() => {
-            if (showQueue) queueRef.current?.requestClose()
-            else { if (showMusicMan) musicManRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); lyricsRef.current?.requestClose(); setShowQueue(true) }
-          }}
+          onToggleQueue={toggleQueue}
           onOpenQueue={() => { if (showMusicMan) musicManRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); lyricsRef.current?.requestClose(); setShowQueue(true) }}
           showQueue={showQueue}
-          onToggleMusicMan={() => {
-            if (showMusicMan) musicManRef.current?.requestClose()
-            else { if (showQueue) queueRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); lyricsRef.current?.requestClose(); setShowMusicMan(true) }
-          }}
+          onToggleMusicMan={toggleMusicMan}
           showMusicMan={showMusicMan}
           onToggleLyrics={toggleLyrics}
           showLyrics={showLyrics}
@@ -2353,6 +2252,8 @@ function AppInner() {
       <BandcampImportToast />
       <FriendShareHost />
       <Visualizer />
+      {goAnywhereOpen && <GoAnywhere onClose={() => setGoAnywhereOpen(false)} onOpenSettings={(tab) => { setSettingsTab(tab); setSettingsOpen(true) }} />}
+      {shortcutsOpen && <KeyboardShortcutsSheet onClose={() => setShortcutsOpen(false)} />}
     </div>
   )
 }

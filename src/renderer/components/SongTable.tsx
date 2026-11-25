@@ -36,6 +36,7 @@ import {
   type ReactNode,
 } from 'react'
 import { useLibrary } from '../context/LibraryContext'
+import { addKeyLayer } from '../keyboard'
 import { usePlayback } from '../context/PlaybackContext'
 import { useCynthia } from '../context/CynthiaContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
@@ -519,7 +520,8 @@ export default function SongTable(props: SongTableProps): JSX.Element {
     hasNowPlaying: () => !!live.current.pb.nowPlaying,
   })
 
-  // ⌘A, Delete, ⌘I — this list's own keys (App.tsx's global ones are not touched).
+  // ⌘A, Delete — this list's own keys, a list layer on the keyboard host
+  // (keyboard.ts), never while a dialog is open.
   useEffect(() => {
     if (!active) return
     const onKey = (e: KeyboardEvent): void => {
@@ -541,8 +543,7 @@ export default function SongTable(props: SongTableProps): JSX.Element {
         else if (deleteKeyDeletes) setDeleteIds(songs.map((t) => t.id))
       }
     }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    return addKeyLayer('song-table', onKey)
   }, [active, libDispatch, markActivity, selectedSongs, removeSongs, deleteKeyDeletes])
 
   useEffect(() => {

@@ -20,3 +20,13 @@ export function viewHasOwnBack(view: string): boolean {
 export function showsSharedBack(view: string, canGoBack: boolean): boolean {
   return canGoBack && !viewHasOwnBack(view)
 }
+
+/**
+ * Does the shell keep the back strip's height on `view`, pill or no pill?
+ * V7 (Jake: the ‹ › arrows are gone, so the pill is the way back): every page
+ * without its own back keeps the strip, empty until there is somewhere to go
+ * back to, so the page never jumps down the moment history appears.
+ */
+export function reservesBackStrip(view: string): boolean {
+  return !viewHasOwnBack(view)
+}

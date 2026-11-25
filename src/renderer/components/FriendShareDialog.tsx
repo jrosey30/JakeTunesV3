@@ -27,6 +27,7 @@ import { cardName, type CardFormat } from '../../common/friend-share-card'
 import { offlineShareText, type ShareInfo } from '../../common/friend-share-doc'
 import { chipFor, copiedNote, serviceLabel, serviceTag, type FriendPerson } from '../../common/friend-services-doc'
 import '../styles/friend-share.css'
+import { useEscape } from '../hooks/useKeyboard'
 
 export interface FriendShareRequest {
   kind: 'song' | 'album'
@@ -107,11 +108,7 @@ function FriendShareDialog({ req, onClose }: { req: FriendShareRequest; onClose:
     return () => { live = false }
   }, [loading, format, cards, content])
 
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }
-    window.addEventListener('keydown', key, true)
-    return () => window.removeEventListener('keydown', key, true)
-  }, [onClose])
+  useEscape('friend-share', true, onClose)
 
   const png = cards[format]
   const name = cardName(title, artist, format)

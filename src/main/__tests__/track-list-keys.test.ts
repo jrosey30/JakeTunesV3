@@ -138,7 +138,7 @@ describe('source lock: every song list uses the shared keys', () => {
     const move = src.slice(src.indexOf("intent.kind === 'move'"), src.indexOf("intent.kind === 'enter'"))
     assert.match(move, /e\.preventDefault\(\)/)
     assert.match(move, /e\.stopPropagation\(\)/)
-    assert.match(src, /addEventListener\('keydown', handleKeyDown, true\)/, 'capture phase, ahead of App.tsx')
+    assert.match(src, /addKeyLayer\('track-list', handleKeyDown\)/, 'a list layer on the keyboard host (V7), ahead of the app\'s shortcuts')
   })
 
   test('PlaylistView keeps its hooks above the not-found return', () => {

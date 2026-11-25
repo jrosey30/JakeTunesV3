@@ -12,6 +12,7 @@
  * or stops the preview. The quiz's wrong-click guards apply: nothing counts in
  * a question's first 250 ms, a press that began before it appeared, or a held key.
  */
+import { addKeyLayer } from '../keyboard'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { useLibrary } from '../context/LibraryContext'
@@ -149,8 +150,7 @@ export default function Top1000AuditPanel({ byId, artFor, onClose }: Props): JSX
       if (e.repeat || !ready()) return
       void send(q, choice)
     }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    return addKeyLayer('top1000-audit', onKey)
   }, [phase, send, ready, spacePlay])
 
   const card = (q: AuditQuestion, s: QuizSongRef, i: number) => {
