@@ -133,6 +133,11 @@
 :root.jt-page-vt .main-content-shell-view {
   view-transition-name: jt-page;
 }
+:root.jt-page-vt::view-transition {
+  /* The slide's pictures sit over the window for 0.2 s; clicks go through to
+     the live page underneath (sidebar, toolbar, Pause), never swallowed. */
+  pointer-events: none;
+}
 :root.jt-page-vt::view-transition-group(root),
 :root.jt-page-vt::view-transition-old(root),
 :root.jt-page-vt::view-transition-new(root) {
@@ -160,13 +165,14 @@
 
 /* ── The default button pulses, like Aqua's ─────────────────────────────
    The one button that is the point of the screen breathes a soft orange glow:
-   Sync on the iPod page (only there while an iPod is plugged in; not while it
-   syncs), and the confirm button of a dialog (Return). A glow on its own
+   Sync on the iPod page when there is something to sync (DeviceView marks it
+   --due from common/sync-due.ts; never while it syncs), and the confirm button
+   of a dialog (Return). A glow on its own
    layer that only changes opacity, so it costs the GPU and nothing else. */
-:root :is(.device-itunes-btn--sync, .confirm-btn--confirm):not(:disabled) {
+:root :is(.device-itunes-btn--sync.device-itunes-btn--due, .confirm-btn--confirm):not(:disabled) {
   position: relative;
 }
-:root :is(.device-itunes-btn--sync, .confirm-btn--confirm):not(:disabled)::after {
+:root :is(.device-itunes-btn--sync.device-itunes-btn--due, .confirm-btn--confirm):not(:disabled)::after {
   content: '';
   position: absolute;
   inset: -3px;
@@ -273,9 +279,12 @@
 :root .agm-dialog { max-height: min(80vh, calc(100vh - var(--titlebar-height) - var(--toolbar-height) - 16px)); }
 :root .picks-sheet { max-height: min(80vh, 640px, calc(100vh - var(--titlebar-height) - var(--toolbar-height) - 16px)); }
 :root .tl-sheet { max-height: min(80vh, 720px, calc(100vh - var(--titlebar-height) - var(--toolbar-height) - 16px)); }
+/* It comes out from under the toolbar: as it moves down, the part still
+   above the toolbar's edge is clipped away, so it never shows over the
+   toolbar (the clip and the move share one curve and stay in step). */
 @keyframes jt-sheet-drop {
-  from { transform: translateY(-100%); }
-  to   { transform: translateY(0); }
+  from { transform: translateY(-100%); clip-path: inset(100% 0 0 0); }
+  to   { transform: translateY(0); clip-path: inset(0 0 0 0); }
 }
 
 @media (prefers-reduced-motion: reduce) {

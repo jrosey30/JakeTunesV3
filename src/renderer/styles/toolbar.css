@@ -232,7 +232,7 @@
 }
 .now-playing-info--stacked [data-lcd="still"] {
   /* Reduce Motion (lcdTicker.ts): a long name holds still, shrunk, and if it
-   * still doesn't fit it ends in "…" rather than being cut mid-word. */
+   * still doesn't fit its end becomes "…" rather than sliced off at the edge. */
   text-overflow: ellipsis;
 }
 .now-playing-info--stacked [data-lcd="ticker"] > * {

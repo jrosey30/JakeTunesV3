@@ -165,7 +165,20 @@ function runDiscHandoff(kind: DiscHandoffKind, release: () => void): void {
  * current one; for a disc handoff, the previous one is held for the frame the
  * browser captures it, then swapped inside the View Transition.
  */
-export function useDiscHandoffView<L extends HandoffLoc>(now: L): L {
+/** What the page slide needs to know about a location (MainContent). */
+export interface SlideLoc extends HandoffLoc {
+  /** the page's identity (keptView.viewTransitionKey) */
+  pageKey: string
+  /** the identity a page of this view would have under the CURRENT state */
+  keyNow: (view: string) => string
+}
+
+/** A slide holds the old page with the new state: only when it still shows its own subject. */
+function slides(from: SlideLoc, to: SlideLoc): boolean {
+  return slidesBetween(from.view, to.view) && to.keyNow(from.view) === from.pageKey && pageSlideSupported()
+}
+
+export function useDiscHandoffView<L extends SlideLoc>(now: L): L {
   const shownRef = useRef<L>(now)
   const latestRef = useRef<L>(now)
   latestRef.current = now
@@ -177,7 +190,7 @@ export function useDiscHandoffView<L extends HandoffLoc>(now: L): L {
     ? discHandoffKind(shown, now, armed, opened)
     : null
   // A page slide holds the old page for one frame too (pageSlide.ts).
-  const holding = busyRef.current || kind !== null || (slidesBetween(shown.view, now.view) && pageSlideSupported())
+  const holding = busyRef.current || kind !== null || slides(shown, now)
 
   useLayoutEffect(() => {
     if (busyRef.current) return
@@ -189,7 +202,7 @@ export function useDiscHandoffView<L extends HandoffLoc>(now: L): L {
       note(to)
       // V7 motion: any other page change slides like an iPod menu (pageSlide.ts).
       // `holding` already kept the old page on screen for this frame.
-      if (slidesBetween(from.view, to.view) && pageSlideSupported()) {
+      if (slides(from, to)) {
         busyRef.current = true
         runPageSlide(pageSlideKind(peekHistoryDirection()), () => {
           busyRef.current = false
@@ -203,7 +216,7 @@ export function useDiscHandoffView<L extends HandoffLoc>(now: L): L {
       shownRef.current = to
       // The render held the old page expecting a slide that can't run now
       // (the window went hidden, Reduce Motion came on): show the new one.
-      if (slidesBetween(from.view, to.view)) bump()
+      if (slidesBetween(from.view, to.view)) bump()  // cheap, and never strands a held page
       return
     }
     busyRef.current = true

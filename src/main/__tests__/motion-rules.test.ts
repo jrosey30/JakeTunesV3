@@ -296,7 +296,7 @@ describe('V7 motion — the app', () => {
     // What the compositor can do alone; anything else is laid out or painted every frame.
     const css = blankComments(walk(RENDERER, ['.css']).map((f) => readFileSync(f, 'utf-8')).join('\n'))
     for (const name of ['jt-page-off-left', 'jt-page-on-from-right', 'jt-page-off-right', 'jt-page-on-from-left',
-      'jt-sheet-drop', 'queue-slide-in', 'queue-slide-out', 'jt-default-pulse', 'overlay-backdrop-in']) {
+      'jt-sheet-drop', 'queue-slide-in', 'queue-slide-out', 'dlp-slide-in', 'dlp-slide-out', 'jt-default-pulse', 'overlay-backdrop-in']) {
       const at = css.search(new RegExp(`@keyframes\\s+${name}\\s*\\{`))
       assert.ok(at >= 0, `@keyframes ${name} is missing`)
       let depth = 0, end = at
@@ -305,7 +305,8 @@ describe('V7 motion — the app', () => {
         if (css[i] === '}' && --depth === 0) { end = i; break }
       }
       const props = [...css.slice(at, end).matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1])
-      const other = props.filter((p) => p !== 'transform' && p !== 'opacity')
+      // The sheet also clips itself to the toolbar's edge as it drops (one small box).
+      const other = props.filter((p) => p !== 'transform' && p !== 'opacity' && !(name === 'jt-sheet-drop' && p === 'clip-path'))
       assert.deepEqual(other, [], `@keyframes ${name} animates ${other.join(', ')}`)
     }
   })
@@ -351,5 +352,29 @@ describe('V7 motion — the app', () => {
     assert.match(t, /attributeFilter: \['data-motion'\]/)
     const css = readFileSync(join(RENDERER, 'styles/toolbar.css'), 'utf-8')
     assert.match(css, /\[data-lcd="still"\] \{[^}]*text-overflow: ellipsis;/)
+  })
+
+  test('a page slide never swallows a click: the overlay lets them through to the live page', () => {
+    const css = blankComments(readFileSync(join(RENDERER, 'styles/motion.css'), 'utf-8'))
+    assert.match(css, /:root\.jt-page-vt::view-transition \{[^}]*pointer-events:\s*none;/)
+    // Electron 30's Chromium ignores that rule; a press ends the slide and the click goes to what's under it.
+    const slide = readFileSync(join(RENDERER, 'pageSlide.ts'), 'utf-8')
+    assert.match(slide, /const stopRescue = rescueClicks\(vt\)/)
+    assert.match(slide, /vt\.skipTransition\(\)/)
+    assert.match(slide, /document\.elementFromPoint\(e\.clientX, e\.clientY\)[\s\S]{0,120}el\.click\(\)/)
+  })
+
+  test('the held page slides only if it still shows its own subject (a deleted playlist never slides a blank page)', () => {
+    const d = readFileSync(join(RENDERER, 'discHandoff.ts'), 'utf-8')
+    assert.match(d, /slidesBetween\(from\.view, to\.view\) && to\.keyNow\(from\.view\) === from\.pageKey && pageSlideSupported\(\)/)
+    const mc = readFileSync(join(RENDERER, 'components/MainContent.tsx'), 'utf-8')
+    assert.match(mc, /pageKey: keyNow\(state\.currentView\),\s*keyNow,/)
+  })
+
+  test('Sync pulses only when there is something to sync', () => {
+    const css = blankComments(readFileSync(join(RENDERER, 'styles/motion.css'), 'utf-8'))
+    assert.doesNotMatch(css, /\.device-itunes-btn--sync,/)
+    assert.match(css, /\.device-itunes-btn--sync\.device-itunes-btn--due, \.confirm-btn--confirm\):not\(:disabled\)::after/)
+    assert.match(readFileSync(join(RENDERER, 'views/DeviceView.tsx'), 'utf-8'), /syncIsDue\(plan\.trackIds\.length, lastSync\) \? ' device-itunes-btn--due'/)
   })
 })

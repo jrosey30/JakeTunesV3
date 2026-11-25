@@ -1,7 +1,8 @@
 /* Downloads panel — the activity drawer. Same shell as the play-queue
    panel (right-anchored, brushed grey), sized for two-line rows. */
-@keyframes dlp-slide-in { from { transform: translateX(100%); opacity: 0.85; } to { transform: translateX(0); opacity: 1; } }
-@keyframes dlp-slide-out { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0.85; } }
+/* V7: a drawer like Up Next and the Music Man (queue.css): solid, from the right edge. */
+@keyframes dlp-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes dlp-slide-out { from { transform: translateX(0); } to { transform: translateX(100%); } }
 
 .dlp-panel {
   position: absolute;

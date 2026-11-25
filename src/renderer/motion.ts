@@ -110,7 +110,7 @@ export const MEANINGFUL_LOOPS: Readonly<Record<string, string>> = {
   'rec-dot-blink': 'recording',
   'rec-pulse': 'recording',
   // live: on air, playing, speaking
-  'jt-default-pulse': "the default button: what Return does (Sync on the iPod page, a dialog's confirm)",
+  'jt-default-pulse': "the default button: a dialog's confirm (what Return does), and Sync while there is something to sync",
   'dj-pulse': 'DJ Mode is on (the smoke test checks this glow)',
   'radio-on-air-pulse': 'the radio is on air',
   'radio-wave-pulse': 'the radio is on air',

@@ -75,9 +75,20 @@ export default function MainContent() {
   // disc handoff (Home ↔ the album page that came out of the jewel case's
   // disc) the previous view is held for the frame the View Transition
   // captures it, then swapped inside the transition (discHandoff.ts).
+  // pageKey / keyNow (V7 page slide): the page held for the slide's picture
+  // renders with the NEW state, so it slides only if it would still show its
+  // own subject (a deleted playlist would be a blank page sliding away).
+  const keyNow = (v: string): string => viewTransitionKey(v, {
+    activePlaylistId: state.activePlaylistId,
+    activeSmartPlaylist: state.activeSmartPlaylist,
+    activeArtist: state.activeArtist,
+    albumKey: v === 'album-detail' ? state.pendingAlbumKey : null,
+  })
   const shown = useDiscHandoffView({
     view: state.currentView,
     albumKey: state.currentView === 'album-detail' ? state.pendingAlbumKey : null,
+    pageKey: keyNow(state.currentView),
+    keyNow,
   })
   const view = shown.view
 

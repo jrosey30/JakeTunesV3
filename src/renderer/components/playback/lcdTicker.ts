@@ -66,7 +66,8 @@ export function useLcdTicker(rootRef: RefObject<HTMLElement>): void {
       } else if (plan.kind === 'ticker' && prefersReducedMotion()) {
         // Reduce Motion: a long name holds still. It shrinks as far as it
         // reads (REDUCED_MIN_SCALE) and what still doesn't fit ends in "…"
-        // (toolbar.css [data-lcd="still"]) — never a cut-off word.
+        // (toolbar.css [data-lcd="still"]): the end of a very long name is
+        // replaced by the ellipsis rather than sliced off at the pill's edge.
         line.setAttribute('data-lcd', 'still')
         const scale = Math.max(REDUCED_MIN_SCALE, Math.floor((width / line.scrollWidth) * 1000) / 1000)
         for (const child of Array.from(line.children) as HTMLElement[]) child.style.fontSize = `${scale}em`
