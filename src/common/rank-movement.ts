@@ -11,7 +11,9 @@
  *     The first snapshot ever has no `prev`, so every row is NEW that week.
  *
  * Each list keeps its own snapshot under its own ui-state key, so the two
- * rankings never mix. Pure — node --test loads it.
+ * rankings never mix. Since 2026-11-24 only Top 25 uses the snapshot: the
+ * Top 1000's movement is homemini's (top1000Movement, below); its old key is
+ * left in place, unread. Pure — node --test loads it.
  */
 
 export interface RankSnap {
@@ -85,4 +87,27 @@ export function rankMovement(rank: number, lwRank: number | undefined): RankMove
   if (rank < lwRank) return { direction: 'up', arrow: `▲${lwRank - rank}`, lwLabel, arrowClass: 'rank-arrow rank-arrow--up' }
   if (rank > lwRank) return { direction: 'down', arrow: `▼${rank - lwRank}`, lwLabel, arrowClass: 'rank-arrow rank-arrow--down' }
   return { direction: 'same', arrow: '—', lwLabel, arrowClass: 'rank-arrow rank-arrow--same' }
+}
+
+/**
+ * The Top 1000's movement (2026-11-24, Jake: "when we have a decided formula it should be as if
+ * theyre all brand new rankings and each week we'd see green or red arrows based on movement").
+ * homemini works it out (GET /api/top1000: each song's lastWeekRank / isNew, the answer's
+ * comparedTo): the published list against the one it replaced by the same rules. No local
+ * snapshot: the desktop's own snapshot had last week as a list made by other rules (and, before the
+ * weekly publish, the quiz's own), which showed songs "rising ~500 spots".
+ *
+ * null = no arrow: a fresh-start week (comparedTo null), an older homemini (no fields), or a song
+ * that held its place. NEW only when homemini says so.
+ */
+export function top1000Movement(
+  rank: number,
+  m: { lastWeekRank?: number | null; isNew?: boolean } | undefined,
+  comparedTo: string | null | undefined,
+): RankMovement | null {
+  if (!comparedTo || !m) return null
+  if (m.isNew === true) return rankMovement(rank, undefined)
+  if (typeof m.lastWeekRank !== 'number') return null
+  const mv = rankMovement(rank, m.lastWeekRank)
+  return mv.direction === 'same' ? null : mv
 }

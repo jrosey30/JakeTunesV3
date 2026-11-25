@@ -9,8 +9,8 @@ import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { evaluateSmartPlaylist, SMART_PLAYLIST_TITLES as TITLES } from '../utils/smartPlaylists'
 import { smartPlaylistCover } from '../utils/playlistCovers'
 import { useListenMoreWeekly } from '../listenMoreWeekly'
-import { useTop1000List, useTop1000Ranks } from '../top1000List'
-import { isRankedPlaylist, rankMovement, rotateRankSnap, weekKeyOf, RANK_SNAPSHOT_KEYS, type RankSnap } from '../../common/rank-movement'
+import { useTop1000List, useTop1000Movement, useTop1000Ranks } from '../top1000List'
+import { isRankedPlaylist, rankMovement, rotateRankSnap, top1000Movement, weekKeyOf, RANK_SNAPSHOT_KEYS, type RankSnap } from '../../common/rank-movement'
 import { useIpodLists, entryColor, renameIpodList, setIpodListHeadline, useIpodListsRole } from '../ipodLists'
 import { useTop1000Name, renameTop1000 } from '../top1000Name'
 import ListRenameField from '../components/ListRenameField'
@@ -393,6 +393,8 @@ export default function SmartPlaylistView() {
   const top1000 = useTop1000List()
   // …and each song's rank on it, for the '#' column (2026-11-07).
   const top1000Ranks = useTop1000Ranks()
+  // Top 1000's weekly arrows come from homemini (published list vs last week's, same rules).
+  const top1000Moves = useTop1000Movement()
   // On Repeat (2026-10-28): the Home shelves document's list — the same
   // rows the Home's ON REPEAT row draws (its head), resolved here.
   const regularTracks = useRegularLibraryTracks(libState.tracks)
@@ -565,8 +567,9 @@ export default function SmartPlaylistView() {
   // and capture current ranks as the new `curr`. Display reads `prev` for
   // the "(LW)" value + delta arrow. First-ever load has prev=null → every
   // track shows as NEW; subsequent weeks show real movement. The rule is
-  // shared (src/common/rank-movement.ts); Top 25 and Top 1000 each keep
-  // their own ui-state key so the two rankings never mix.
+  // shared (src/common/rank-movement.ts). Top 25 only since 2026-11-24: the
+  // Top 1000's movement is homemini's (top1000Movement), never a local
+  // snapshot, which had compared lists made by different rules.
   // Tagged with its playlist, so switching Top 25 ↔ Top 1000 never draws one
   // list's movement on the other for a frame.
   const [rankSnapFor, setRankSnapFor] = useState<{ playlistId: string; snap: RankSnap } | null>(null)
@@ -575,12 +578,11 @@ export default function SmartPlaylistView() {
   // week / month are recent-listening lenses, not power-rankings inputs);
   // Top 1000's quiz rank from homemini, every song on the list.
   const currentRanks = useMemo<Record<string, number> | null>(() => {
-    if (playlistId === 'top-1000') return top1000Ranks
     if (playlistId !== 'top-25' || topWindow !== 'all' || smartTracks.length === 0) return null
     const r: Record<string, number> = {}
     smartTracks.forEach((t, i) => { r[String(t.id)] = i + 1 })
     return r
-  }, [playlistId, topWindow, smartTracks, top1000Ranks])
+  }, [playlistId, topWindow, smartTracks])
   useEffect(() => {
     if (!isRankedPlaylist(playlistId)) return
     if (!currentRanks || Object.keys(currentRanks).length === 0) return
@@ -1431,6 +1433,17 @@ export default function SmartPlaylistView() {
                       return (
                         <div key={col.key} className="songs-cell songs-cell--rank">
                           <span className="rank-num">{rank}</span>
+                        </div>
+                      )
+                    }
+                    // Top 1000: homemini's weekly movement (green up, red down,
+                    // NEW); nothing on a fresh-start week or for a song that held.
+                    if (playlistId === 'top-1000') {
+                      const mv = top1000Movement(rank, top1000Moves.movement?.[String(track.id)], top1000Moves.comparedTo)
+                      return (
+                        <div key={col.key} className="songs-cell songs-cell--rank">
+                          <span className="rank-num">{rank}</span>
+                          {mv && <span className={mv.arrowClass} title={mv.lwLabel ? `Last week: ${mv.lwLabel.slice(1, -1)}` : 'New this week'}>{mv.arrow}</span>}
                         </div>
                       )
                     }

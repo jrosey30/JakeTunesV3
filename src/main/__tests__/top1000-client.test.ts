@@ -174,6 +174,30 @@ describe('top1000 client list (2026-11-17: published weekly list vs the quiz\'s 
     assert.equal((await c.list({ live: true })).ok, true)
     assert.deepEqual(seen.map((s) => s.url), ['http://hub:3000/api/top1000', 'http://hub:3000/api/top1000?live=1'])
   })
+  it('keeps homemini\'s weekly movement (2026-11-24): lastWeekRank, isNew, comparedTo; an older homemini has none', async () => {
+    const moved = {
+      progress, comparedTo: '2026-11-20T11:00:00.000Z',
+      list: [{ id: '7', rank: 1, pIn: 0.9, lastWeekRank: 4, isNew: false }, { id: '8', rank: 2, pIn: 0.8, lastWeekRank: null, isNew: true }, { id: '9', rank: 3, pIn: 0.7, lastWeekRank: 'x', isNew: 'no' }],
+    }
+    const c = createTop1000Client({ baseUrl: 'http://hub:3000', fetchImpl: fake({ '/api/top1000': { status: 200, body: moved } }, []), warn: () => {} })
+    const r = await c.list()
+    assert.ok(r.ok)
+    assert.equal(r.value.comparedTo, '2026-11-20T11:00:00.000Z')
+    assert.deepEqual(r.value.list, [
+      { id: 7, rank: 1, pIn: 0.9, lastWeekRank: 4, isNew: false },
+      { id: 8, rank: 2, pIn: 0.8, lastWeekRank: null, isNew: true },
+      { id: 9, rank: 3, pIn: 0.7 },
+    ])
+    const fresh = createTop1000Client({ baseUrl: 'http://hub:3000', fetchImpl: fake({ '/api/top1000': { status: 200, body: { ...moved, comparedTo: null } } }, []), warn: () => {} })
+    const f = await fresh.list()
+    assert.ok(f.ok)
+    assert.equal(f.value.comparedTo, null)
+    const old = createTop1000Client({ baseUrl: 'http://hub:3000', fetchImpl: fake({ '/api/top1000': { status: 200, body } }, []), warn: () => {} })
+    const o = await old.list()
+    assert.ok(o.ok)
+    assert.equal('comparedTo' in o.value, false)
+    assert.deepEqual(o.value.list, [{ id: 7, rank: 1, pIn: 0.9 }])
+  })
   it('the quiz view reads the live list, and falls back to the published one on an old preload', () => {
     const src = readFileSync(new URL('../../renderer/views/Top1000QuizView.tsx', import.meta.url), 'utf8')
     assert.match(src, /\(api\.top1000LiveList \?\? api\.top1000List\)\?\.\(\)/)
