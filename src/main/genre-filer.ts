@@ -45,6 +45,7 @@ import { normName } from './taste-profile.ts'
 import { originNames, type OriginLookup, type OriginSource } from './origin-lookup.ts'
 import { soundAlikeFor, soundAlikeLeader, soundAlikeText, type ShelfTrack, type SoundAlike } from './genre-sound-alike.ts'
 import { isHis, type GenreOwner, type FilerHow } from './genre-provenance.ts'
+import { landed } from '../common/jake-edits-stay.ts'
 
 export interface FilerTrack {
   id: number
@@ -347,7 +348,8 @@ export function fileableSuggestion(tag: string, suggested: string | undefined): 
 export interface FilerDeps {
   tracks(): Promise<FilerTrack[]>                 // effective tracks (overrides applied)
   /** `why` is given whenever fields.genre is: the host records it (genre-provenance.ts). */
-  persist(t: FilerTrack, fields: Record<string, string>, why?: GenreWhy): Promise<void>
+  /** The fields written: a field Jake set is held (genre-filer-persist.ts), and a held field is not filed. */
+  persist(t: FilerTrack, fields: Record<string, string>, why?: GenreWhy): Promise<Record<string, string> | void>
   applied(updates: Array<{ trackId: number; field: string; newValue: string }>): void
   evidence(u: FilerUnit): Promise<Evidence>
   classify(system: string, user: string): Promise<string>
@@ -457,7 +459,7 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
     for (const id of c.ids) {
       const t = byId.get(id)
       if (!t || isSettled(t)) continue
-      await deps.persist(t, { genre: g }, { by: 'filer', how: 'suggestion', confidence: 'low' })
+      if (!landed(await deps.persist(t, { genre: g }, { by: 'filer', how: 'suggestion', confidence: 'low' }), 'genre')) continue
       backfill.push({ trackId: id, field: 'genre', newValue: g })
       wrote = true
     }
@@ -468,7 +470,7 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
   // as it was (and the trace logged), never judged again.
   for (const t of repairsNeeded(tracks)) {
     const g = t.genre!.trim()
-    await deps.persist(t, { genre: g }, { by: 'filer', how: (t.filerPick?.how as FilerHow) ?? 'evidence', ...(t.filerPick?.confidence ? { confidence: t.filerPick.confidence as 'high' | 'medium' | 'low' } : {}) })
+    if (!landed(await deps.persist(t, { genre: g }, { by: 'filer', how: (t.filerPick?.how as FilerHow) ?? 'evidence', ...(t.filerPick?.confidence ? { confidence: t.filerPick.confidence as 'high' | 'medium' | 'low' } : {}) }), 'genre')) continue
     t.genreApproved = true
     deps.log?.(`[genre-filer] repaired ${t.artist} — ${t.album} (${t.id}): its ${g} was missing from the edits file${t.overrideFpSeen ? ` (entry fp "${t.overrideFpSeen}" ≠ song "${trackFingerprint(t)}")` : ''}; put back, not re-judged`)
   }
@@ -486,8 +488,7 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
     entriesGrew = true
     if (c.filedAs) {
       for (const id of fresh) {
-        await deps.persist(byId.get(id)!, { genre: c.filedAs }, { by: 'filer', how: 'suggestion', confidence: 'low' })
-        joined.push({ trackId: id, field: 'genre', newValue: c.filedAs })
+        if (landed(await deps.persist(byId.get(id)!, { genre: c.filedAs }, { by: 'filer', how: 'suggestion', confidence: 'low' }), 'genre')) joined.push({ trackId: id, field: 'genre', newValue: c.filedAs })
       }
     }
     deps.log?.(`[genre-filer] ${c.artist} — ${c.album}: ${fresh.length} new song${fresh.length === 1 ? '' : 's'} joined its check-list entry${c.filedAs ? ` (→ ${c.filedAs}, suggestion)` : ''}`)
@@ -536,6 +537,7 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
   const updates: Array<{ trackId: number; field: string; newValue: string }> = []
   let filed = 0
   for (const [u, d] of decided) {
+    let landedHere = 0
     for (const id of u.ids) {
       const t = byId.get(id)
       if (!t) continue
@@ -545,10 +547,13 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
       if (d.origin && !t.origin) fields.origin = d.origin
       if (!Object.keys(fields).length) continue
       const how: FilerHow = !d.genre ? 'suggestion' : d.how === 'check' ? 'suggestion' : d.how
-      await deps.persist(t, fields, genre ? { by: 'filer', how, ...(d.genre ? (d.confidence ? { confidence: d.confidence } : {}) : { confidence: 'low' as const }) } : undefined)
-      for (const [field, newValue] of Object.entries(fields)) updates.push({ trackId: id, field, newValue })
+      const written = await deps.persist(t, fields, genre ? { by: 'filer', how, ...(d.genre ? (d.confidence ? { confidence: d.confidence } : {}) : { confidence: 'low' as const }) } : undefined)
+      for (const [field, newValue] of Object.entries(fields)) if (landed(written, field)) updates.push({ trackId: id, field, newValue })
+      if (genre && landed(written, 'genre')) landedHere++
     }
     const filedAs = d.genre ? undefined : fileableSuggestion(u.tag, d.suggested) ?? undefined
+    // Held on every song (all his): not filed, not logged as filed.
+    if (d.genre && landedHere === 0) { deps.log?.(`[genre-filer] ${u.artist} — ${u.album}: kept as Jake set it`); continue }
     if (d.genre) filed++
     else check.push({ key: u.key, artist: u.artist, album: u.comp ? (u.title || u.album) : u.album, ids: u.ids, tag: u.tag, suggested: d.suggested, why: d.why, at: now, evidence: EVIDENCE_VERSION, ...(filedAs ? { filedAs } : {}) })
     deps.log?.(`[genre-filer] ${u.artist} — ${u.album}: ${d.genre ? `→ ${d.genre} (${d.how})` : filedAs ? `→ ${filedAs} (suggestion; stays on the check list: ${d.why})` : `check list (${d.why})`}`)
@@ -563,8 +568,7 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
       for (const id of rewritableIds(c, byId)) {
         const t = byId.get(id)!
         if ((t.genre || '').trim() === g && isSettled(t) && t.genreBy !== 'store') continue
-        await deps.persist(t, { genre: g }, { by: 'filer', how: d.genre ? 'rejudge' : 'suggestion', confidence: d.genre ? (d.confidence ?? 'medium') : 'low' })
-        updates.push({ trackId: id, field: 'genre', newValue: g })
+        if (landed(await deps.persist(t, { genre: g }, { by: 'filer', how: d.genre ? 'rejudge' : 'suggestion', confidence: d.genre ? (d.confidence ?? 'medium') : 'low' }), 'genre')) updates.push({ trackId: id, field: 'genre', newValue: g })
       }
     }
     c.evidence = EVIDENCE_VERSION
@@ -693,11 +697,13 @@ export async function fillOrigins(deps: FilerDeps, tracks: FilerTrack[], _homes:
     // Not extended to Cyrillic — that spans Belarus, Russia, Ukraine and more.
     if (!origin && HEBREW.test(g.name)) { origin = 'Israel'; how = 'Hebrew name' }
     if (!origin) continue
+    let n = 0
     for (const t of g.tracks) {
-      await deps.persist(t, { origin })
+      if (!landed(await deps.persist(t, { origin }), 'origin')) continue
       updates.push({ trackId: t.id, field: 'origin', newValue: origin })
+      n++
     }
-    deps.log?.(`[genre-filer] origin: ${g.name} → ${origin} (${how}; ${g.tracks.length} song${g.tracks.length === 1 ? '' : 's'})`)
+    if (n) deps.log?.(`[genre-filer] origin: ${g.name} → ${origin} (${how}; ${n} song${n === 1 ? '' : 's'})`)
   }
   if (updates.length) deps.applied(updates)
   if (asked) {
@@ -718,8 +724,7 @@ export async function resolveCheckEntry(deps: Pick<FilerDeps, 'tracks' | 'persis
   for (const id of entry.ids) {
     const t = byId.get(id)
     if (!t) continue
-    await deps.persist(t, { genre }, { by: 'jake', how: 'check-list' })
-    updates.push({ trackId: id, field: 'genre', newValue: genre })
+    if (landed(await deps.persist(t, { genre }, { by: 'jake', how: 'check-list' }), 'genre')) updates.push({ trackId: id, field: 'genre', newValue: genre })
   }
   if (updates.length) deps.applied(updates)
   await deps.saveCheck(check.filter((c) => c.key !== key))

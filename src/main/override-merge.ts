@@ -11,11 +11,32 @@
  */
 type OvEntry = { fp?: string; fields?: Record<string, string> }
 
+const DURATION_SLACK_MS = 2000   // the same 2 s as common/user-edits.ts sameSong
+
+/** The length a fingerprint (`title|artist|duration`) names, or null. */
+function fpLength(fp: string): number | null {
+  const n = Number(fp.slice(fp.lastIndexOf('|') + 1))
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/**
+ * Another song under this id? Only when the length differs. A changed title or
+ * artist at the same length is the same recording Jake corrected (his Get Info
+ * changes the fingerprint): its other fields stay.
+ */
+export function isAnotherSong(oldFp: string, newFp: string): boolean {
+  const a = fpLength(oldFp), b = fpLength(newFp)
+  if (a === null || b === null) return true
+  return Math.abs(a - b) > DURATION_SLACK_MS
+}
+
 /**
  * One field into `overrides` (mutated and returned). An explicit fingerprint
- * MISMATCH wipes the entry (the re-parse safeguard: the id now names another
- * song); a save without a fingerprint merges and keeps the entry's own; a
- * fresh entry is stamped with the fingerprint given.
+ * mismatch for a song of ANOTHER LENGTH wipes the entry (the re-parse
+ * safeguard: the id now names another song). A mismatch at the same length is
+ * a corrected title or artist: it merges, so none of Jake's other fields are
+ * lost (review of #501). A save without a fingerprint merges and keeps the
+ * entry's own; a fresh entry is stamped with the fingerprint given.
  */
 export function mergeOverrideField(
   overrides: Record<string, unknown>, trackId: number | string, field: string, value: string, fingerprint?: string,
@@ -25,7 +46,7 @@ export function mergeOverrideField(
   const isV2 = !!existing && typeof existing === 'object' && 'fields' in existing
   const hasNewFp = typeof fingerprint === 'string' && fingerprint !== ''
   const existingFp = isV2 ? (existing!.fp || '') : ''
-  if (isV2 && hasNewFp && existingFp && existingFp !== fingerprint) {
+  if (isV2 && hasNewFp && existingFp && existingFp !== fingerprint && isAnotherSong(existingFp, fingerprint!)) {
     // Explicit fingerprint mismatch — track at this ID has changed
     // identity (re-parse, library shift, etc). Old overrides don't
     // apply anymore; start fresh with just the new field.

@@ -118,10 +118,11 @@ describe('in the app', () => {
     // The filer's own picks never reach it (locked below).
     assert.equal(records.length, 2)
     assert.match(idx, /recordEdit: \(id, field, value, at\) => userEdits\.record\(id, field, value, at\)/)
-    const filer = readFileSync(join(repoRoot, 'src', 'main', 'ipc', 'genre-filer-ipc.ts'), 'utf-8')
-    const calls = filer.match(/host\.recordEdit\?\.\(/g) ?? []
+    // The filer's one write path moved to genre-filer-persist.ts (review of #501).
+    const filer = readFileSync(join(repoRoot, 'src', 'main', 'genre-filer-persist.ts'), 'utf-8')
+    const calls = filer.match(/h\.recordEdit\(/g) ?? []
     assert.equal(calls.length, 1)
-    assert.match(filer, /if \(why\.by === 'jake'\) await host\.recordEdit\?\.\(/, 'only his choices are journaled, never a filer pick')
+    assert.match(filer, /if \(why\.by === 'jake'\) await h\.recordEdit\(/, 'only his choices are journaled, never a filer pick')
     const start = idx.indexOf("ipc.handle('save-metadata-override'")
     const end = idx.indexOf('ipc.handle(', start + 10)
     const body = idx.slice(start, end)

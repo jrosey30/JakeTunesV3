@@ -57,7 +57,7 @@ import { startSyncConvertCache } from './ipc/sync-cache-ipc.ts'
 import { touchUsed } from './sync-convert-cache.ts'
 import { AacEncoderMissingError, IPOD_ALAC_MIRROR_TOKEN, MP3_MIRROR_TOKEN, aacMirrorCacheName, afconvertAacArgs, createAfconvertCheck, pcmDecodeArgs } from './aac-mirror-recipe.ts'
 import { startSelfCare } from './self-care.ts'; import { analysisCandidates, pruneBrake } from './self-care-core.ts'; import { removeAppTempFiles } from './self-care-files.ts'
-import { createHeldForJake } from './jake-edits-guard.ts'
+import { createHeldForJake, createJakeEdits, readJournalStrict } from './jake-edits-guard.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
 import { mergeQueuedDuringPass, runConvertPass, type ConvertOutcome, type QueueTrack, type StreamConvertItem } from './stream-convert-pass.ts'; import { confirmHomeminiHoldsFile, keptLocalMessage, USER_PENDING_RETRIES, type RefusalMemo } from './offload-confirm.ts'
@@ -905,15 +905,11 @@ async function persistOverrideFields(
   fields: Record<string, string>,
   fingerprint: string,
 ): Promise<void> {
+  // The one merge rule (override-merge.ts): it used to replace the whole entry
+  // whenever the fingerprints weren't identical, wiping Jake's other fields
+  // after a title or artist correction (review of #501).
   await writeOverridesSerialized((overrides) => {
-    const key = String(trackId)
-    const existing = overrides[key] as { fp?: string; fields?: Record<string, string> } | undefined
-    const isV2 = existing && typeof existing === 'object' && 'fields' in existing
-    if (isV2 && existing!.fp && existing!.fp === fingerprint) {
-      overrides[key] = { fp: existing!.fp, fields: { ...(existing!.fields || {}), ...fields } }
-    } else {
-      overrides[key] = { fp: fingerprint || '', fields: { ...fields } }
-    }
+    for (const [field, value] of Object.entries(fields)) mergeOverrideField(overrides, trackId, field, value, fingerprint)
     return overrides
   })
 }
@@ -6948,7 +6944,8 @@ function cynthiaGetAlbumsSnapshot(): Map<string, { label: string; tracks: Cynthi
   return out
 }
 
-const cynthiaHeldForJake = createHeldForJake(() => app.getPath('userData'))
+// His records of hand (the journal, strictly, and the phone's Get Info), read once per sweep (jake-edits-guard.ts).
+const cynthiaHeldForJake = createHeldForJake(createJakeEdits({ readJournal: () => readJournalStrict(app.getPath('userData')), readPhone: () => mobileMetadataOverridesCache.get() }))
 function buildCynthiaSweepHooks() {
   return {
     getAlbums: cynthiaGetAlbumsSnapshot,
