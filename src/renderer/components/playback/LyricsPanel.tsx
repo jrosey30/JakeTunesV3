@@ -38,6 +38,7 @@ import { prefetchLyrics, useTrackLyrics } from '../../lyricsStore'
 import { currentLyricIndex, LYRICS_FOLLOW_MS, LYRICS_HAND_SCROLL_HOLD_MS, type LyricLine } from '../../../common/lyrics-rules'
 import '../../styles/queue.css'
 import '../../styles/lyrics.css'
+import { motionMs } from '../../motion'
 
 export type LyricsPanelHandle = { requestClose: () => void }
 
@@ -55,7 +56,7 @@ const LyricsPanel = forwardRef<LyricsPanelHandle, { onClose: () => void }>(funct
   const requestClose = useCallback(() => {
     if (exiting) return
     setExiting(true)
-    window.setTimeout(() => onClose(), 220)
+    window.setTimeout(() => onClose(), motionMs('normal'))
   }, [exiting, onClose])
 
   useImperativeHandle(ref, () => ({ requestClose }), [requestClose])

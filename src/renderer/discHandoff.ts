@@ -50,6 +50,8 @@ let runSeq = 0
 
 // The one Reduce Motion question (motion.ts); re-exported for this module's callers.
 import { prefersReducedMotion } from './motion'
+import { pageSlideKind, pageSlideSupported, runPageSlide, slidesBetween } from './pageSlide'
+import { peekHistoryDirection } from './navIntent'
 export { prefersReducedMotion }
 
 export function discHandoffSupported(): boolean {
@@ -174,7 +176,8 @@ export function useDiscHandoffView<L extends HandoffLoc>(now: L): L {
   const kind = !busyRef.current && !sameHandoffLoc(shown, now) && discHandoffSupported()
     ? discHandoffKind(shown, now, armed, opened)
     : null
-  const holding = busyRef.current || kind !== null
+  // A page slide holds the old page for one frame too (pageSlide.ts).
+  const holding = busyRef.current || kind !== null || (slidesBetween(shown.view, now.view) && pageSlideSupported())
 
   useLayoutEffect(() => {
     if (busyRef.current) return
@@ -184,7 +187,23 @@ export function useDiscHandoffView<L extends HandoffLoc>(now: L): L {
     const k = discHandoffSupported() ? discHandoffKind(from, to, armed, opened) : null
     if (!k) {
       note(to)
+      // V7 motion: any other page change slides like an iPod menu (pageSlide.ts).
+      // `holding` already kept the old page on screen for this frame.
+      if (slidesBetween(from.view, to.view) && pageSlideSupported()) {
+        busyRef.current = true
+        runPageSlide(pageSlideKind(peekHistoryDirection()), () => {
+          busyRef.current = false
+          const dest = latestRef.current
+          if (!sameHandoffLoc(dest, to)) note(dest)
+          shownRef.current = dest
+          bump()
+        })
+        return
+      }
       shownRef.current = to
+      // The render held the old page expecting a slide that can't run now
+      // (the window went hidden, Reduce Motion came on): show the new one.
+      if (slidesBetween(from.view, to.view)) bump()
       return
     }
     busyRef.current = true

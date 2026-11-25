@@ -17,6 +17,7 @@ import { useIpodListsSnapshot } from '../ipodLists'
 import musicmanAvatar from '../assets/musicman-avatar.png'
 import '../styles/musicman.css'
 import '../styles/musicman-drawer.css'
+import { motionMs } from '../motion'
 
 export type MusicManDrawerHandle = { requestClose: () => void }
 
@@ -28,7 +29,7 @@ const MusicManDrawer = forwardRef<MusicManDrawerHandle, { onClose: () => void }>
   const requestClose = useCallback(() => {
     if (exiting) return
     setExiting(true)
-    window.setTimeout(() => onClose(), 220)
+    window.setTimeout(() => onClose(), motionMs('normal'))
   }, [exiting, onClose])
   useImperativeHandle(ref, () => ({ requestClose }), [requestClose])
 

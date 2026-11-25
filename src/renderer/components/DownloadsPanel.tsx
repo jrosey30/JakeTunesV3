@@ -18,6 +18,7 @@ import { downloadsPanelRows, downloadsPanelSections, panelSummary, type PanelRow
 import NeedsYouSlot, { getNeedsYouFix, subscribeNeedsYouFix } from './NeedsYouSlot'
 import '../styles/downloads-panel.css'
 import { SHOP_WORDS } from '../../common/shop-names'
+import { motionMs } from '../motion'
 
 export interface DownloadsPanelHandle { requestClose: () => void }
 
@@ -116,7 +117,7 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
 
   const requestClose = useCallback(() => {
     setExiting(true)
-    setTimeout(onClose, 220)
+    setTimeout(onClose, motionMs('normal'))
   }, [onClose])
   useImperativeHandle(ref, () => ({ requestClose }), [requestClose])
 

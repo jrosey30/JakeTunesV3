@@ -58,6 +58,13 @@
   animation: view-mount-fade var(--motion-normal) var(--motion-ease);
 }
 
+/* V7: a page that arrived by the page slide (pageSlide.ts) already moved in;
+   its own fade stays off. The fade is what a same-kind change (one playlist
+   to another) still gets. */
+.main-content-view[data-slide] > * {
+  animation: none;
+}
+
 @keyframes view-mount-fade {
   from { opacity: 0; }
   to   { opacity: 1; }

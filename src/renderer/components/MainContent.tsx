@@ -27,6 +27,7 @@ import NewsView from '../views/NewsView'
 import Top1000QuizView from '../views/Top1000QuizView'
 import ViewModeToggle from './ViewModeToggle'
 import { useDiscHandoffView } from '../discHandoff'
+import { pageSlideRunning } from '../pageSlide'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { nextKeptRoot, viewTransitionKey, type KeptRoot } from '../keptView'
 import { NavArrivalContext } from '../context/NavArrivalContext'
@@ -112,6 +113,12 @@ export default function MainContent() {
   const keptActive = wantKept !== null && view === wantKept
   const activeKey = keptActive ? `kept:${wantKept}` : transitionKey
   const arrival = useNavArrival(activeKey)
+  // V7: a page mounted inside a page slide arrives by the slide; its own fade
+  // stays off for its lifetime (main-content.css [data-slide]). Fixed once per
+  // page, like data-nav, so the fade never starts late.
+  const slideRef = useRef<{ key: string; slid: boolean } | null>(null)
+  if (!slideRef.current || slideRef.current.key !== activeKey) slideRef.current = { key: activeKey, slid: pageSlideRunning() }
+  const slid = slideRef.current.slid ? '' : undefined
   // The kept page's data-nav is fixed at ITS mount (see useNavArrival).
   const keptArrivalRef = useRef<{ root: KeptRoot; kind: 'return' | 'arrive' | 'restore' } | null>(null)
   if (wantKept && keptActive && keptArrivalRef.current?.root !== wantKept) keptArrivalRef.current = { root: wantKept, kind: arrival }
@@ -235,7 +242,7 @@ export default function MainContent() {
           </div>
         )}
         {viewElement !== null && (
-          <div className="main-content-view" key={transitionKey} data-nav={arrival === 'return' ? 'return' : undefined}>
+          <div className="main-content-view" key={transitionKey} data-nav={arrival === 'return' ? 'return' : undefined} data-slide={slid}>
             {MODE_ELIGIBLE.has(view) ? (
               // V5 facelift: thin chrome strip above the view hosting the
               // segmented view-mode toggle, right-aligned (iTunes 10 kept

@@ -18,9 +18,10 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import {
-  MOTION_MS, MOTION_EASE, MOTION_PERIOD_MS, MOTION_STAGGER_MS, TIMED_DISPLAYS_MS,
+  MOTION_MS, MOTION_EASE, MOTION_PERIOD_MS, MOTION_STAGGER_MS, TIMED_DISPLAYS_MS, MOTION_EXCEPTIONS_MS,
   MEANINGFUL_LOOPS, MEANINGFUL_SCRIPT_LOOPS, MOTION_EXEMPT_FILES, MOTION_EXEMPT_SELECTOR, MOTION_CUT,
 } from '../../renderer/motion.ts'
+import { markHistoryNavigation, peekHistoryDirection, takeHistoryNavigation } from '../../renderer/navIntent.ts'
 
 const REPO = join(import.meta.dirname, '../../..')
 const RENDERER = join(REPO, 'src/renderer')
@@ -206,6 +207,7 @@ describe('V7 motion — the app', () => {
     assert.equal(vars.get('--motion-blink'), `${MOTION_PERIOD_MS.blink}ms`)
     assert.equal(vars.get('--motion-pulse'), `${MOTION_PERIOD_MS.pulse}ms`)
     for (const [k, ms] of Object.entries(TIMED_DISPLAYS_MS)) assert.equal(vars.get(`--motion-display-${k}`), `${ms}ms`)
+    for (const [k, ms] of Object.entries(MOTION_EXCEPTIONS_MS)) assert.equal(vars.get(`--motion-${k}`), `${ms}ms`)
     // a fifth of a second for pages and dialogs; three speeds in order
     assert.ok(MOTION_MS.instant < MOTION_MS.normal && MOTION_MS.normal < MOTION_MS.slow)
     assert.ok(Math.abs(MOTION_MS.normal - 200) <= 20)
@@ -288,5 +290,66 @@ describe('V7 motion — the app', () => {
         }
       }
     }
+  })
+
+  test('the moves (page slide, sheets, drawers, default button) only touch transform and opacity', () => {
+    // What the compositor can do alone; anything else is laid out or painted every frame.
+    const css = blankComments(walk(RENDERER, ['.css']).map((f) => readFileSync(f, 'utf-8')).join('\n'))
+    for (const name of ['jt-page-off-left', 'jt-page-on-from-right', 'jt-page-off-right', 'jt-page-on-from-left',
+      'jt-sheet-drop', 'queue-slide-in', 'queue-slide-out', 'jt-default-pulse', 'overlay-backdrop-in']) {
+      const at = css.search(new RegExp(`@keyframes\\s+${name}\\s*\\{`))
+      assert.ok(at >= 0, `@keyframes ${name} is missing`)
+      let depth = 0, end = at
+      for (let i = css.indexOf('{', at); i < css.length; i++) {
+        if (css[i] === '{') depth++
+        if (css[i] === '}' && --depth === 0) { end = i; break }
+      }
+      const props = [...css.slice(at, end).matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1])
+      const other = props.filter((p) => p !== 'transform' && p !== 'opacity')
+      assert.deepEqual(other, [], `@keyframes ${name} animates ${other.join(', ')}`)
+    }
+  })
+
+  test('pages, sheets and drawers move at the normal speed; Back slides out to the right', () => {
+    const css = blankComments(readFileSync(join(RENDERER, 'styles/motion.css'), 'utf-8'))
+    assert.match(css, /::view-transition-old\(jt-page\),[\s\S]{0,80}::view-transition-new\(jt-page\)\s*\{[^}]*animation-duration:\s*var\(--motion-normal\)/)
+    assert.match(css, /jt-page-vt--out::view-transition-old\(jt-page\)\s*\{\s*animation-name:\s*jt-page-off-right/)
+    assert.match(css, /jt-page-vt--in::view-transition-new\(jt-page\)\s*\{\s*animation-name:\s*jt-page-on-from-right/)
+    assert.match(css, /animation:\s*jt-sheet-drop var\(--motion-normal\)/)
+    // the rest of the window never animates during a page slide
+    assert.match(css, /jt-page-vt::view-transition-group\(root\),[\s\S]{0,120}\{\s*animation:\s*none/)
+    const queue = blankComments(readFileSync(join(RENDERER, 'styles/queue.css'), 'utf-8'))
+    assert.match(queue, /animation:\s*queue-slide-in var\(--motion-normal\)/)
+  })
+
+  test('Back is told apart from Forward before the new page mounts', () => {
+    takeHistoryNavigation()
+    assert.equal(peekHistoryDirection(), null)
+    markHistoryNavigation('back')
+    assert.equal(peekHistoryDirection(), 'back')
+    assert.equal(peekHistoryDirection(), 'back', 'peeking never takes it')
+    assert.equal(takeHistoryNavigation(), true)
+    assert.equal(peekHistoryDirection(), null)
+    markHistoryNavigation('forward')
+    assert.equal(peekHistoryDirection(), 'forward')
+    takeHistoryNavigation()
+  })
+
+  test('the tape spools turn at their own pace again; the booth markers follow at 60 ms', () => {
+    const tape = readFileSync(join(RENDERER, 'styles/mixtape.css'), 'utf-8')
+    assert.match(tape, /\.spool--spin \{ animation: spool-rotate var\(--motion-tape-play\) linear infinite; \}/)
+    assert.match(tape, /\.deckbar-spool \{ animation: spool-rotate var\(--motion-tape-roll\) linear infinite; \}/)
+    assert.match(tape, /\.spool--fast \{ animation-duration: var\(--motion-tape-wind\); \}/)
+    const booth = readFileSync(join(RENDERER, 'styles/booth.css'), 'utf-8')
+    assert.equal([...booth.matchAll(/transition: left var\(--motion-follow\) linear/g)].length, 2)
+  })
+
+  test('Reduce Motion: a long Now Playing name holds still, shrunk, ending in "…", and the plan follows the switch live', () => {
+    const t = readFileSync(join(RENDERER, 'components/playback/lcdTicker.ts'), 'utf-8')
+    assert.match(t, /plan\.kind === 'ticker' && prefersReducedMotion\(\)\) \{[\s\S]{0,400}setAttribute\('data-lcd', 'still'\)/)
+    assert.match(t, /addEventListener\('change', replan\)/)
+    assert.match(t, /attributeFilter: \['data-motion'\]/)
+    const css = readFileSync(join(RENDERER, 'styles/toolbar.css'), 'utf-8')
+    assert.match(css, /\[data-lcd="still"\] \{[^}]*text-overflow: ellipsis;/)
   })
 })

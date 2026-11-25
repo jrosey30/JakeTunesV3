@@ -80,15 +80,34 @@ window.measurePageMove = async function measurePageMove({ direction = 'forward' 
   const t0 = performance.now()
   // The app's mount: the keyed child is replaced. A back move is marked the
   // way MainContent marks it (data-nav="return" on the view).
-  if (direction === 'back') view.dataset.nav = 'return'
-  else delete view.dataset.nav
-  view.replaceChildren(page)
+  const mount = (slid) => {
+    if (direction === 'back') view.dataset.nav = 'return'
+    else delete view.dataset.nav
+    if (slid) view.dataset.slide = ''
+    else delete view.dataset.slide
+    view.replaceChildren(page)
+  }
+  const root = document.documentElement
+  let vt = null
+  if (typeof document.startViewTransition === 'function' && root.dataset.motion !== 'reduce') {
+    // What pageSlide.ts runPageSlide does: the classes, then the swap inside
+    // a View Transition (the CSS that moves the pages is the app's own).
+    const kind = direction === 'back' ? 'out' : 'in'
+    root.classList.add('jt-page-vt', `jt-page-vt--${kind}`)
+    vt = document.startViewTransition(() => mount(true))
+    await vt.ready.catch(() => {})
+  } else {
+    mount(false)
+  }
   // Let the move start, then wait for every animation on the page to end.
   await raf()
+  if (window.__midShot) await window.__midShot()
   await raf()
   const anims = document.getAnimations()
   const durations = anims.map((a) => Number(a.effect?.getComputedTiming().duration) || 0)
   await Promise.all(anims.map((a) => a.finished.catch(() => {})))
+  if (vt) await vt.finished.catch(() => {})
+  root.classList.remove('jt-page-vt', 'jt-page-vt--in', 'jt-page-vt--out')
   const tEnd = performance.now()
   await raf(); await raf()
   recording = false
