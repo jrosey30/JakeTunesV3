@@ -65,7 +65,7 @@ import {
   retireIpodFirmwareScratch,
 } from './ipod-sync-card.ts'
 import { isAacEncoderMissing } from './aac-mirror-recipe.ts'
-import { landedVerdict, readLandedRecord, recipeFor, writeLandedRecord, type LandedCodec, type LandedEntry } from './ipod-landed-record.ts'
+import { NOT_CONVERTED_AGAIN, deleteLandedRecord, landedVerdict, readLandedRecord, recipeFor, writeLandedRecord, type LandedCodec, type LandedEntry } from './ipod-landed-record.ts'
 
 /** The plain reason a song wasn't converted when afconvert can't be used (Brief 265). */
 export const NO_AAC_ENCODER = "Apple's AAC encoder isn't available on this Mac"
@@ -516,7 +516,12 @@ async function runActivitySyncHolding(
   const priorPartialRaw = await readStateJson(PARTIAL_ON_CARD_FILE)
   const priorSealRaw = await readStateJson(TSA_SEAL_FILE)
   // What each converted song on the card is (Brief 265 Part 5; ipod-landed-record.ts).
-  const landedRecord = await readLandedRecord(host.stateDir)
+  // Trusted only if it was written by the sync that sealed the card as it is now (its `at` is that
+  // seal's time); a record from any other sync is ignored.
+  const landedRead = await readLandedRecord(host.stateDir)
+  const priorSealAt = parseTsaSeal(priorSealRaw)?.sealedAt ?? null
+  const landedRecord = landedRead.at !== null && landedRead.at === priorSealAt ? landedRead.entries : new Map<number, LandedEntry>()
+  if (landedRead.entries.size > 0 && landedRecord.size === 0) console.warn('activity-sync: landed record ignored — it is not from the sync that sealed this card')
   let keptByLandedRecord = 0
   const landedMisses = new Map<string, number>()
 
@@ -1179,7 +1184,12 @@ async function runActivitySyncHolding(
       await host.writeJournal(null)
       return fail({ copied: 0, cancelled: true, error: 'Sync cancelled by user — nothing on the iPod was touched.', target })
     }
-    const out = await prepareForCard({ i: e.i, id: e.id, title: e.title, dstToCopy: e.dstToCopy, needsPull: true, ...e.later! })
+    const rawOut = await prepareForCard({ i: e.i, id: e.id, title: e.title, dstToCopy: e.dstToCopy, needsPull: true, ...e.later! })
+    // A song kept by the landed record was a converted copy: if converting it again gives
+    // nothing (the mirror failed), it is refused and named, never copied as its master.
+    const out: typeof rawOut = rawOut.ok && e.landed && !(rawOut.converted && rawOut.srcToCopy !== e.later!.localFile)
+      ? { ok: false, kind: 'unconvertible', why: NOT_CONVERTED_AGAIN }
+      : rawOut
     if (out.ok) {
       // A local master (kept by the landed record, now must move) is recorded with its revision;
       // a song staged from homemini has no local revision and is not recorded.
@@ -1196,7 +1206,7 @@ async function runActivitySyncHolding(
     const why = out.kind === 'stage' ? out.msg : out.why
     console.error(`activity-sync: "${e.title}" (id ${e.id}) must move and couldn't be prepared (${why}); the card is untouched`)
     fetchFailedIds.add(e.id)
-    if (out.kind === 'unconvertible') lateWhy.set(e.id, "its audio couldn't be converted for the iPod (damaged file)")
+    if (out.kind === 'unconvertible') lateWhy.set(e.id, out.why === NOT_CONVERTED_AGAIN ? NOT_CONVERTED_AGAIN : "its audio couldn't be converted for the iPod (damaged file)")
     if (out.kind === 'no-encoder') lateWhy.set(e.id, NO_AAC_ENCODER)
   }
   if (swap) {
@@ -1737,6 +1747,15 @@ async function runActivitySyncHolding(
     console.warn('activity-sync: manifest write failed (non-fatal):', mErr instanceof Error ? mErr.message : mErr)
   }
 
+  // The landed record describes the card as the last seal left it: gone before this sync
+  // changes anything on the card, and written again only when this sync seals (Brief 265 Part 5).
+  {
+    const dropped = await deleteLandedRecord(host.stateDir)
+    if (!dropped.ok) {
+      await host.writeJournal(null)
+      return fail({ copied: 0, target, error: `Couldn’t clear this iPod’s record of converted songs on this Mac (${dropped.error}). Nothing on the iPod was changed.` })
+    }
+  }
   // ── 3. Remove (swap) or wipe (full) ──
   // The catalog is backed up on this Mac before the first file leaves the card
   // (Brief 265 Part 3): no backup, nothing removed, nothing wiped.
@@ -1829,6 +1848,8 @@ async function runActivitySyncHolding(
     if (kept?.landed && kept.later) {
       const out = await prepareForCard({ i: kept.i, id: kept.id, title: kept.title, dstToCopy: kept.dstToCopy, ...kept.later, needsPull: false })
       if (!out.ok) throw new Error(out.kind === 'stage' ? out.msg : out.why)
+      // Never the lossless master in place of the converted copy the card held.
+      if (!out.converted || out.srcToCopy === kept.later.localFile) throw new Error(NOT_CONVERTED_AGAIN)
       return { abs: out.srcToCopy, cleanup: async () => {} }
     }
     const rs = restageById.get(entry.id)

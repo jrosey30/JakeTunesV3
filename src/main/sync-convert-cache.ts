@@ -43,7 +43,7 @@ export async function listCache(dir: string): Promise<CacheFile[]> {
 export async function touchUsed(path: string, now = new Date()): Promise<void> {
   const st = await stat(path).catch(() => null)
   if (!st) return
-  await utimes(path, now, st.mtime).catch((err) => console.warn('[sync-cache] mark used:', err instanceof Error ? err.message : err))
+  await utimes(path, now, st.mtimeMs / 1000).catch((err) => console.warn('[sync-cache] mark used:', err instanceof Error ? err.message : err))
 }
 
 /** Delete leftover partials older than minAgeMs. Returns what was removed. Never while a sync runs. */
@@ -99,6 +99,8 @@ export async function clearCache(dir: string, opts: { syncInFlight: () => boolea
   let removed = 0
   let freed = 0
   for (const f of await listCache(dir)) {
+    // A sync that starts part-way through stops the clear: it may be reading these files.
+    if (opts.syncInFlight()) return { ok: false, error: `An iPod sync started. ${removed} file(s) were cleared; clear again when it’s done.` }
     try { await rm(f.path, { force: true }); removed++; freed += f.size } catch (err) { console.warn(`[sync-cache] could not remove ${f.name}:`, err instanceof Error ? err.message : err) }
   }
   return { ok: true, removed, freedBytes: freed }

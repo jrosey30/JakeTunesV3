@@ -17,7 +17,7 @@
  * Only converted songs are recorded: a master copied as it is already stays by its own size.
  * Written once per sealed sync, in the iPod's own state folder. Pure parts first; node --test.
  */
-import { readFile, rename, writeFile } from 'node:fs/promises'
+import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AAC_MIRROR_TOKEN, IPOD_ALAC_MIRROR_TOKEN, MP3_MIRROR_TOKEN } from './aac-mirror-recipe.ts'
 
@@ -97,12 +97,30 @@ export function parseLandedRecord(raw: unknown): Map<number, LandedEntry> {
   return out
 }
 
-/** A missing or torn record is an empty one: the songs go down the normal path, nothing is lost. */
-export async function readLandedRecord(stateDir: string): Promise<Map<number, LandedEntry>> {
+/** Why a song kept by the record can't be copied: converting it again gave nothing. */
+export const NOT_CONVERTED_AGAIN = "it couldn't be converted again for this iPod (its master is never copied in place of the converted copy)"
+
+/**
+ * The record and the time of the seal it was written at. A missing or torn record is an empty
+ * one: the songs go down the normal path, nothing is lost.
+ */
+export async function readLandedRecord(stateDir: string): Promise<{ at: string | null; entries: Map<number, LandedEntry> }> {
   try {
-    return parseLandedRecord(JSON.parse(await readFile(join(stateDir, LANDED_RECORD_FILE), 'utf-8')))
+    const raw = JSON.parse(await readFile(join(stateDir, LANDED_RECORD_FILE), 'utf-8')) as { at?: unknown }
+    return { at: typeof raw.at === 'string' ? raw.at : null, entries: parseLandedRecord(raw) }
   } catch {
-    return new Map()
+    return { at: null, entries: new Map() }
+  }
+}
+
+/** Gone before a sync writes to the card. Missing is fine; anything else is a failure the caller refuses on. */
+export async function deleteLandedRecord(stateDir: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await unlink(join(stateDir, LANDED_RECORD_FILE))
+    return { ok: true }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return { ok: true }
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
 

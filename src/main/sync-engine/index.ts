@@ -43,6 +43,7 @@ import {
 } from '../ipod-reconcile.ts'
 import { confirmWriteOnCard, flushCardCaches, remountVerifyEntries, retireIpodFirmwareScratch } from '../ipod-sync-card.ts'
 import { isAacEncoderMissing } from '../aac-mirror-recipe.ts'
+import { deleteLandedRecord } from '../ipod-landed-record.ts'
 import { applyFileStamps, createFileStampCache, fileToStamp } from '../ipod-file-stamps.ts'
 import { backupItunesDb, backupRefusal } from '../ipod-db-backup.ts'
 
@@ -418,6 +419,17 @@ export function createSyncEngine(host: SyncEngineHost) {
       // Plays first (2026-10-28): keep a copy of Play Counts/OTG + the pre-sync
       // catalog and manifest, bring the plays home, and confirm they are
       // recorded — BEFORE either engine below wipes or rewrites the card.
+      // The full-library sync doesn't read the landed record (Brief 265 Part 5), so it can't
+      // keep it true either: it goes before this sync touches the card. The activity engine
+      // reads it and drops it itself, before its own first write.
+      if (syncOpts?.origin !== 'activity-click') {
+        const dropped = await deleteLandedRecord(syncStateDir)
+        if (!dropped.ok) {
+          const msg = `Couldn’t clear this iPod’s record of converted songs on this Mac (${dropped.error}). Nothing on the iPod was changed.`
+          console.error(`sync-to-ipod: REFUSED — ${msg}`)
+          return { ok: false, copied: 0, error: msg }
+        }
+      }
       const plays = await securePlaysBeforeSync(gateMount, host.roundTripHost(syncStateDir, ipod.device),
         syncOpts?.origin === 'activity-click' ? 'Activity Sync' : 'library sync')
       if (!plays.ok) return { ok: false, copied: 0, error: plays.error }

@@ -6,8 +6,8 @@
  *   node --experimental-strip-types scripts/remove-ffmpeg-aac-mirrors.ts --apply   # deletes, one log line per file
  *
  * A file goes only if it is AAC in an .m4a with ffmpeg's encoder tag (isFfmpegAacMirror).
- * Every other cached copy (Apple AAC, iPod-safe ALAC, MP3) is left alone. Run it when no iPod is
- * syncing (nothing reads these files any more, but a sync could be writing next to them).
+ * Every other cached copy (Apple AAC, iPod-safe ALAC, MP3) is left alone. It refuses while an
+ * encoder is writing into the cache (a sync is converting).
  * Log: <userData>/logs/remove-ffmpeg-aac-mirrors-<stamp>.jsonl
  */
 import { execFile } from 'node:child_process'
@@ -28,6 +28,10 @@ async function probe(path: string): Promise<{ codec: string; encoder: string }> 
   const tags = Object.fromEntries(Object.entries(j.format?.tags ?? {}).map(([k, v]) => [k.toLowerCase(), v]))
   return { codec: j.streams?.[0]?.codec_name ?? '', encoder: tags.encoder ?? '' }
 }
+
+// A sync converting into the cache right now: don't run beside it (an encoder process names the cache).
+const busy = await execP('pgrep', ['-f', SYNC_CONVERT_CACHE_SUBDIR]).then((r) => r.stdout.trim(), () => '')
+if (busy) { console.error('An iPod sync is converting into the cache right now. Run this when it is done.'); process.exit(2) }
 
 const names = (await readdir(dir)).filter((n) => n.toLowerCase().endsWith('.m4a') && !n.includes('.partial.'))
 const victims: Array<{ name: string; size: number; encoder: string }> = []

@@ -7,7 +7,7 @@ import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { landedVerdict, parseLandedRecord, recipeFor, LANDED_RECORD_FILE, type LandedEntry, type LandedNow } from '../ipod-landed-record.ts'
@@ -76,6 +76,7 @@ describe('the real engine: an emptied convert cache converts nothing again', () 
   let root: string, lib: string, card: string, state: string, mirrors: string
   let host: ActivitySyncHost
   let converts = 0
+  let mirrorFails = false
   const tracks: Array<Record<string, unknown>> = []
   const options = { enabled: true, targetKbps: 256 as const, codec: 'aac' as const }
   const sync = () => runActivitySync(host, {
@@ -101,6 +102,7 @@ describe('the real engine: an emptied convert cache converts nothing again', () 
       // A stand-in for the AAC mirror: a smaller file, made once per master revision, counted.
       buildAacMirror: async (src) => {
         converts++
+        if (mirrorFails) return null
         const st = await stat(src)
         const out = join(mirrors, createHash('sha1').update(`${src}|256|${st.size}|${st.mtimeMs}`).digest('hex').slice(0, 16) + '.m4a')
         await writeFile(out, Buffer.alloc(MIRROR_BYTES + (st.size % 7), 7))
@@ -155,5 +157,54 @@ describe('the real engine: an emptied convert cache converts nothing again', () 
     assert.equal(converts, 1)
     assert.equal(res.copied, 1)
     assert.equal(res.swap?.stayed, N - 1)
+  })
+
+  it('a record from another seal is ignored: everything is converted again, nothing kept on its word', async () => {
+    const stale = join(root, 'stale-record.json')
+    await copyFile(join(state, LANDED_RECORD_FILE), stale)
+    const res1 = await sync()                      // seals again: a new record at the new seal's time
+    assert.equal(res1.ok, true, res1.error)
+    await copyFile(stale, join(state, LANDED_RECORD_FILE))   // as if an old record had survived
+    for (const n of await readdir(mirrors)) await rm(join(mirrors, n))
+    converts = 0
+    const res = await sync()
+    assert.equal(res.ok, true, res.error)
+    assert.equal(converts, N, 'the stale record kept nothing')
+    assert.equal(res.copied, 0, 'and nothing had to move')
+  })
+
+  it('the record is gone before the card is touched; if it can\'t be removed, the sync refuses with the card untouched', async () => {
+    const src = await readFile(new URL('../ipod-activity-engine.ts', import.meta.url), 'utf-8')
+    const drop = src.indexOf('await deleteLandedRecord(host.stateDir)')
+    assert.ok(drop > 0 && drop < src.indexOf('// ── 3. Remove (swap) or wipe (full) ──'), 'before the remove / wipe / first copy')
+    const full = await readFile(new URL('../sync-engine/index.ts', import.meta.url), 'utf-8')
+    assert.ok(full.indexOf('await deleteLandedRecord(syncStateDir)') < full.indexOf('await securePlaysBeforeSync('), 'the full-library sync drops it first too')
+    await rm(join(state, LANDED_RECORD_FILE), { force: true })
+    await mkdir(join(state, LANDED_RECORD_FILE, 'blocker'), { recursive: true })   // unremovable
+    const before = await readFile(join(card, 'iPod_Control', 'iTunes', 'iTunesDB'))
+    const res = await sync()
+    assert.equal(res.ok, false)
+    assert.match(String(res.error), /record of converted songs.*Nothing on the iPod was changed/)
+    assert.ok((await readFile(join(card, 'iPod_Control', 'iTunes', 'iTunesDB'))).equals(before))
+    await rm(join(state, LANDED_RECORD_FILE), { recursive: true, force: true })
+    const ok = await sync()                        // writes a fresh record
+    assert.equal(ok.ok, true, ok.error)
+  })
+
+  it('a kept song that must be copied and can\'t be converted again is left off, never copied as its lossless master', async () => {
+    // A stranger file on the card: no swap proof, so a full copy, and every kept song must move.
+    await writeFile(join(card, 'iPod_Control', 'Music', 'F01', 'STRANGER.m4a'), Buffer.alloc(1000))
+    mirrorFails = true
+    for (const n of await readdir(mirrors)) await rm(join(mirrors, n))
+    const res = await sync()
+    mirrorFails = false
+    const masterSized: string[] = []
+    for (const f of await readdir(join(card, 'iPod_Control', 'Music'))) {
+      for (const n of await readdir(join(card, 'iPod_Control', 'Music', f))) {
+        if ((await stat(join(card, 'iPod_Control', 'Music', f, n))).size >= MASTER_BYTES) masterSized.push(n)
+      }
+    }
+    assert.deepEqual(masterSized, [], 'no lossless master went on the card')
+    assert.ok(!res.ok || (res.leftOff ?? []).length > 0, 'the songs are refused or left off, by name')
   })
 })
