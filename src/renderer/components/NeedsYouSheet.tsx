@@ -14,6 +14,7 @@
  */
 import { useEffect, useState } from 'react'
 import CloseButton from './CloseButton'
+import { useEscape } from '../hooks/useKeyboard'
 import GenreCheckList from './GenreCheckList'
 import '../styles/import-convert.css'
 
@@ -44,11 +45,7 @@ export default function NeedsYouSheet({ onClose, onShowDuplicates, onShowOrphans
     window.electronAPI.scanDeadTracks().then((r) => { if (live && r.ok) setDeadCount(r.count ?? 0) }).catch(() => { /* row stays hidden */ })
     return () => { live = false }
   }, [])
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  useEscape('needs-you', true, onClose)
 
   const orphans = status?.needsYou.orphanFiles ?? 0
   return (

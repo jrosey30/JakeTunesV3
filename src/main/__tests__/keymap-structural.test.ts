@@ -75,7 +75,7 @@ describe('one wiring per shortcut: the old duplicates are gone', () => {
       ['components/OrphanCleanupModal.tsx', /useEscape\('orphan-cleanup'/],
       ['components/SyncHistorySheet.tsx', /useEscape\('sync-history'/],
       ['components/IpodSetupSheet.tsx', /useEscape\('ipod-setup'/],
-      ['components/PlayCacheModal.tsx', /useEscape\('play-cache'/],
+      ['components/NeedsYouSheet.tsx', /useEscape\('needs-you', true, onClose\)/],   // V7: PlayCacheModal is gone (the nightly check)
       ['components/ConfirmDialog.tsx', /useEscape\('confirm', true, onCancel\)/],
       ['components/GetInfoModal.tsx', /useEscape\('get-info', true, onClose\)/],
       ['components/ContextMenu.tsx', /useEscape\('context-menu'/],
