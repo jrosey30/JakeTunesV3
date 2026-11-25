@@ -57,7 +57,7 @@ export default function AlbumArtImage({
   const handleLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
     const el = e.currentTarget
     if (!priority && !fadedRef.current) {
-      el.style.transition = 'opacity 200ms ease'
+      el.style.transition = 'opacity var(--motion-normal) var(--motion-ease)'
       el.style.opacity = '1'
       fadedRef.current = true
     }
@@ -69,7 +69,9 @@ export default function AlbumArtImage({
       ref={refCb}
       src={albumArtUrl(hash, size, rev)}
       alt={alt}
-      className={className}
+      // jt-cover (motion.css): a square box is held before the bytes land, so
+      // a cover fades in exactly where it belongs and nothing below it moves.
+      className={className ? `jt-cover ${className}` : 'jt-cover'}
       loading={priority ? 'eager' : 'lazy'}
       decoding="async"
       fetchPriority={priority ? 'high' : 'auto'}

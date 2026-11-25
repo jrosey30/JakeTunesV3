@@ -56,7 +56,7 @@
      genre browser feels responsive instead of snapping between
      states. Selection blue stays instant (gradient transitions are
      expensive). */
-  transition: background-color 90ms ease-out, color 90ms ease-out;
+  transition: background-color var(--motion-instant) var(--motion-ease), color var(--motion-instant) var(--motion-ease);
 }
 
 .genres-column-item:hover { background: rgba(0,0,0,0.05); }
@@ -100,7 +100,7 @@
 .genres-track-row--alt { background: var(--row-alt); }
 .genres-track-row {
   /* 4.5.0-84: same 90 ms hover ease as the main Songs view rows. */
-  transition: background-color 90ms ease-out;
+  transition: background-color var(--motion-instant) var(--motion-ease);
 }
 /* V5 facelift: hover glow references the real selection blue (was a
    drifted rgba(74,144,217) literal) and reads slightly stronger. */

@@ -18,6 +18,7 @@
  */
 import { useEffect, type RefObject } from 'react'
 import { planLcdFit } from '../../../common/lcd-ticker'
+import { prefersReducedMotion } from '../../motion'
 
 export const LCD_LINE_SELECTOR = '.now-playing-line-primary, .now-playing-line-secondary, .now-playing-line-tertiary'
 
@@ -54,7 +55,8 @@ export function useLcdTicker(rootRef: RefObject<HTMLElement>): void {
       if (plan.kind === 'shrink') {
         line.setAttribute('data-lcd', 'shrink')
         for (const child of Array.from(line.children) as HTMLElement[]) child.style.fontSize = `${plan.scale}em`
-      } else if (plan.kind === 'ticker') {
+      } else if (plan.kind === 'ticker' && !prefersReducedMotion()) {
+        // Reduce Motion: the title holds still (clipped) instead of scrolling.
         line.setAttribute('data-lcd', 'ticker')
         const frames = plan.keyframes.map((k) => ({ offset: k.offset, transform: `translateX(${k.x}px)` }))
         for (const child of Array.from(line.children) as HTMLElement[]) {

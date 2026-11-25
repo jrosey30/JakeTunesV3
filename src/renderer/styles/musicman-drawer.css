@@ -12,9 +12,9 @@
   flex-direction: column;
   z-index: 10;
   box-shadow: -2px 0 8px rgba(0,0,0,0.12);
-  animation: queue-slide-in var(--motion-panel) var(--ease-settle) both;
+  animation: queue-slide-in var(--motion-normal) var(--motion-ease) both;
 }
-.mm-drawer--exiting { animation: queue-slide-out var(--motion-panel) var(--ease-settle) both; }
+.mm-drawer--exiting { animation: queue-slide-out var(--motion-normal) var(--motion-ease) both; }
 @media (prefers-reduced-motion: reduce) { .mm-drawer, .mm-drawer--exiting { animation: none; } }
 
 .mm-drawer-head {

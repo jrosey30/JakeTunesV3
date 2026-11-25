@@ -139,7 +139,10 @@ describe('the header photo window (twin of the phone, Mobile ArtistHeroFraming)'
     const css = readFileSync(join(import.meta.dirname, '../../renderer/styles/artist-detail.css'), 'utf-8')
     assert.match(css, /\.ad-hero-photo--whole img\s*\{[^}]*height:\s*auto/)
     assert.match(css, /\.ad-hero-photo--tall img\s*\{[^}]*width:\s*auto/)
-    assert.match(css, /\.ad-drift, \.ad-rise, \.ad-hero-photo--whole img, \.ad-hero-photo--tall img \{ animation: none; \}/, 'reduced motion stops the whole photo\'s drift too')
+    // V7: the header photo no longer drifts; a whole or tall photo is drawn unzoomed.
+    assert.doesNotMatch(css, /animation(-name)?:\s*ad-drift/)
+    assert.match(css, /\.ad-hero-photo--whole img\s*\{[^}]*transform:\s*none/)
+    assert.match(css, /\.ad-hero-photo--tall img\s*\{[^}]*transform:\s*none/)
   })
 })
 

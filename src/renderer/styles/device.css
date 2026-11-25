@@ -316,7 +316,7 @@
 .device-sync-step-count { font-weight: 500; color: inherit; opacity: 0.8; font-variant-numeric: tabular-nums; }
 .device-sync-live { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .device-sync-live-bar { flex: 1; height: 6px; background: #ddd8cd; border-radius: 3px; overflow: hidden; }
-.device-sync-live-bar i { display: block; height: 100%; background: linear-gradient(90deg, #5b8cd6, #3b6fc4); transition: width 300ms ease; }
+.device-sync-live-bar i { display: block; height: 100%; background: linear-gradient(90deg, #5b8cd6, #3b6fc4); transition: width var(--motion-normal) var(--motion-ease); }
 .device-sync-live-text { flex: 2; min-width: 0; font-size: 12px; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .device-sync-live-elapsed { font-size: 11px; color: #7a746a; font-variant-numeric: tabular-nums; }
 .device-sync-result { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }

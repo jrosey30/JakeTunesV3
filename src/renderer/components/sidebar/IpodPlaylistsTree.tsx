@@ -85,7 +85,7 @@ export function IpodDisclosure({ device, ipodName, active }: { device: string; i
       aria-label={shown ? `Hide ${ipodName}’s playlists` : `Show ${ipodName}’s playlists`}
       onClick={(e) => { e.stopPropagation(); toggleIpodOpen(device, shown, active) }}
     >
-      <svg width="8" height="8" viewBox="0 0 10 10" aria-hidden="true" style={{ transform: shown ? 'rotate(90deg)' : undefined, transition: 'transform 120ms ease' }}>
+      <svg width="8" height="8" viewBox="0 0 10 10" aria-hidden="true" style={{ transform: shown ? 'rotate(90deg)' : undefined, transition: 'transform var(--motion-instant) var(--motion-ease)' }}>
         <path d="M2.5 1 L8 5 L2.5 9 Z" fill="currentColor" />
       </svg>
     </button>

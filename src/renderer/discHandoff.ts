@@ -47,13 +47,9 @@ const VT_CLASS = 'jt-disc-vt'
 /** The latest run: a newer transition (Back mid-morph) skips the older one, whose cleanup must not undo the newer one's names. */
 let runSeq = 0
 
-export function prefersReducedMotion(): boolean {
-  try {
-    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  } catch {
-    return false
-  }
-}
+// The one Reduce Motion question (motion.ts); re-exported for this module's callers.
+import { prefersReducedMotion } from './motion'
+export { prefersReducedMotion }
 
 export function discHandoffSupported(): boolean {
   return typeof document !== 'undefined' && typeof document.startViewTransition === 'function' && !prefersReducedMotion()

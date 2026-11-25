@@ -137,5 +137,5 @@
 .dna-answer .dna-link { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
 
 @media (prefers-reduced-motion: no-preference) {
-  .dna-opt, .dna-btn, .dna-rbtn { transition: border-color 120ms ease, background-color 120ms ease; }
+  .dna-opt, .dna-btn, .dna-rbtn { transition: border-color var(--motion-instant) var(--motion-ease), background-color var(--motion-instant) var(--motion-ease); }
 }

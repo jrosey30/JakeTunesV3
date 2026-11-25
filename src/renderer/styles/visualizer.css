@@ -6,7 +6,7 @@
   z-index: 9999;
   background: #0b0710;
   cursor: pointer;
-  animation: viz-fade-in 280ms ease both;
+  animation: viz-fade-in var(--motion-normal) var(--motion-ease) both;
 }
 .visualizer-canvas {
   display: block;
@@ -40,7 +40,8 @@
   font-size: 12px;
   letter-spacing: 0.02em;
   color: rgba(255, 255, 255, 0.42);
-  animation: viz-hint-fade 4.5s ease forwards;
+  /* A timed display: shown, held, then faded (its length is listed in motion.css). */
+  animation: viz-hint-fade var(--motion-display-hint) var(--motion-ease) both;
 }
 @keyframes viz-fade-in { from { opacity: 0 } to { opacity: 1 } }
 @keyframes viz-hint-fade { 0%, 65% { opacity: 0.45 } 100% { opacity: 0 } }
