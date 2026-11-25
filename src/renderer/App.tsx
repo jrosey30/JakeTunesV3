@@ -3,6 +3,7 @@ import { LibraryProvider, useLibrary } from './context/LibraryContext'
 import { shouldYieldToClaim } from './input-mode'
 import { handleOwnedArrowKey } from './utils/arrowKeyOwner'
 import { primeColumnCacheFromUiState } from './utils/columnState'
+import { savedSongsSort } from './utils/songTableRules'
 import { PlaybackProvider, usePlayback } from './context/PlaybackContext'
 import { CynthiaProvider } from './context/CynthiaContext'
 import { NavigationProvider, useNavigation } from './context/NavigationContext'
@@ -1105,13 +1106,9 @@ function AppInner() {
         const shopTab = legacyShopTab(ui)
         if (shopTab) requestDiscoveryTab(shopTab)
         dispatch(restoreActionFor(savedLocation(ui)))
-        if (typeof ui.sortColumn === 'string') {
-          // Restore sort state — dispatch twice if needed to match saved direction
-          dispatch({ type: 'SET_SORT', column: ui.sortColumn as import('./types').SortColumn })
-          if (ui.sortDirection === 'desc') {
-            dispatch({ type: 'SET_SORT', column: ui.sortColumn as import('./types').SortColumn })
-          }
-        }
+        // The Songs sort as it was saved — Original Order (null) included (V7).
+        const savedSort = savedSongsSort(ui)
+        if (savedSort !== undefined) dispatch({ type: 'SET_SORT_STATE', sort: savedSort })
         // Column state: PRIME the shared cache first, then fire the event.
         //
         // The event alone never worked on a cold launch. We are inside the

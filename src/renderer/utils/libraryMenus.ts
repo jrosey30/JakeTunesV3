@@ -70,6 +70,9 @@ export interface SongMenuOptions {
   /** "Delete Song" (from the library). Absent = the page doesn't offer it
    *  (a playlist: Remove from Playlist sits there instead, 4.4.10). */
   askDelete?: () => void
+  /** Its words, where "Delete Song" would read as "out of this list" (a
+   *  playlist says "Delete from Library"). */
+  deleteLabel?: string
   /** The page's own entries (Remove from Playlist, Make a Mixtape…), after
    *  the shared ones and before Delete. */
   extras?: MenuEntry[]
@@ -228,7 +231,7 @@ export function songMenuEntries(o: SongMenuOptions): MenuEntry[] {
       },
     ],
     extras: o.extras ?? [],
-    del: o.askDelete ? { label: count > 1 ? `Delete ${count} Songs` : 'Delete Song', onClick: o.askDelete } : undefined,
+    del: o.askDelete ? { label: o.deleteLabel ?? (count > 1 ? `Delete ${count} Songs` : 'Delete Song'), onClick: o.askDelete } : undefined,
   })
 }
 

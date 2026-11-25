@@ -218,7 +218,8 @@ export default function IpodPlaylistView() {
         playFrom={(idx) => { if (shown[idx]) playTrack(shown[idx], shown, idx, undefined, true, true) }}
         onRemove={editable ? removeSongs : undefined}
         removeLabel={(n) => (n > 1 ? `Remove ${n} Songs from “${own?.name}”` : `Remove from “${own?.name}”`)}
-        deleteFromLibrary={false}
+        deleteKeyDeletes={false}
+        libraryDeleteInMenu={false}
         onReorder={editable ? reorder : undefined}
         onDropSongs={editable ? dropSongs : undefined}
         empty={(

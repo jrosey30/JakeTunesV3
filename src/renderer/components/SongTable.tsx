@@ -105,16 +105,22 @@ export interface SongTableProps {
   onSort: (next: SongSort | null) => void
   /** A first column the page draws: the album's track numbers, the Top 1000's ranks. */
   lead?: SongTableLead
-  /** Columns this page leaves out (the album page has no Album column). */
-  omitColumns?: readonly string[]
+  /** A page's own short set of columns, instead of the shared layout (the
+   *  album page: #, Name, Artist, Plays, Time — the jewel-case layout's rule). */
+  columns?: readonly string[]
   /** Take songs out of THIS list (Delete, and "Remove from …" in the menu).
    *  Returns the Undo, or null when nothing came out. */
   onRemove?: (songs: Track[]) => SongTableRemoval | null
   /** The menu's "Remove from …" wording. */
   removeLabel?: (count: number) => string
-  /** No onRemove: Delete and the menu's Delete Song delete from the library
-   *  (asked first). False on a list where nothing should leave (a read-only one). */
-  deleteFromLibrary?: boolean
+  /** No onRemove: the Delete key deletes from the library, asked first. Only
+   *  on library pages (Songs, an album, Genres); false on a smart playlist,
+   *  the Top 1000 and the iPod lists, where Delete does nothing. */
+  deleteKeyDeletes?: boolean
+  /** "Delete Song" (from the library, asked first) in the right-click menu. */
+  libraryDeleteInMenu?: boolean
+  /** What else the songs leave, said in the delete question ("punkPod"). */
+  alsoLeaves?: string
   /** The page's own menu entries for the songs right-clicked. */
   menuExtras?: (songs: Track[], track: Track) => MenuEntry[]
   /** Drag rows to reorder: only offered in the list's own order. `beforeId`
@@ -264,8 +270,8 @@ const SongRow = memo(function SongRow(p: RowProps) {
 
 export default function SongTable(props: SongTableProps): JSX.Element {
   const {
-    listKey, tracks, active, sort, onSort, lead, omitColumns, onRemove, removeLabel,
-    deleteFromLibrary = true, menuExtras, onReorder, onDropSongs, playFrom,
+    listKey, tracks, active, sort, onSort, lead, columns: fixedColumns, onRemove, removeLabel,
+    deleteKeyDeletes = true, libraryDeleteInMenu = true, alsoLeaves, menuExtras, onReorder, onDropSongs, playFrom,
     scroll = 'own', scrollKey, className, above, pinned, empty, follow = 'nearest', answersShowNowPlaying,
   } = props
   const { state: lib, dispatch: libDispatch } = useLibrary()
@@ -274,7 +280,7 @@ export default function SongTable(props: SongTableProps): JSX.Element {
   const { openCynthia } = useCynthia()
   useSyncExternalStore(subscribeRecentlyAdded, recentlyAddedSnapshot)
   useSyncExternalStore(subscribeDownloads, downloadsVersion)
-  const columns = useColumnLayout(omitColumns)
+  const columns = useColumnLayout(fixedColumns)
   const { onSave: onGetInfoSave, onFetchArt, onSetCustomArt } = useGetInfoHandlers()
 
   const ownScrollerRef = useRef<HTMLDivElement | null>(null)
@@ -532,12 +538,12 @@ export default function SongTable(props: SongTableProps): JSX.Element {
         if (!songs.length) return
         e.preventDefault()
         if (live.current.onRemove) removeSongs(songs)
-        else if (deleteFromLibrary) setDeleteIds(songs.map((t) => t.id))
+        else if (deleteKeyDeletes) setDeleteIds(songs.map((t) => t.id))
       }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [active, libDispatch, markActivity, selectedSongs, removeSongs, deleteFromLibrary])
+  }, [active, libDispatch, markActivity, selectedSongs, removeSongs, deleteKeyDeletes])
 
   useEffect(() => {
     if (!active) return
@@ -625,7 +631,9 @@ export default function SongTable(props: SongTableProps): JSX.Element {
   }, [dropAt])
 
   // ── The menu ──
-  const menuItems = (): MenuEntry[] => {
+  // Built when the menu opens or what it acts on changes — not on every
+  // playback tick, which re-renders the table.
+  const menuItems = useMemo((): MenuEntry[] => {
     if (!ctxMenu) return []
     const track = tracks[ctxMenu.idx]
     if (!track) return []
@@ -646,12 +654,15 @@ export default function SongTable(props: SongTableProps): JSX.Element {
       openGetInfo: () => setGetInfo(songs.length > 1
         ? { tracks: songs, index: tracks.indexOf(songs[0]) }
         : { tracks: [track], index: ctxMenu.idx }),
-      askDelete: !onRemove && deleteFromLibrary ? () => setDeleteIds(songs.map((t) => t.id)) : undefined,
+      askDelete: libraryDeleteInMenu ? () => setDeleteIds(songs.map((t) => t.id)) : undefined,
+      // Next to "Remove from Playlist", plain "Delete Song" would read as the same thing.
+      deleteLabel: onRemove ? (songs.length > 1 ? `Delete ${songs.length} Songs from Library` : 'Delete from Library') : undefined,
       extras,
       openCynthia,
       at: { x: ctxMenu.x, y: ctxMenu.y },
     })
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctxMenu, tracks, lib.selectedTrackIds, lib.tracks, lib.playlists, menuExtras, onRemove, removeLabel, libraryDeleteInMenu])
 
   const header = (
     <div
@@ -678,7 +689,7 @@ export default function SongTable(props: SongTableProps): JSX.Element {
           aria-sort={sort?.column === col.key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : undefined}
           className={`songs-header-cell songs-header-cell--${col.key} ${sort?.column === col.key ? 'sorted' : ''} ${dragOverKey === col.key ? 'songs-header-cell--drag-over' : ''}`}
           onClick={() => onHeaderClick(col)}
-          draggable
+          draggable={!columns.fixed}
           onDragStart={(e) => { e.dataTransfer.setData('application/jaketunes-column', col.key); e.dataTransfer.effectAllowed = 'move' }}
           onDragOver={(e) => {
             if (!e.dataTransfer.types.includes('application/jaketunes-column')) return
@@ -768,15 +779,16 @@ export default function SongTable(props: SongTableProps): JSX.Element {
           placeholder="Find song, artist, album…"
         />
       )}
-      {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={menuItems()} onClose={() => setCtxMenu(null)} />}
+      {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={menuItems} onClose={() => setCtxMenu(null)} />}
       {headerMenu && (
         <ContextMenu
           x={headerMenu.x}
           y={headerMenu.y}
           items={[
             { label: ORIGINAL_ORDER, checked: !sort, onClick: () => onSort(null) },
-            { separator: true as const },
-            ...columns.ordered
+            ...(columns.fixed ? [] : [{ separator: true as const }]),
+            // A page's own short set has no picker: only the shared layout is Jake's to edit.
+            ...(columns.fixed ? [] : columns.ordered)
               .filter((c) => !ALWAYS_VISIBLE.has(c.key))
               .map((c) => ({
                 label: c.label,
@@ -803,7 +815,7 @@ export default function SongTable(props: SongTableProps): JSX.Element {
           onSetCustomArt={onSetCustomArt}
         />
       )}
-      {deleteIds && <DeleteSongsDialog ids={deleteIds} onClose={() => setDeleteIds(null)} />}
+      {deleteIds && <DeleteSongsDialog ids={deleteIds} alsoLeaves={alsoLeaves} onClose={() => setDeleteIds(null)} />}
       {undo && (
         <UndoToast
           key={undo.key}

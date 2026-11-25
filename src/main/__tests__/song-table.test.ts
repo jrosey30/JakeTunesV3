@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  ALWAYS_VISIBLE, ORIGINAL_ORDER, SONG_COLUMNS, SONG_MENU_CORE, assembleSongMenu, deleteSongsWording, dragLabel,
+  ALWAYS_VISIBLE, ORIGINAL_ORDER, SONG_COLUMNS, SONG_MENU_CORE, assembleSongMenu, deleteSongsWording, dragLabel, savedSongsSort,
   filterSongs, ipodPlaylistMenuEntry, menuSlot, moveRows, nextSort, removedFromListNotice, rowWindow, sortSongs,
   type SongMenuParts,
 } from '../../renderer/utils/songTableRules.ts'
@@ -84,7 +84,7 @@ describe('columns: one set for every page', () => {
     assert.match(hook, /useSyncExternalStore\(subscribeColumnCache, read\)/)
     assert.match(hook, /'jaketunes-save-columns'/)
     assert.match(hook, /'jaketunes-restore-columns'/)
-    assert.match(read('components', 'SongTable.tsx'), /useColumnLayout\(omitColumns\)/)
+    assert.match(read('components', 'SongTable.tsx'), /useColumnLayout\(fixedColumns\)/)
   })
 })
 
@@ -162,14 +162,14 @@ describe('delete and remove: the words fit one or many', () => {
     assert.equal(removedFromListNotice(3, 'Gym'), 'Removed 3 songs from “Gym”')
   })
   test('one dialog asks it everywhere; no page writes its own', () => {
-    assert.match(read('components', 'DeleteSongsDialog.tsx'), /deleteSongsWording\(ids\.length\)/)
+    assert.match(read('components', 'DeleteSongsDialog.tsx'), /deleteSongsWording\(ids\.length, alsoLeaves\)/)
     for (const f of ['SongsView.tsx', 'PlaylistView.tsx', 'SmartPlaylistView.tsx', 'AlbumDetailView.tsx', 'GenresView.tsx', 'IpodPlaylistView.tsx']) {
       assert.doesNotMatch(read('views', f), /delete this song from your library|remove them from all playlists/, f)
     }
   })
   test('Delete: out of the list with Undo where the page allows, else the library after asking', () => {
     const t = read('components', 'SongTable.tsx')
-    assert.match(t, /if \(live\.current\.onRemove\) removeSongs\(songs\)\s*else if \(deleteFromLibrary\) setDeleteIds/)
+    assert.match(t, /if \(live\.current\.onRemove\) removeSongs\(songs\)\s*else if \(deleteKeyDeletes\) setDeleteIds/)
     assert.match(t, /<UndoToast/)
     assert.match(t, /<DeleteSongsDialog ids=\{deleteIds\}/)
     assert.match(read('views', 'PlaylistView.tsx'), /onRemove=\{removeFromPlaylist\}/)
@@ -307,5 +307,67 @@ describe('structure: all six pages draw the one table', () => {
   })
   test('Get Info opens on the song right-clicked', () => {
     assert.match(read('components', 'SongTable.tsx'), /: \{ tracks: \[track\], index: ctxMenu\.idx \}\)/)
+  })
+})
+
+describe('review fixes (V7 PR 481)', () => {
+  test('Songs\' Original Order survives a relaunch', () => {
+    assert.equal(savedSongsSort({ sortColumn: null, sortDirection: 'asc' }), null, 'saved Original Order comes back as Original Order')
+    assert.deepEqual(savedSongsSort({ sortColumn: 'artist', sortDirection: 'desc' }), { column: 'artist', direction: 'desc' })
+    assert.deepEqual(savedSongsSort({ sortColumn: 'time' }), { column: 'time', direction: 'asc' })
+    assert.equal(savedSongsSort({}), undefined, 'nothing saved: keep the default')
+    assert.equal(savedSongsSort({ sortColumn: 'rating' }), undefined, 'a retired column is not restored')
+    assert.equal(savedSongsSort({ sortColumn: 42 }), undefined)
+    const app = read('App.tsx')
+    assert.match(app, /const savedSort = savedSongsSort\(ui\)\s*if \(savedSort !== undefined\) dispatch\(\{ type: 'SET_SORT_STATE', sort: savedSort \}\)/)
+    assert.doesNotMatch(app, /typeof ui\.sortColumn === 'string'/, 'the string-only restore is gone')
+    assert.match(app, /sortColumn: libState\.sortColumn,/, 'and null is what gets saved')
+  })
+
+  test('Delete key: library pages ask, lists of other things do nothing', () => {
+    for (const f of ['SongsView.tsx', 'AlbumDetailView.tsx', 'GenresView.tsx']) {
+      assert.doesNotMatch(read('views', f), /deleteKeyDeletes=\{false\}/, `${f} is a library view: Delete asks to delete`)
+    }
+    const smart = read('views', 'SmartPlaylistView.tsx')
+    assert.match(smart, /deleteKeyDeletes=\{false\}/, 'Top 1000, iPod lists, smart playlists: Delete does nothing')
+    assert.doesNotMatch(smart, /libraryDeleteInMenu=\{false\}/, '…but the menu still offers it')
+    assert.match(smart, /alsoLeaves=\{displayName\}/)
+    assert.match(read('components', 'SongTable.tsx'), /deleteKeyDeletes = true, libraryDeleteInMenu = true/)
+    assert.match(read('components', 'SongTable.tsx'), /<DeleteSongsDialog ids=\{deleteIds\} alsoLeaves=\{alsoLeaves\}/)
+  })
+
+  test('the delete question names what else the songs leave', () => {
+    assert.match(deleteSongsWording(1, 'punkPod').detail, /It also leaves punkPod\./)
+    assert.match(deleteSongsWording(3, 'punkPod').detail, /They also leave punkPod\./)
+    assert.doesNotMatch(deleteSongsWording(3).detail, /also/)
+    assert.match(read('components', 'DeleteSongsDialog.tsx'), /deleteSongsWording\(ids\.length, alsoLeaves\)/)
+  })
+
+  test('a playlist keeps "Delete from Library" after Remove from Playlist', () => {
+    const t = read('components', 'SongTable.tsx')
+    assert.match(t, /askDelete: libraryDeleteInMenu \?/)
+    assert.match(t, /deleteLabel: onRemove \? \(songs\.length > 1 \? `Delete \$\{songs\.length\} Songs from Library` : 'Delete from Library'\) : undefined/)
+    assert.doesNotMatch(read('views', 'PlaylistView.tsx'), /libraryDeleteInMenu=\{false\}/)
+    const out = labels(assembleSongMenu({
+      queue: [], playlist: { label: 'Add to Playlist', submenu: [] }, ipodPlaylist: { label: 'Add to iPod Playlist', disabled: true },
+      goAlbum: { label: 'Go to Album' }, goArtist: { label: 'Go to Artist' }, star: { label: 'Star' }, share: { label: 'Share…' }, getInfo: { label: 'Get Info' },
+      more: [], extras: [{ label: 'Remove from Playlist' }], del: { label: 'Delete from Library' },
+    }))
+    assert.ok(out.indexOf('Delete from Library') > out.indexOf('Remove from Playlist'))
+  })
+
+  test('the album page keeps its own short columns, one speaker', () => {
+    const v = read('views', 'AlbumDetailView.tsx')
+    assert.doesNotMatch(v.slice(v.indexOf('const ALBUM_COLUMNS')), /'playing'/, 'no speaker column: the # shows it')
+    const hook = read('hooks', 'useColumnLayout.ts')
+    assert.match(hook, /const hidden = new Set\(fixedKey \? \[\] : state\.hidden\)/, 'a fixed set is all shown')
+    assert.match(read('components', 'SongTable.tsx'), /\.\.\.\(columns\.fixed \? \[\] : columns\.ordered\)/, 'and has no column picker')
+  })
+
+  test('the menu is memoized, not rebuilt on each playback tick', () => {
+    const t = read('components', 'SongTable.tsx')
+    assert.match(t, /const menuItems = useMemo\(\(\): MenuEntry\[\] =>/)
+    assert.match(t, /items=\{menuItems\}/)
+    assert.doesNotMatch(t.slice(t.indexOf('const menuItems = useMemo'), t.indexOf('const header = (')), /\bpb\b/, 'nothing from playback in its deps')
   })
 })

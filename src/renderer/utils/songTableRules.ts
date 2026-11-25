@@ -87,6 +87,19 @@ export function nextSort(cur: SongSort | null, column: SortColumn): SongSort | n
   return null
 }
 
+const SORT_COLUMNS: ReadonlySet<string> = new Set(SONG_COLUMNS.filter((c) => c.sortable).map((c) => c.key))
+
+/**
+ * The Songs sort read back from ui-state at launch (App.tsx saves
+ * `sortColumn` / `sortDirection`). `null` = Original Order was saved and is
+ * restored as such; `undefined` = nothing usable was saved, keep the default.
+ */
+export function savedSongsSort(ui: { sortColumn?: unknown; sortDirection?: unknown }): SongSort | null | undefined {
+  if (ui.sortColumn === null) return null
+  if (typeof ui.sortColumn !== 'string' || !SORT_COLUMNS.has(ui.sortColumn)) return undefined
+  return { column: ui.sortColumn as SortColumn, direction: ui.sortDirection === 'desc' ? 'desc' : 'asc' }
+}
+
 /** One row's sort fields (a Track has them all). */
 export interface SortableSong {
   id: number
@@ -175,15 +188,17 @@ export function filterSongs<T extends SortableSong>(tracks: readonly T[], query:
 // ── Delete, remove, drag ─────────────────────────────────────────────────
 
 /** The question before songs leave the library — right for one or many. */
-export function deleteSongsWording(count: number): { message: string; detail: string } {
+export function deleteSongsWording(count: number, alsoLeaves?: string): { message: string; detail: string } {
+  // Deleting from a smart list or an iPod's list takes the songs off it too: say so by name.
+  const also = alsoLeaves ? ` ${count === 1 ? 'It' : 'They'} also ${count === 1 ? 'leaves' : 'leave'} ${alsoLeaves}.` : ''
   return count === 1
     ? {
         message: 'Are you sure you want to delete this song from your library?',
-        detail: 'This will remove it from all playlists. This cannot be undone.',
+        detail: `This will remove it from all playlists.${also} This cannot be undone.`,
       }
     : {
         message: `Are you sure you want to delete ${count} songs from your library?`,
-        detail: 'This will remove them from all playlists. This cannot be undone.',
+        detail: `This will remove them from all playlists.${also} This cannot be undone.`,
       }
 }
 

@@ -64,20 +64,25 @@ export interface ColumnLayout {
   move: (source: string, target: string) => void
 }
 
-export function useColumnLayout(omit?: readonly string[]): ColumnLayout {
+/**
+ * `fixed`: a page's own short set, in that order, all shown (the album page's
+ * #, Name, Artist, Plays, Time). It is not the shared layout, so the header
+ * picker and header drags leave it alone; widths still come from the shared
+ * layout so a column sized on one page is that size on every page.
+ */
+export function useColumnLayout(fixed?: readonly string[]): ColumnLayout & { fixed: boolean } {
   const state = useSyncExternalStore(subscribeColumnCache, read)
-  const omitKey = (omit ?? []).join(',')
+  const fixedKey = (fixed ?? []).join(',')
   const layout = useMemo(() => {
     const byKey = new Map(SONG_COLUMNS.map((c) => [c.key as string, c]))
-    const skip = new Set(omitKey ? omitKey.split(',') : [])
-    const ordered = orderColumnKeys(state.order, SONG_COLUMN_KEYS)
-      .map((k) => byKey.get(k)!)
-      .filter((c) => !skip.has(c.key))
-    const hidden = new Set(state.hidden)
+    const ordered = fixedKey
+      ? fixedKey.split(',').map((k) => byKey.get(k)).filter((c): c is SongColumn => !!c)
+      : orderColumnKeys(state.order, SONG_COLUMN_KEYS).map((k) => byKey.get(k)!)
+    const hidden = new Set(fixedKey ? [] : state.hidden)
     const visible = ordered.filter((c) => !hidden.has(c.key))
     const widths = visible.map((c) => state.widths[c.key] ?? c.defaultWidth)
     return { ordered, visible, widths, hidden }
-  }, [state, omitKey])
+  }, [state, fixedKey])
 
   const toggle = useCallback((key: string) => update((cur) => {
     const hidden = new Set(cur.hidden)
@@ -96,5 +101,5 @@ export function useColumnLayout(omit?: readonly string[]): ColumnLayout {
     return { ...cur, order: next }
   }), [])
 
-  return { ...layout, toggle, setWidth, move }
+  return { ...layout, toggle, setWidth, move, fixed: !!fixedKey }
 }

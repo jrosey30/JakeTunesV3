@@ -36,9 +36,11 @@ describe('album page D — kept behaviours', () => {
     assert.match(table, /useTrackListKeys\(\{/)
     assert.doesNotMatch(view, /window\.addEventListener\('keydown', onKey, true\)/, 'no second copy of the keys')
   })
-  it('the Artist column appears only on multi-artist albums; Album never', () => {
+  it('its own short columns: #, Name, Artist only on multi-artist albums, Plays, Time', () => {
     assert.match(view, /const multiArtist = new Set\(tracks\.map/)
-    assert.match(view, /omitColumns=\{multiArtist \? \['album'\] : \['album', 'artist'\]\}/)
+    assert.match(view, /columns=\{multiArtist \? ALBUM_COLUMNS_MULTI : ALBUM_COLUMNS\}/)
+    assert.match(view, /const ALBUM_COLUMNS = \['title', 'playCount', 'time'\] as const/)
+    assert.match(view, /const ALBUM_COLUMNS_MULTI = \['title', 'artist', 'playCount', 'time'\] as const/)
   })
   it("the page shows no Music Man's take: he gives one when asked (2026-11-13)", () => {
     assert.doesNotMatch(view, /getAlbumTake|Music Man’s take|Music Man's take\b.*<h4|apd-take-text/)

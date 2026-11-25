@@ -943,6 +943,11 @@ export default function SmartPlaylistView() {
           sort={sort}
           onSort={setSort}
           lead={rankLead}
+          // A smart list, the Top 1000 and the iPod lists aren't the library:
+          // the Delete key does nothing here. Delete from the library stays in
+          // the right-click menu, and its question names this list.
+          deleteKeyDeletes={false}
+          alsoLeaves={displayName}
           className={showAd ? 'songs-view--ipod-ad' : undefined}
           above={showAd ? adEl : undefined}
           pinned={showAd ? <>{headerEl}{panelsEl}</> : undefined}

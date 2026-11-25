@@ -8,10 +8,10 @@ import ConfirmDialog from './ConfirmDialog'
 import { useLibrary } from '../context/LibraryContext'
 import { deleteSongsWording } from '../utils/songTableRules'
 
-export default function DeleteSongsDialog({ ids, onClose }: { ids: number[]; onClose: () => void }): JSX.Element {
+export default function DeleteSongsDialog({ ids, alsoLeaves, onClose }: { ids: number[]; alsoLeaves?: string; onClose: () => void }): JSX.Element {
   const { dispatch: libDispatch } = useLibrary()
   // Right for one or many (V7: it said "them" for one song).
-  const { message, detail } = deleteSongsWording(ids.length)
+  const { message, detail } = deleteSongsWording(ids.length, alsoLeaves)
   return (
     <ConfirmDialog
       message={message}

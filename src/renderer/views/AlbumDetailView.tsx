@@ -42,6 +42,10 @@ import '../styles/album-page.css'
 import { planConcertStart } from '../../common/concert-start'
 import { jewelCasePhotoVars } from '../../common/jewel-case-photo'
 
+/** The album page's own columns, after its '#' (V7: the shared table, the album's set). */
+const ALBUM_COLUMNS = ['title', 'playCount', 'time'] as const
+const ALBUM_COLUMNS_MULTI = ['title', 'artist', 'playCount', 'time'] as const
+
 /** The jewel case's proportions (fractions of the cover) for album-page.css. */
 const SLEEVE_VARS = jewelCasePhotoVars('--apd-f-') as CSSProperties
 
@@ -339,8 +343,10 @@ export default function AlbumDetailView() {
   const spineText = spineOptions[spineIdx]
 
   // The songs: the one song table (V7), sortable like every list; its own
-  // order (null) is the record's running order. The album page leaves out the
-  // Album column, and Artist unless the record has more than one.
+  // order (null) is the record's running order. The album page keeps its own
+  // short columns (the jewel-case layout's rule): #, Name, Artist (only when
+  // the record has more than one), Plays, Time. The '#' shows the speaker, so
+  // there is no speaker column.
   const [sort, setSort] = useListSort(`album:${albumKey}`)
   const shown = useMemo(() => sortSongs(tracks, sort, elsewhere), [tracks, sort, elsewhere])
   const multiArtist = new Set(tracks.map((t) => (t.artist || '').trim().toLowerCase())).size > 1
@@ -699,7 +705,7 @@ export default function AlbumDetailView() {
           sort={sort}
           onSort={setSort}
           lead={lead}
-          omitColumns={multiArtist ? ['album'] : ['album', 'artist']}
+          columns={multiArtist ? ALBUM_COLUMNS_MULTI : ALBUM_COLUMNS}
         />
 
       </div>
