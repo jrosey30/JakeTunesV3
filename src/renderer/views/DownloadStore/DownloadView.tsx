@@ -862,7 +862,7 @@ export default function DownloadView() {
 
       <div className="dl-body">
         {/* Phase 4: an album saved here that can't be had as asked says so at once, with one button. */}
-        <ShopBanner />
+        <ShopBanner openAlbum={page?.kind === 'album' ? { artist: page.album.artist, name: page.album.name, collectionId: page.album.collectionId } : null} />
         {page?.kind === 'artist' && (
           <ShopArtistPage
             artist={page.artist}

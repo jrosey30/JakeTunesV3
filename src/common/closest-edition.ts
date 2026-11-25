@@ -122,7 +122,9 @@ function editionSentence(o: Extract<ShopOffer, { kind: 'edition' }>, ctx: { aske
   const sameSize = !n || !ctx.askedCount || n === ctx.askedCount
   const name = o.clean && !sameSize ? cleanName(o, ctx.asked) : offeredName(o, ctx.asked)
   const asked = askedWords(ctx.asked, ctx.askedCount, o.clean && sameSize)
-  return `${ctx.of ? `${asked} of ${ctx.of}` : asked} isn’t on Qobuz. The ${name}${n ? ` (${songs(n)})` : ''} is.`
+  // The size once: "The 12-song edition is", never "The 12-song edition (12 songs) is" (review of #496).
+  const sized = n && !/^\d+-song\b/.test(name) ? ` (${songs(n)})` : ''
+  return `${ctx.of ? `${asked} of ${ctx.of}` : asked} isn’t on Qobuz. The ${name}${sized} is.`
 }
 
 /** The one line that asks. */
@@ -131,7 +133,7 @@ export function offerLine(o: ShopOffer, ctx: { asked?: string; askedCount?: numb
     case 'edition': return `${editionSentence(o, ctx)} Save that?`
     case 'songs': {
       const got = o.have.length + o.owned
-      if (!o.missing.length) return `Qobuz has all ${o.of} songs, on ${o.from && o.from !== o.of ? `a ${o.from}-song edition` : 'another edition'}. Save ${o.have.length === 1 ? 'it' : `those ${o.have.length}`}?`
+      if (!o.missing.length) return `Qobuz has every song, on ${o.from && o.from !== o.of ? `a ${o.from}-song edition` : 'another edition'}. Save ${o.have.length === 1 ? 'it' : `those ${o.have.length}`}?`
       return `Qobuz has ${got} of ${o.of} songs. Save ${o.have.length === 1 ? 'that one' : `those ${o.have.length}`} and keep the other ${o.missing.length} on your Listening List?`
     }
     case 'bandcamp': return 'Only Bandcamp has it, as a lossy MP3. Save that?'
@@ -152,11 +154,13 @@ export function offerBanner(o: ShopOffer, ctx: { album: string; asked?: string; 
     case 'edition': return editionSentence(o, { ...ctx, of: album || undefined })
     case 'songs': {
       const got = o.have.length + o.owned
-      if (!o.missing.length) return `Qobuz has all ${o.of} songs of ${album}, on ${o.from && o.from !== o.of ? `a ${o.from}-song edition` : 'another edition'}.`
-      return `Qobuz has ${got} of the ${o.of} songs on ${album}. ${o.missing.length === 1 ? 'The other one goes' : `The other ${o.missing.length} go`} on your Listening List.`
+      if (!o.missing.length) return `Qobuz has every song of ${album}, on ${o.from && o.from !== o.of ? `a ${o.from}-song edition` : 'another edition'}.`
+      // Nothing happens before a press: the rest *would* go on the list.
+      return `Qobuz has ${got} of the ${o.of} songs on ${album}. ${o.missing.length === 1 ? 'The other one would go' : `The other ${o.missing.length} would go`} on your Listening List.`
     }
     case 'bandcamp': return `${album} isn’t on Qobuz. Bandcamp has it, as a lossy MP3.`
-    case 'songs-each': return `${album} didn’t come in whole. Its songs can be saved one at a time.`
+    // Said whether or not anything downloaded (a refusal from memory downloaded nothing).
+    case 'songs-each': return `${album} didn’t save as a whole album. Save its songs one at a time?`
   }
 }
 

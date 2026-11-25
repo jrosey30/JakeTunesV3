@@ -9,7 +9,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { offerBanner, offerButton, offerLine, type ShopOffer } from '../../common/closest-edition.ts'
-import { shopBanner, BANNER_WINDOW_MS } from '../../common/shop-banner.ts'
+import { shopBanner, bannerIsForPage, refusalKey, BANNER_WINDOW_MS } from '../../common/shop-banner.ts'
+import { recordName } from '../../common/shop-card-edition.ts'
 import { retiredNamesIn } from '../../common/shop-names.ts'
 
 const SRC = join(import.meta.dirname, '..', '..')
@@ -25,18 +26,18 @@ describe('the banner’s words', () => {
     assert.equal(offerButton(o, { asked: 'Deluxe' }), 'Save the Standard')
   })
   it('names the record whatever the edition was called, and asks nothing (the button is the question)', () => {
-    assert.equal(offerBanner(standard(12), { album: 'Manning Fireworks', asked: 'Standard', askedCount: 9 }), 'The 9-song edition of Manning Fireworks isn’t on Qobuz. The 12-song edition (12 songs) is.')
+    assert.equal(offerBanner(standard(12), { album: 'Manning Fireworks', asked: 'Standard', askedCount: 9 }), 'The 9-song edition of Manning Fireworks isn’t on Qobuz. The 12-song edition is.', 'the size once')
     assert.equal(offerBanner({ ...standard(14), edition: { ...standard(14).edition, label: 'Clean' }, clean: true }, { album: 'Ready to Die', asked: 'Standard', askedCount: 14 }), 'The explicit edition of Ready to Die isn’t on Qobuz. The clean edition (14 songs) is.')
-    assert.equal(offerBanner(standard(5), { album: 'Animals' }), 'This edition of Animals isn’t on Qobuz. The 5-song edition (5 songs) is.')
+    assert.equal(offerBanner(standard(5), { album: 'Animals' }), 'This edition of Animals isn’t on Qobuz. The 5-song edition is.')
     for (const line of [offerBanner(standard(5), { album: 'Animals', asked: 'Deluxe' })]) assert.doesNotMatch(line, /\?/)
   })
   it('part of an album, Bandcamp only, or a transfer that came back short', () => {
     const part: ShopOffer = { kind: 'songs', have: [song('a', 1), song('b', 2)], missing: [song('c', 3)], owned: 1, of: 4 }
-    assert.equal(offerBanner(part, { album: 'Pink Flag' }), 'Qobuz has 3 of the 4 songs on Pink Flag. The other one goes on your Listening List.')
-    assert.equal(offerBanner({ ...part, missing: [song('c', 3), song('d', 4)], owned: 0, of: 4 }, { album: 'Pink Flag' }), 'Qobuz has 2 of the 4 songs on Pink Flag. The other 2 go on your Listening List.')
-    assert.equal(offerBanner({ kind: 'songs', have: [song('a', 1), song('b', 2)], missing: [], owned: 0, of: 2, from: 3 }, { album: 'X' }), 'Qobuz has all 2 songs of X, on a 3-song edition.')
+    assert.equal(offerBanner(part, { album: 'Pink Flag' }), 'Qobuz has 3 of the 4 songs on Pink Flag. The other one would go on your Listening List.', 'nothing happens before a press')
+    assert.equal(offerBanner({ ...part, missing: [song('c', 3), song('d', 4)], owned: 0, of: 4 }, { album: 'Pink Flag' }), 'Qobuz has 2 of the 4 songs on Pink Flag. The other 2 would go on your Listening List.')
+    assert.equal(offerBanner({ kind: 'songs', have: [song('a', 1), song('b', 2)], missing: [], owned: 0, of: 2, from: 3 }, { album: 'X' }), 'Qobuz has every song of X, on a 3-song edition.')
     assert.equal(offerBanner({ kind: 'bandcamp', url: 'u', name: 'n', band: 'b' }, { album: 'Damaged' }), 'Damaged isn’t on Qobuz. Bandcamp has it, as a lossy MP3.')
-    assert.equal(offerBanner({ kind: 'songs-each', of: 9 }, { album: 'Damaged' }), 'Damaged didn’t come in whole. Its songs can be saved one at a time.')
+    assert.equal(offerBanner({ kind: 'songs-each', of: 9 }, { album: 'Damaged' }), 'Damaged didn’t save as a whole album. Save its songs one at a time?', 'true whether or not anything downloaded')
     assert.deepEqual(retiredNamesIn(offerBanner(part, { album: 'Pink Flag' })), [])
   })
   it('the question elsewhere (Downloads, the album page) is unchanged', () => {
@@ -75,9 +76,41 @@ describe('which refusal the banner shows', () => {
     assert.equal(shopBanner([refused('a', { endedAt: NOW - BANNER_WINDOW_MS - 1 })], NOW), null)
     assert.ok(shopBanner([refused('a', { endedAt: NOW - BANNER_WINDOW_MS })], NOW))
     assert.equal(shopBanner([refused('a', { offerTaken: 'edition' })], NOW), null)
-    assert.equal(shopBanner([refused('a')], NOW, new Set(['a'])), null)
+    assert.equal(shopBanner([refused('a')], NOW, new Set([refusalKey('a', NOW - 5_000)])), null)
     assert.equal(shopBanner([refused('a', { offers: [] })], NOW), null)
     assert.equal(shopBanner([{ ...refused('a'), status: 'done' as const }], NOW), null)
+  })
+})
+
+describe('review of #496', () => {
+  it('the record by its own name: Apple’s edition words are not said twice', () => {
+    const b = shopBanner([refused('a', { album: 'Animals (Deluxe Edition)' })], NOW)
+    assert.equal(b?.line, 'The Deluxe of Animals isn’t on Qobuz. The Standard (5 songs) is.')
+    assert.equal(recordName('Animals (Deluxe Edition)'), 'Animals')
+    assert.equal(recordName('Wish You Were Here - 2011 Remaster'), 'Wish You Were Here')
+    assert.equal(recordName('Sorry - Single'), 'Sorry')
+    assert.equal(recordName('Enter the Wu-Tang (36 Chambers)'), 'Enter the Wu-Tang (36 Chambers)', 'a bracket that is the name stays')
+  })
+  it('✕ waves away that refusal only: the same edition refused again later shows', () => {
+    const first = refused('a', { endedAt: NOW - 60_000 })
+    const gone = new Set([refusalKey('a', NOW - 60_000)])
+    assert.equal(shopBanner([first], NOW, gone), null)
+    assert.ok(shopBanner([{ ...first, endedAt: NOW - 1_000 }], NOW, gone), 'refused again after a Retry')
+  })
+  it('a reload doesn’t bring back a banner from before it; the timer ends ten minutes after the refusal', () => {
+    assert.equal(shopBanner([refused('a', { endedAt: NOW - 5_000 })], NOW, new Set(), NOW - 1_000), null)
+    assert.ok(shopBanner([refused('a', { endedAt: NOW - 500 })], NOW, new Set(), NOW - 1_000))
+    assert.equal(shopBanner([refused('a', { endedAt: NOW - 5_000 })], NOW)?.until, NOW - 5_000 + BANNER_WINDOW_MS)
+  })
+  it('steps aside while that album’s own page (with the same buttons) is open', () => {
+    const b = shopBanner([refused('a')], NOW)!
+    assert.equal(bannerIsForPage(b, { artist: 'Pink Floyd', name: 'Animals' }), true)
+    assert.equal(bannerIsForPage({ ...b, collectionId: 33 }, { artist: 'Pink Floyd', name: 'Animals (Deluxe)', collectionId: 33 }), true)
+    assert.equal(bannerIsForPage({ ...b, collectionId: 33 }, { artist: 'Pink Floyd', name: 'Animals', collectionId: 3 }), false, 'another edition’s page')
+    assert.equal(bannerIsForPage(b, { artist: 'Pink Floyd', name: 'Meddle' }), false)
+    assert.equal(bannerIsForPage(b, null), false)
+    assert.match(src('renderer/views/DownloadStore/ShopBanner.tsx'), /if \(!b \|\| bannerIsForPage\(b, openAlbum\)\) return null/)
+    assert.match(src('renderer/views/DownloadStore/ShopBanner.tsx'), /dismissed\.add\(b\.refusal\)/)
   })
 })
 
@@ -85,9 +118,9 @@ describe('the Search tab', () => {
   it('draws the banner above its results, and the button takes that offer on that job', () => {
     const view = src('renderer/views/DownloadStore/DownloadView.tsx')
     const body = view.indexOf('<div className="dl-body">')
-    assert.ok(body > 0 && view.indexOf('<ShopBanner />') > body && view.indexOf('<ShopBanner />') < view.indexOf('In your library</span><span className="dl-rule"'))
+    assert.ok(body > 0 && view.indexOf('<ShopBanner openAlbum=') > body && view.indexOf('<ShopBanner openAlbum=') < view.indexOf('In your library</span><span className="dl-rule"'))
     const banner = src('renderer/views/DownloadStore/ShopBanner.tsx')
     assert.match(banner, /takeOffer\(b\.key, b\.offer\)/)
-    assert.match(banner, /shopBanner\(queue, Date\.now\(\), dismissed\)/)
+    assert.match(banner, /shopBanner\(queue, Date\.now\(\), dismissed, LOADED_AT\)/)
   })
 })

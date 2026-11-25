@@ -60,6 +60,19 @@ export function cardEditionLabel(name: string, explicitness?: string): string {
   return explicitness === 'cleaned' ? (label === 'Standard' ? 'Clean' : `${label}, clean`) : label
 }
 
+/**
+ * The record's own name: Apple's name without its edition words or its
+ * Single / EP stamp ("Animals (Deluxe Edition)" is "Animals"; "Enter the
+ * Wu-Tang (36 Chambers)" keeps its brackets, which are its name). For a
+ * sentence that names the edition separately (the banner, review of #496).
+ */
+export function recordName(name: string): string {
+  let t = String(name || '').trim()
+  t = t.replace(/[([{]([^()[\]{}]*)[)\]}]/g, (m, inner: string) => (EDITION_WORDS.test(inner) || /^(single|ep)$/i.test(inner.trim()) ? '' : m))
+  t = t.replace(/\s+[-–—]\s+([^-–—]+)$/, (m, tail: string) => (EDITION_WORDS.test(tail) || /^(single|ep)$/i.test(tail.trim()) ? '' : m))
+  return t.replace(/\s{2,}/g, ' ').trim() || String(name || '').trim()
+}
+
 /** The card's own edition as the lookup would list it. */
 function cardAsEdition(card: CardRecord): AlbumEdition | null {
   if (!card.collectionId) return null
