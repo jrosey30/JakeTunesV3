@@ -150,8 +150,7 @@ export default function MixtapeMic({ existingPath, onProcessed }: Props) {
   return (
     <div className="mixtape-mic">
       {mic === 'idle' && (
-        <button type="button" className="mixtape-mic-btn" onClick={() => { void startRecording() }}
-          title="Record a few seconds of your voice onto the tape — it comes out sounding like 1979">
+        <button type="button" className="mixtape-mic-btn" onClick={() => { void startRecording() }}>
           <MicIcon /> Record intro
         </button>
       )}

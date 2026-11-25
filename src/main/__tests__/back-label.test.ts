@@ -48,7 +48,7 @@ describe('the back pill names every page you can come from (Jake 10/30: "make go
   it('the browse and sidebar pages, by the names the sidebar gives them', () => {
     const named: Array<[string, string]> = [
       ['home', 'Home'], ['songs', 'Songs'], ['albums', 'Albums'], ['artists', 'Artists'], ['genres', 'Genres'],
-      ['discovery', 'Record Shop'], ['top1000', 'Top 1000 Quiz'], ['concerts', 'Live Concerts'],
+      ['discovery', 'Record Shop'], ['top1000', 'Top 1000 Quiz'], ['concerts', 'Live Albums'],
       ['musicman', 'The Music Man'], ['year-in-review', 'Year in Review'],
       ['device', 'iPod'], ['dj', 'DJ'],
     ]
@@ -94,7 +94,7 @@ describe('wiring: label and click share one source', () => {
   it('ConcertDetailView.tsx — the concert page joined the rule (its back used to be hard-wired to the list)', () => {
     const s = src('views', 'ConcertDetailView.tsx')
     assert.match(s, /const navBackLabel = useBackLabel\(\)/)
-    assert.match(s, /const backLabel = \(canGoBack && navBackLabel\) \|\| '← Live Concerts'/)
+    assert.match(s, /const backLabel = \(canGoBack && navBackLabel\) \|\| '← Live Albums'/)
     assert.match(s, /if \(canGoBack\) navBack\(\)/)
   })
   it('useBackLabel is the one place names are resolved, through backLabelForLocation', () => {
