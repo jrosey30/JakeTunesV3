@@ -169,12 +169,12 @@ export function registerPlaylistCoverIpc(
     const win = getMainWindow()
     const res = win
       ? await dialog.showOpenDialog(win, {
-        title: 'Choose a cover',
+        title: 'Choose a Cover',
         properties: ['openFile'],
         filters: [{ name: 'Images', extensions: IMAGE_EXTS }],
       })
       : await dialog.showOpenDialog({
-        title: 'Choose a cover',
+        title: 'Choose a Cover',
         properties: ['openFile'],
         filters: [{ name: 'Images', extensions: IMAGE_EXTS }],
       })

@@ -48,7 +48,7 @@ const RULES: Rule[] = [
   // ipod-one-sync). They are already plain: shown as written (happened '' = the message itself).
   // Brief 263 review: a Sync's own fetch stopping for want of room (or unreadable free space), or
   // because not one of the iPod's songs could be fetched cleanly (review of #469).
-  { test: /stopped downloading|couldn’t get ready to sync|changed while its songs were downloading|songs are in your library|^set up this ipod|^not enough room on this mac|^couldn’t check free space on this mac|couldn’t be fetched cleanly from homemini/i, stage: 'build', happened: '', next: '' },
+  { test: /stopped downloading|couldn’t get ready to sync|changed while its songs were downloading|songs are in your library|^set up this ipod|^not enough room on this mac|^couldn’t check free space on this mac|couldn’t be fetched cleanly/i, stage: 'build', happened: '', next: '' },
   // Refusals before the iPod is touched: the plug-in health check (common/ipod-onboarding.ts
   // healthSyncRefusal / healthBlindRefusal), the identity gate and the card-fit check. Their own
   // line says what to do; the sync never started. sync-front-end-models.test.ts runs each one.

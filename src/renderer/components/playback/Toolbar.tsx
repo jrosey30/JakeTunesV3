@@ -1798,7 +1798,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
           <button
             className={`transport-toggle dj-btn radio-mode-btn ${radioMode ? 'radio-mode-btn--on' : ''}`}
             onClick={handleRadioToggle}
-            title={radioMode ? 'Radio Mode is ON (⇧⌘R) — click to turn OFF (WJLR 330.9, the Music Man + Larry)' : 'Radio Mode (⇧⌘R) — click to start WJLR 330.9 (whole library shuffled, MM + Larry banter)'}
+            title={radioMode ? 'Radio Mode is ON (⇧⌘R) — click to turn OFF (WJLR 330.9, the Music Man + Larry)' : 'Radio Mode (⇧⌘R) — click to start WJLR 330.9 (the whole library shuffled, with the Music Man and Larry)'}
           >
             <RadioIcon />
             {radioMode && (

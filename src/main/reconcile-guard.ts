@@ -82,7 +82,7 @@ export function assessDeadTrackRemoval(input: DeadTrackRemovalInput): DeadTrackR
   const { totalTracks, deadCount, mountsChecked, diskAudioCount } = input
 
   if (deadCount <= 0) {
-    return { safe: true, reason: 'nothing-to-remove', message: 'No dead tracks to remove.' }
+    return { safe: true, reason: 'nothing-to-remove', message: 'No dead songs to remove.' }
   }
 
   if (mountsChecked <= 0) {
@@ -90,8 +90,8 @@ export function assessDeadTrackRemoval(input: DeadTrackRemovalInput): DeadTrackR
       safe: false,
       reason: 'no-music-root',
       message:
-        'Music library folder not found — the drive or NAS holding your music ' +
-        'may be disconnected. No tracks were removed. Reconnect it and try again.',
+        'Music library folder not found — the drive holding your music ' +
+        'may be disconnected. No songs were removed. Reconnect it and try again.',
     }
   }
 
@@ -101,7 +101,7 @@ export function assessDeadTrackRemoval(input: DeadTrackRemovalInput): DeadTrackR
       reason: 'music-root-empty',
       message:
         'The music library folder is present but contains no audio files yet ' +
-        '(it may still be syncing, or points to the wrong location). No tracks ' +
+        '(it may still be syncing, or points to the wrong location). No songs ' +
         'were removed.',
     }
   }
@@ -114,8 +114,8 @@ export function assessDeadTrackRemoval(input: DeadTrackRemovalInput): DeadTrackR
       reason: 'music-root-incomplete',
       message:
         `Only ${diskAudioCount} audio files found on disk for a library of ` +
-        `${totalTracks} tracks — the music mirror looks incomplete. Refusing to ` +
-        'remove tracks until the full library is present. No tracks were removed.',
+        `${totalTracks} songs — the music mirror looks incomplete. Refusing to ` +
+        'remove songs until the full library is present. No songs were removed.',
     }
   }
 
@@ -124,8 +124,8 @@ export function assessDeadTrackRemoval(input: DeadTrackRemovalInput): DeadTrackR
       safe: false,
       reason: 'catastrophic-fraction',
       message:
-        `Removal would drop ${deadCount} of ${totalTracks} tracks (over half the ` +
-        'library). This is never routine cleanup — refusing. No tracks were removed.',
+        `Removal would drop ${deadCount} of ${totalTracks} songs (over half the ` +
+        'library). This is never routine cleanup — refusing. No songs were removed.',
     }
   }
 
@@ -134,13 +134,13 @@ export function assessDeadTrackRemoval(input: DeadTrackRemovalInput): DeadTrackR
       safe: false,
       reason: 'over-cap',
       message:
-        `${deadCount} tracks look dead — that is more than a safe one-time cleanup ` +
+        `${deadCount} songs look dead — that is more than a safe one-time cleanup ` +
         `(cap ${MAX_SAFE_ONE_SHOT_REMOVAL}) and usually means a drive/mirror is ` +
-        'incomplete or the wrong music folder is selected. No tracks were removed. ' +
+        'incomplete or the wrong music folder is selected. No songs were removed. ' +
         'Verify your music location, or run scripts/remove-dead-tracks.mjs --commit ' +
         '(it writes a backup first).',
     }
   }
 
-  return { safe: true, reason: 'ok', message: `Safe to remove ${deadCount} dead track(s).` }
+  return { safe: true, reason: 'ok', message: `Safe to remove ${deadCount} dead song${deadCount === 1 ? '' : 's'}.` }
 }

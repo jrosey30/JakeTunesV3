@@ -117,8 +117,8 @@ describe('review of #466: plain lines the Device page shows', () => {
   it('this Mac’s room: a hold is always said; full with nothing left to move off is said; otherwise nothing', async () => {
     const { roomLine } = await import('../../common/ipod-ready-on-mac.ts')
     const GB = 1024 ** 3
-    assert.equal(roomLine({ hold: true, freeBytes: 200 * GB, offloadable: 10 }), 'Nothing is being moved off this Mac until homemini answers.')
-    assert.equal(roomLine({ hold: true, freeBytes: 12.6 * GB, offloadable: null }), 'This Mac is almost full (12 GB free), and nothing can be moved off it until homemini answers.')
+    assert.equal(roomLine({ hold: true, freeBytes: 200 * GB, offloadable: 10 }), 'Offline. Nothing is being moved off this Mac.')
+    assert.equal(roomLine({ hold: true, freeBytes: 12.6 * GB, offloadable: null }), 'This Mac is almost full (12 GB free). Offline, so nothing can be moved off it.')
     assert.equal(roomLine({ hold: false, freeBytes: 12 * GB, offloadable: 0 }), 'This Mac is almost full (12 GB free), and everything left on it is needed by an iPod or was just added or played.')
     assert.equal(roomLine({ hold: false, freeBytes: 12 * GB, offloadable: 40 }), null, 'the offload can still make room')
     assert.equal(roomLine({ hold: false, freeBytes: 12 * GB, offloadable: null }), null, 'not known yet: nothing claimed')
@@ -152,6 +152,6 @@ describe('review of #469: a song that couldn’t be fetched cleanly never blocks
 
   it('unless that is every song on the iPod', () => {
     const r = listFetchOutcome({ landed: [], gone: [], unclean: [1, 2], failed: [], stopped: false }, { missing: [1, 2], total: 2 }, 2)
-    assert.deepEqual(r, { kind: 'stuck', error: '2 songs couldn’t be fetched cleanly from homemini. Try Sync again later.' })
+    assert.deepEqual(r, { kind: 'stuck', error: '2 songs couldn’t be fetched cleanly. Try Sync again later.' })
   })
 })

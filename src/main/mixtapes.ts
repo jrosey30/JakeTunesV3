@@ -686,7 +686,7 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
             const m = await host.materializeTrack(sng.colonPath, sng.id).catch(() => ({ ok: false }))
             if (m.ok) st = await stat(sng.absPath).catch(() => null)
           }
-          if (!st) return { ok: false, error: `Missing audio for Side ${side.label}: ${sng.absPath.split('/').pop()} — not local and homemini couldn't supply it.` }
+          if (!st) return { ok: false, error: `Missing audio for Side ${side.label}: ${sng.absPath.split('/').pop()}.` }
         }
         const inputs: string[] = []
         const chains: string[] = []

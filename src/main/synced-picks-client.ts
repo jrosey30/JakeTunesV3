@@ -271,7 +271,7 @@ export function createSyncedPicksClient<V>(opts: SyncedPicksClientOptions<V>): S
       const b = body && typeof body === 'object' ? body as { error?: unknown; message?: unknown } : {}
       const msg = typeof b.error === 'string' && b.error ? b.error
         : typeof b.message === 'string' && b.message ? b.message
-          : 'homemini refused the change.'
+          : 'Couldn’t save the last change.'
       rejected = msg
       warn(`${spec.kind}:rejected`, `${tag} homemini refused the edit (400: ${msg}) — dropped; showing the stored document`)
       await settleOutbox(edit.id)
@@ -334,7 +334,7 @@ export function createSyncedPicksClient<V>(opts: SyncedPicksClientOptions<V>): S
     // deployed yet: read-only until the first good GET.
     const [cache, pending] = await Promise.all([readCache(), readOutbox()])
     if (!cache && !pending) {
-      return { ok: false, error: 'Not synced with homemini yet — editing unlocks after the first sync.', state: await read() }
+      return { ok: false, error: 'Offline — editing unlocks after the first sync.', state: await read() }
     }
     if (spec.awaitFirstWrite && !pending && cache && cache.doc.updatedAt === null) {
       return { ok: false, error: 'Waiting for your phone’s picks — open JakeTunes on the phone once to bring them over.', state: await read() }

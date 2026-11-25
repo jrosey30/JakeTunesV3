@@ -23,7 +23,7 @@ export interface Top1000ClientOptions {
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string }
 
-const OFFLINE = 'homemini isn’t answering, so the quiz can’t ask right now.'
+const OFFLINE = 'Offline. The quiz can’t ask right now.'
 
 export function createTop1000Client(opts: Top1000ClientOptions) {
   const fetchImpl: FetchLike = opts.fetchImpl ?? (fetch as unknown as FetchLike)
@@ -56,7 +56,7 @@ export function createTop1000Client(opts: Top1000ClientOptions) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       })
-      if (!r) return { ok: false, error: 'That answer wasn’t saved — homemini isn’t answering.' }
+      if (!r) return { ok: false, error: 'Offline. That answer wasn’t saved.' }
       const body = r.body as { ok?: boolean; error?: string; progress?: unknown } | null
       const progress = parseProgress(body?.progress)
       if (r.status === 200 && body?.ok && progress) return { ok: true, value: progress }
@@ -70,7 +70,7 @@ export function createTop1000Client(opts: Top1000ClientOptions) {
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
       })
-      if (!r) return { ok: false, error: 'Nothing was undone — homemini isn’t answering.' }
+      if (!r) return { ok: false, error: 'Offline. Nothing was undone.' }
       if (r.status === 404) return { ok: false, error: 'Undo isn’t available yet.' }
       const doc = r.status === 200 ? parseQuizUndo(r.body) : null
       if (doc) return { ok: true, value: doc }
