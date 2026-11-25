@@ -12,8 +12,9 @@
 //  state and exposes accessors for it.
 // ════════════════════════════════════════════════════════════════════════
 
-import { convertOptionsForProfile, describeProfile, resolveIpodAudioProfile } from '../../common/ipod-audio-format.ts'
-import { readIpodAudioProfiles } from '../ipc/ui-state-ipc.ts'
+import { convertOptionsForProfile, describeProfile } from '../../common/ipod-audio-format.ts'
+import { profileForSync, profileStorePath, profileStoreRefusal } from '../ipod-audio-profiles.ts'
+import { readOnboardingRecords } from '../ipod-onboarding.ts'
 import { app } from 'electron'
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
@@ -382,14 +383,24 @@ export function createSyncEngine(host: SyncEngineHost) {
       // Each iPod's own format (Brief 265 Part 2): its stored profile, keyed by the ID file on
       // the iPod, else Jake's seed (Gen 1 MP3 320, IndieSleaze AAC 256, Y2KPod / punkPod / the
       // Original ALAC), else the Device page's convert setting (common/ipod-audio-format.ts).
-      const audioProfile = resolveIpodAudioProfile(await readIpodAudioProfiles(),
-        { deviceId: ipod.device?.id, primary: !!ipod.device?.primary })
+      // Keyed by the physical iPod: its serial from the set-up record when it has one.
+      const setupRecord = ipod.device
+        ? (await readOnboardingRecords(STATE_DIR)).find((r) => r.listId === ipod.device!.id && !r.released) ?? null
+        : null
+      const resolved = await profileForSync(profileStorePath(STATE_DIR),
+        { serial: setupRecord?.serial ?? null, deviceId: ipod.device?.id, primary: !!ipod.device?.primary })
+      if (!resolved.ok) {
+        const msg = profileStoreRefusal(resolved.reason)
+        console.error(`sync-to-ipod: REFUSED — ${msg}`)
+        return { ok: false, copied: 0, error: msg }
+      }
+      const audioProfile = resolved.profile
       const ownFormat = convertOptionsForProfile(audioProfile, convertOptions)
       // Only the one-button Sync knows how to put MP3s on Gen 1 (names, codec, songs that
       // can't be converted left off). The whole-library sync doesn't, and a whole library
       // wouldn't fit on it anyway (review of PR #471).
       if (ownFormat?.codec === 'mp3' && syncOpts?.origin !== 'activity-click') {
-        const msg = `${ipod.device?.name ?? 'This iPod'} plays MP3 only. Use Sync to fill it.`
+        const msg = `${ipod.device?.name ?? 'This iPod'} is set to get MP3 files. Use Sync to fill it.`
         console.error(`sync-to-ipod: REFUSED — ${msg}`)
         return { ok: false, copied: 0, error: msg }
       }

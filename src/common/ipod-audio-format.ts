@@ -16,11 +16,15 @@
  *   verifiedFormats  what the physical iPod was proven to play (Gen 1: Part 4). Recorded,
  *                    never assumed.
  *
- * Stored where the Device page's convert setting lives (ui-state.json, key
- * DEVICE_AUDIO_PROFILES_KEY), keyed by the iPod's persistent identity: the id in the ID file
- * on the iPod itself (iPod_Control/jaketunes-device.json, read by main/ipod-identity.ts), so
- * a renamed or recreated list never orphans a profile. A profile stored under a list id is
- * adopted onto the device id the first time both are known (adoptProfile).
+ * Stored in their own file in the state dir (main/ipod-audio-profiles.ts,
+ * ipod-audio-profiles.json), written only by main, so no renderer save of ui-state can
+ * overwrite them. Keyed by the physical iPod: its serial number from the set-up record
+ * ("serial:<SERIAL>", ipod-onboarding.json) when it has one. Without a serial the key is the
+ * id in the iPod's ID file, which is its homemini list id (registerIpod writes the list id).
+ * A profile under the list id is moved onto the serial key the first time both are known
+ * (adoptProfile), so a second card on the same list never shares it; a card moved to another
+ * list keeps its serial-keyed profile, and a list-keyed one is carried to the new list id
+ * (carryProfileOnMove).
  *
  * Seeds (Jake's table, 2026-11-24) apply only when an iPod has no stored profile. An iPod with
  * neither follows the Device page's setting exactly as today.
@@ -38,8 +42,8 @@ export interface IpodAudioProfile {
   verifiedFormats?: string[]
 }
 
-/** The ui-state.json key that holds { [deviceId]: IpodAudioProfile }. */
-export const DEVICE_AUDIO_PROFILES_KEY = 'deviceAudioProfiles'
+/** The file (in the state dir) that holds { [key]: IpodAudioProfile }. Main writes it; nothing else does. */
+export const IPOD_AUDIO_PROFILES_FILE = 'ipod-audio-profiles.json'
 
 /** Gen 1: a first-generation iPod (10 GB). MP3 is its documented baseline (Part 4: verify on arrival). */
 export const GEN1_IPOD_ID = 'f8ff5c4e-f4d1-41a7-9c4c-57cca2f867ca'
@@ -102,7 +106,9 @@ export function parseProfileStore(raw: unknown): ProfileStore {
 }
 
 export interface IpodRef {
-  /** The persistent id from the iPod's own ID file. */
+  /** The iPod's serial number from its set-up record (the physical iPod). */
+  serial?: string | null
+  /** The id in the iPod's own ID file (its homemini list id). */
   deviceId?: string | null
   /** The homemini list id, when it is known separately (fallback key). */
   listId?: string | null
@@ -110,8 +116,16 @@ export interface IpodRef {
   primary?: boolean
 }
 
-/** Which profile governs this iPod: stored by device id, stored by list id, seeded, or none. */
+/** The store key for an iPod's serial number. */
+export function serialProfileKey(serial: string | null | undefined): string | null {
+  const s = String(serial ?? '').trim().toUpperCase()
+  return s ? `serial:${s}` : null
+}
+
+/** Which profile governs this iPod: stored by serial, stored by its ID-file / list id, seeded, or none. */
 export function resolveIpodAudioProfile(store: ProfileStore, ipod: IpodRef): IpodAudioProfile | null {
+  const sk = serialProfileKey(ipod.serial)
+  if (sk && store[sk]) return store[sk]
   const keys = [ipod.deviceId, ipod.listId].filter((k): k is string => !!k)
   for (const k of keys) if (store[k]) return store[k]
   for (const k of keys) { const s = SEED_PROFILES.get(k); if (s) return { ...s } }
@@ -120,16 +134,37 @@ export function resolveIpodAudioProfile(store: ProfileStore, ipod: IpodRef): Ipo
 }
 
 /**
- * Adopt a profile stored under a list id onto the device's persistent id. Returns the new
- * store, or null when nothing changes. Never duplicates: the list-id entry is moved, and an
- * existing device-id entry always wins (it is the newer, physical key).
+ * Move a profile stored under the iPod's ID-file / list id onto its serial key, the first time
+ * both are known. Returns the new store, or null when nothing changes. Moved, never copied: a
+ * second card that later takes the same list does not inherit the first card's profile. An
+ * entry already under the serial wins (it is the physical key); the list-id entry is dropped.
  */
 export function adoptProfile(store: ProfileStore, ipod: IpodRef): ProfileStore | null {
-  const { deviceId, listId } = ipod
-  if (!deviceId || !listId || deviceId === listId || !store[listId]) return null
+  const sk = serialProfileKey(ipod.serial)
+  if (!sk) return null
+  const from = [ipod.deviceId, ipod.listId].filter((k): k is string => !!k && k !== sk && !!store[k])
+  if (from.length === 0) return null
   const next: ProfileStore = { ...store }
-  if (!next[deviceId]) next[deviceId] = next[listId]
-  delete next[listId]
+  if (!next[sk]) next[sk] = next[from[0]]
+  for (const k of from) delete next[k]
+  return next
+}
+
+/**
+ * A card Jake moved to another list (iPod set-up, confirmedMove). A serial-keyed profile
+ * already follows the card: nothing changes. Without a serial, the profile under the old list
+ * id is the card's, so it moves to the new list id (replacing whatever that list id held).
+ */
+export function carryProfileOnMove(store: ProfileStore, move: { fromId: string; toId: string; serial?: string | null }): ProfileStore | null {
+  const sk = serialProfileKey(move.serial)
+  if (sk) {
+    // Make sure the card's profile is under its serial, not left behind on the old list id.
+    return adoptProfile(store, { serial: sk.slice('serial:'.length), deviceId: move.fromId })
+  }
+  if (!move.fromId || !move.toId || move.fromId === move.toId || !store[move.fromId]) return null
+  const next: ProfileStore = { ...store }
+  next[move.toId] = next[move.fromId]
+  delete next[move.fromId]
   return next
 }
 

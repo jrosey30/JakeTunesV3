@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  adoptProfile, convertOptionsForIpod, convertOptionsForProfile, parseProfileStore, resolveIpodAudioProfile,
+  adoptProfile, carryProfileOnMove, convertOptionsForIpod, convertOptionsForProfile, parseProfileStore, resolveIpodAudioProfile, serialProfileKey,
   GEN1_IPOD_ID, IBANDCAMP_IPOD_ID, INDIE_SLEAZE_IPOD_ID, PUNK_IPOD_ID, Y2K_IPOD_ID,
 } from '../../common/ipod-audio-format.ts'
 import { planSwap, type SwapCandidate, type SwapManifestRow } from '../ipod-swap-sync.ts'
@@ -80,22 +80,40 @@ describe('what a sync converts', () => {
   })
 })
 
-describe('the profile follows the physical iPod', () => {
-  it('keyed by the ID file on the iPod: a renamed or recreated list changes nothing', () => {
-    const store = parseProfileStore({ 'device-123': { codec: 'aac', kbps: 192, enabled: true } })
-    // Renamed list (same list id), recreated list (new list id): the device id still finds it.
-    assert.deepEqual(resolveIpodAudioProfile(store, { deviceId: 'device-123', listId: 'list-old' }), { codec: 'aac', kbps: 192, enabled: true })
-    assert.deepEqual(resolveIpodAudioProfile(store, { deviceId: 'device-123', listId: 'list-recreated' }), { codec: 'aac', kbps: 192, enabled: true })
+describe('the profile follows the physical iPod (its serial), not the list', () => {
+  // Real shapes: the ID file's id IS the homemini list id; the serial is the set-up record's.
+  const LIST = Y2K_IPOD_ID
+  const SERIAL_A = '00577CC6'
+  const SERIAL_B = '8K6251ZPV9M'
+  it('a profile under the serial wins over the list id and the seed', () => {
+    const store = parseProfileStore({ 'serial:00577CC6': { codec: 'aac', kbps: 320, enabled: true }, [LIST]: { codec: 'mp3', kbps: 320, enabled: true } })
+    assert.deepEqual(resolveIpodAudioProfile(store, { serial: SERIAL_A, deviceId: LIST }), { codec: 'aac', kbps: 320, enabled: true })
+    assert.equal(serialProfileKey(' 00577cc6 '), 'serial:00577CC6')
   })
-  it('a profile stored under a list id is adopted onto the device id, never duplicated', () => {
-    const store = parseProfileStore({ 'list-1': { codec: 'aac', kbps: 256, enabled: true } })
-    const next = adoptProfile(store, { deviceId: 'device-9', listId: 'list-1' })
-    assert.deepEqual(next, { 'device-9': { codec: 'aac', kbps: 256, enabled: true } })
-    assert.equal(adoptProfile(next!, { deviceId: 'device-9', listId: 'list-1' }), null, 'twice is a no-op')
-    // A device-id entry already there wins; the list-id entry is dropped, not kept as a twin.
-    const both = parseProfileStore({ 'list-1': { codec: 'mp3', kbps: 320, enabled: true }, 'device-9': { codec: 'alac', enabled: true } })
-    assert.deepEqual(adoptProfile(both, { deviceId: 'device-9', listId: 'list-1' }), { 'device-9': { codec: 'alac', enabled: true } })
-    assert.equal(adoptProfile(store, { deviceId: 'list-1', listId: 'list-1' }), null)
+  it('a list-id profile is moved onto the serial the first time both are known, never copied', () => {
+    const store = parseProfileStore({ [LIST]: { codec: 'aac', kbps: 192, enabled: true } })
+    const next = adoptProfile(store, { serial: SERIAL_A, deviceId: LIST })
+    assert.deepEqual(next, { 'serial:00577CC6': { codec: 'aac', kbps: 192, enabled: true } })
+    assert.equal(adoptProfile(next!, { serial: SERIAL_A, deviceId: LIST }), null, 'twice is a no-op')
+    assert.equal(adoptProfile(store, { deviceId: LIST }), null, 'no serial: nothing to adopt onto')
+  })
+  it('two cards on one list never share a profile: the second card gets the seed, not the first card\'s', () => {
+    const adopted = adoptProfile(parseProfileStore({ [LIST]: { codec: 'aac', kbps: 192, enabled: true } }), { serial: SERIAL_A, deviceId: LIST })!
+    assert.deepEqual(resolveIpodAudioProfile(adopted, { serial: SERIAL_A, deviceId: LIST }), { codec: 'aac', kbps: 192, enabled: true })
+    assert.deepEqual(resolveIpodAudioProfile(adopted, { serial: SERIAL_B, deviceId: LIST }), { codec: 'alac', enabled: true }, 'card B: the Y2KPod seed')
+  })
+  it('a renamed or recreated list keeps the card\'s profile (keyed by serial)', () => {
+    const store = parseProfileStore({ 'serial:00577CC6': { codec: 'aac', kbps: 256, enabled: true } })
+    assert.deepEqual(resolveIpodAudioProfile(store, { serial: SERIAL_A, deviceId: 'list-recreated-0001' }), { codec: 'aac', kbps: 256, enabled: true })
+  })
+  it('a card moved to another list: a serial profile stays with it; a list-keyed one is carried to the new list id', () => {
+    const bySerial = parseProfileStore({ 'serial:00577CC6': { codec: 'aac', kbps: 256, enabled: true } })
+    assert.equal(carryProfileOnMove(bySerial, { fromId: LIST, toId: INDIE_SLEAZE_IPOD_ID, serial: SERIAL_A }), null)
+    assert.deepEqual(resolveIpodAudioProfile(bySerial, { serial: SERIAL_A, deviceId: INDIE_SLEAZE_IPOD_ID }), { codec: 'aac', kbps: 256, enabled: true })
+    const byList = parseProfileStore({ [LIST]: { codec: 'aac', kbps: 192, enabled: true } })
+    assert.deepEqual(carryProfileOnMove(byList, { fromId: LIST, toId: INDIE_SLEAZE_IPOD_ID }), { [INDIE_SLEAZE_IPOD_ID]: { codec: 'aac', kbps: 192, enabled: true } })
+    // With a serial and a list-keyed profile, the move puts it under the serial.
+    assert.deepEqual(carryProfileOnMove(byList, { fromId: LIST, toId: INDIE_SLEAZE_IPOD_ID, serial: SERIAL_A }), { 'serial:00577CC6': { codec: 'aac', kbps: 192, enabled: true } })
   })
 })
 
@@ -129,9 +147,13 @@ describe('the sync', () => {
     const body = src.slice(src.indexOf('async function runSyncToIpod('))
     const at = body.indexOf('const ownFormat = convertOptionsForProfile(audioProfile, convertOptions)')
     assert.ok(at > 0, 'runSyncToIpod asks for the iPod\'s own profile')
-    assert.ok(body.indexOf('resolveIpodAudioProfile(await readIpodAudioProfiles()') > body.indexOf('resolveIpodState(gateMount'), 'after the iPod is identified')
+    const read = body.indexOf('await profileForSync(profileStorePath(STATE_DIR)')
+    assert.ok(read > body.indexOf('resolveIpodState(gateMount'), 'after the iPod is identified')
     assert.ok(at < body.indexOf("syncOpts?.origin === 'activity-click'"), 'before either engine runs')
-    assert.match(body, /deviceId: ipod\.device\?\.id, primary: !!ipod\.device\?\.primary/)
+    assert.match(body, /serial: setupRecord\?\.serial \?\? null, deviceId: ipod\.device\?\.id, primary: !!ipod\.device\?\.primary/)
+    // An unreadable profile file refuses the sync before the card is read or written.
+    const refuse = body.indexOf('profileStoreRefusal(resolved.reason)')
+    assert.ok(refuse > read && refuse < body.indexOf('securePlaysBeforeSync('))
   })
 
   it('a whole-library sync of an MP3-only iPod is refused before anything is touched', () => {
@@ -139,6 +161,7 @@ describe('the sync', () => {
     const body = src.slice(src.indexOf('async function runSyncToIpod('))
     const refuse = body.indexOf("ownFormat?.codec === 'mp3' && syncOpts?.origin !== 'activity-click'")
     assert.ok(refuse > 0)
+    assert.match(body, /is set to get MP3 files\. Use Sync to fill it\./, 'describes the profile, not the firmware')
     assert.ok(refuse < body.indexOf('securePlaysBeforeSync('), 'before the card is read or written')
   })
 

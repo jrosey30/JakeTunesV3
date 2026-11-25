@@ -13,7 +13,6 @@ import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { loadPins, saveLocalPins, normalizePins, pinsPath } from '../playlist-pins.ts'
 import { SIDEBAR_ORDER_KEY } from '../../common/sidebar-order.ts'
-import { DEVICE_AUDIO_PROFILES_KEY, parseProfileStore, type ProfileStore } from '../../common/ipod-audio-format.ts'
 
 function uiStatePath(): string {
   return join(app.getPath('userData'), 'ui-state.json')
@@ -67,13 +66,6 @@ async function saveUiStateSerialized(uiState: Record<string, unknown>): Promise<
   }
 }
 
-/** One save on the serialized chain (the IPC handler and main-side writers share it). */
-function enqueueUiStateSave(uiState: Record<string, unknown>): Promise<{ ok: boolean }> {
-  const run = uiStateWriteChain.then(() => saveUiStateSerialized(uiState), () => saveUiStateSerialized(uiState))
-  uiStateWriteChain = run.catch(() => {})
-  return run
-}
-
 /** The sidebar's saved section order as it is on disk now (raw; null when unreadable). */
 export async function readSavedSidebarOrder(): Promise<unknown> {
   try {
@@ -82,21 +74,6 @@ export async function readSavedSidebarOrder(): Promise<unknown> {
   } catch {
     return null
   }
-}
-
-/** Each iPod's stored audio profile (Brief 265 Part 2), read from ui-state.json; malformed = none. */
-export async function readIpodAudioProfiles(): Promise<ProfileStore> {
-  try {
-    const state = JSON.parse(await readFile(uiStatePath(), 'utf-8')) as Record<string, unknown>
-    return parseProfileStore(state?.[DEVICE_AUDIO_PROFILES_KEY])
-  } catch {
-    return {}
-  }
-}
-
-/** Save the whole profile store under its one key; every other ui-state key is kept (serialized deep merge). */
-export async function saveIpodAudioProfiles(store: ProfileStore): Promise<boolean> {
-  return (await enqueueUiStateSave({ [DEVICE_AUDIO_PROFILES_KEY]: store })).ok
 }
 
 export interface UiStateIpcHooks {
@@ -146,7 +123,8 @@ export function registerUiStateIpc(ipc: IpcRegistrar, hooks: UiStateIpcHooks = {
 
   // Mutating — main window only.
   ipc.handle('save-ui-state', async (_e, uiState: Record<string, unknown>) => {
-    const run = enqueueUiStateSave(uiState)
+    const run = uiStateWriteChain.then(() => saveUiStateSerialized(uiState), () => saveUiStateSerialized(uiState))
+    uiStateWriteChain = run.catch(() => {})
     if (uiState && typeof uiState === 'object' && SIDEBAR_ORDER_KEY in uiState) {
       void run.then((r) => { if (r.ok) hooks.onSidebarOrder?.(uiState[SIDEBAR_ORDER_KEY]) })
     }
