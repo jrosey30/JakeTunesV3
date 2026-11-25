@@ -57,6 +57,7 @@ import { startSyncConvertCache } from './ipc/sync-cache-ipc.ts'
 import { touchUsed } from './sync-convert-cache.ts'
 import { AacEncoderMissingError, IPOD_ALAC_MIRROR_TOKEN, MP3_MIRROR_TOKEN, aacMirrorCacheName, afconvertAacArgs, createAfconvertCheck, pcmDecodeArgs } from './aac-mirror-recipe.ts'
 import { startSelfCare } from './self-care.ts'; import { analysisCandidates, pruneBrake } from './self-care-core.ts'; import { removeAppTempFiles } from './self-care-files.ts'
+import { createHeldForJake } from './jake-edits-guard.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
 import { mergeQueuedDuringPass, runConvertPass, type ConvertOutcome, type QueueTrack, type StreamConvertItem } from './stream-convert-pass.ts'; import { confirmHomeminiHoldsFile, keptLocalMessage, USER_PENDING_RETRIES, type RefusalMemo } from './offload-confirm.ts'
@@ -6947,11 +6948,13 @@ function cynthiaGetAlbumsSnapshot(): Map<string, { label: string; tracks: Cynthi
   return out
 }
 
+const cynthiaHeldForJake = createHeldForJake(() => app.getPath('userData'))
 function buildCynthiaSweepHooks() {
   return {
     getAlbums: cynthiaGetAlbumsSnapshot,
     fetchMbRelease: musicBrainzAlbumLookup,
     mayAutoApply: autoWriteGate(isHomeminiPlaybackClientCached),   // replica: hub-owned fixes wait for Jake
+    heldForJake: cynthiaHeldForJake,   // his edits stay (common/jake-edits-stay.ts)
     applyOverride: async (trackId: number, field: string, value: string, fingerprint: string) => {
       await applyMetadataOverrideInternal(trackId, field, value, fingerprint)
       triggerSync('metadata-edit')

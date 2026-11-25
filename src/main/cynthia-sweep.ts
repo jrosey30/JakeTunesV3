@@ -86,6 +86,10 @@ export interface CynthiaSweepHooks {
    *  auto-writes a field the hub catalog owns — the fix waits for Jake
    *  (replica-auto-writes.ts). Absent = yes. */
   mayAutoApply?(field: string): Promise<boolean>
+  /** Jake's edits stay (common/jake-edits-stay.ts): true when Jake set this
+   *  field himself to something else. The fix is not applied; it waits as a
+   *  finding for him. Absent = nothing is held. */
+  heldForJake?(trackId: number, field: string, value: string, durationMs?: number): Promise<boolean>
   /** True when it's safe to burn CPU/network (nothing playing). */
   isIdle(): boolean
   /** Progress + applied-fix events for the renderer. */
@@ -208,7 +212,7 @@ async function runLibraryConsistencyPass(): Promise<void> {
       const home = albumKeyByTrack.get(f.trackId)
       const track = byId.get(f.trackId)
       if (!home || !track) continue
-      if (f.provable && hooks.isIdle() && appliedCount < LIBRARY_PASS_APPLY_CAP && (await hooks.mayAutoApply?.(f.field) ?? true)) {
+      if (f.provable && hooks.isIdle() && appliedCount < LIBRARY_PASS_APPLY_CAP && (await hooks.mayAutoApply?.(f.field) ?? true) && !(await hooks.heldForJake?.(f.trackId, f.field, f.newValue, Number(track.duration) || undefined) ?? false)) {
         try {
           await hooks.applyOverride(f.trackId, f.field, f.newValue, fingerprintOf(track))
           appliedCount++
@@ -368,7 +372,7 @@ async function sweepOneAlbum(
 
   for (const f of all) {
     const track = byId.get(f.trackId)
-    if (f.provable && track && appliedCount < AUTO_APPLY_CAP_PER_TICK && (await hooks.mayAutoApply?.(f.field) ?? true)) {
+    if (f.provable && track && appliedCount < AUTO_APPLY_CAP_PER_TICK && (await hooks.mayAutoApply?.(f.field) ?? true) && !(await hooks.heldForJake?.(f.trackId, f.field, f.newValue, Number(track.duration) || undefined) ?? false)) {
       try {
         await hooks.applyOverride(f.trackId, f.field, f.newValue, fingerprintOf(track))
         appliedCount++

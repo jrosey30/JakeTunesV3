@@ -13,6 +13,7 @@ import { REFUSED_SENDER } from '../ipc-register.ts'
 import { runFilerSweep, resolveCheckEntry, trackFingerprint, checkEntryOpen, type FilerTrack, type FilerDeps, type CheckEntry, type Evidence, type OriginCache, type GenreWhy, originCacheFromV2 } from '../genre-filer.ts'
 import { PROVENANCE_FILE, parseProvenance, genreOwner, type ProvenanceDoc } from '../genre-provenance.ts'
 import { readUserEditsJournal } from '../user-edits-sync.ts'
+import { createRefusals, fieldsMayWrite, writerOf, type JournalEdit } from '../../common/jake-edits-stay.ts'
 import { writeJsonAtomic } from '../atomic-write.ts'
 import { runGenreCorrections } from '../genre-corrections.ts'
 import { runGenreRulings } from '../genre-rulings.ts'
@@ -125,9 +126,25 @@ export async function effectiveTracks(host: GenreFilerHost): Promise<FilerTrack[
   })
 }
 
-/** Persist through the app's override writer, then record who set the genre. */
-async function persistWithProvenance(host: GenreFilerHost, t: FilerTrack, fields: Record<string, string>, why?: GenreWhy): Promise<void> {
+/** Jake's journal, per song + field, as the stay rule reads it (common/jake-edits-stay.ts). */
+async function journalLookup(): Promise<(id: number, field: string) => JournalEdit | undefined> {
+  let doc: Awaited<ReturnType<typeof readUserEditsJournal>> = null
+  try { doc = await readUserEditsJournal(app.getPath('userData')) } catch { /* no journal yet: nothing of his to keep */ }
+  return (id, field) => doc?.edits[String(id)]?.[field]
+}
+
+/**
+ * Persist through the app's override writer, then record who set the genre.
+ * Jake's edits stay: an automatic write never changes a field he set
+ * (common/jake-edits-stay.ts); only his own (a ruling, a check-list File) may.
+ */
+async function persistWithProvenance(host: GenreFilerHost, t: FilerTrack, wanted: Record<string, string>, why?: GenreWhy): Promise<void> {
   const fp = trackFingerprint(t)
+  const edit = await journalLookup()
+  const { allowed: fields, held } = fieldsMayWrite({ writer: writerOf(why), fields: wanted, edit: (f) => edit(t.id, f), durationMs: t.duration })
+  if (held.length) console.log(`[genre-filer] ${t.id}: ${held.join(', ')} kept as Jake set it`)
+  for (const f of held) refused.add(t.id, f, wanted[f])
+  if (Object.keys(fields).length === 0) return
   await host.persist(t.id, fields, fp)
   if (fields.genre === undefined || !why) return
   const at = new Date().toISOString()
@@ -139,11 +156,15 @@ async function persistWithProvenance(host: GenreFilerHost, t: FilerTrack, fields
   })
 }
 
+/** Writes the stay rule refused, so the live copy for the renderer drops exactly those. */
+const refused = createRefusals()
+
 function deps(host: GenreFilerHost): FilerDeps {
   return {
     tracks: () => effectiveTracks(host),
     persist: (t, fields, why) => persistWithProvenance(host, t, fields, why),
-    applied: (updates) => host.send('genre-filer:applied', { updates }),
+    // The live copy follows the same rule, so the screen never shows a value the override refused.
+    applied: (updates) => { const u = refused.filter(updates); if (u.length) host.send('genre-filer:applied', { updates: u }) },
     evidence: async (u): Promise<Evidence> => {
       await host.mbThrottle()
       const cands = (await musicBrainzArtistCandidates(u.artist, host.userAgent)) ?? []
