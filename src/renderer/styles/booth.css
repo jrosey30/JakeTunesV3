@@ -483,7 +483,7 @@
   position: absolute; top: 1px; bottom: 1px; width: 6px;
   margin-left: -3px; border-radius: 3px;
   background: var(--booth-kill);
-  transition: left var(--motion-instant) linear, background var(--motion-instant) var(--motion-ease);
+  transition: left var(--motion-follow) linear, background var(--motion-instant) var(--motion-ease);
 }
 .booth-align-marker.is-locked { background: #7ac74f; box-shadow: 0 0 10px rgba(122,199,79,0.7); }
 .booth-align-read {
@@ -735,7 +735,7 @@
 .lesson-meter-marker {
   position: absolute; top: 3px; bottom: 3px; width: 10px; margin-left: -5px;
   border-radius: 5px; background: var(--booth-kill);
-  transition: left var(--motion-instant) linear, background var(--motion-instant) var(--motion-ease);
+  transition: left var(--motion-follow) linear, background var(--motion-instant) var(--motion-ease);
 }
 .lesson-meter-marker.is-locked {
   background: #7ac74f; box-shadow: 0 0 14px rgba(122,199,79,0.8);

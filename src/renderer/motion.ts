@@ -46,6 +46,21 @@ export const TIMED_DISPLAYS_MS = {
   hint: 4500,
 } as const
 
+/**
+ * Listed exceptions: physical things that keep their own pace (⚠️ TWIN of
+ * motion.css --motion-tape-* / --motion-follow).
+ */
+export const MOTION_EXCEPTIONS_MS = {
+  /** a cassette's spools turning while it plays (one turn) */
+  'tape-play': 1800,
+  /** the deck bar's cassette rolling (one turn) */
+  'tape-roll': 1400,
+  /** fast-forward / rewind (one turn) */
+  'tape-wind': 180,
+  /** a marker following a live value (the booth's beat-alignment meter) */
+  follow: 60,
+} as const
+
 /** Periods for the loops that mean something. A loop is not a speed. */
 export const MOTION_PERIOD_MS = {
   /** a spinner: something is loading */
@@ -95,6 +110,7 @@ export const MEANINGFUL_LOOPS: Readonly<Record<string, string>> = {
   'rec-dot-blink': 'recording',
   'rec-pulse': 'recording',
   // live: on air, playing, speaking
+  'jt-default-pulse': "the default button: a dialog's confirm (what Return does), and Sync while there is something to sync",
   'dj-pulse': 'DJ Mode is on (the smoke test checks this glow)',
   'radio-on-air-pulse': 'the radio is on air',
   'radio-wave-pulse': 'the radio is on air',

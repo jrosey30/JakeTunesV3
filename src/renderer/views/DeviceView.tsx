@@ -3,6 +3,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { assembleSyncPlaylists, planIpodSync, planTracks } from '../utils/workoutIpodSync'
 import type { OneSyncPlan } from '../../common/ipod-one-sync-plan'
 import { readyLine, leftOffLine, syncButtonLabel, lastSyncedLine, syncingStep, withLastSyncLeftOff } from '../../common/ipod-one-sync-plan'
+import { syncIsDue } from '../../common/sync-due'
 import { readyOnMacLine, leaveOffQuestion, syncNowLeavingOffLabel, idsLeavingOff, mustAskBeforeSync, listFetchOutcome, leftOffNote as fetchLeftOffNote, type ReadyOnMac } from '../../common/ipod-ready-on-mac'
 import { stickerHex } from '../components/IpodIdentityBar'
 import IpodArtworkAsk from '../components/IpodArtworkAsk'
@@ -697,7 +698,8 @@ export default function DeviceView() {
           })()}
           {plan?.ok && renaming === null && (
             <button
-              className="device-itunes-btn device-itunes-btn--sync"
+              // V7 motion: the pulse (motion.css) only when there is something to sync (common/sync-due.ts).
+              className={`device-itunes-btn device-itunes-btn--sync${syncIsDue(plan.trackIds, lastSync) ? ' device-itunes-btn--due' : ''}`}
               disabled={syncing}
               onClick={() => { void runOneSync() }}
               title={syncing ? 'Syncing…' : `Put these ${plan.trackIds.length.toLocaleString('en-US')} songs on ${plan.ipodName}`}

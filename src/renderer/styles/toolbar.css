@@ -230,6 +230,11 @@
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
 }
+.now-playing-info--stacked [data-lcd="still"] {
+  /* Reduce Motion (lcdTicker.ts): a long name holds still, shrunk, and if it
+   * still doesn't fit its end becomes "…" rather than sliced off at the edge. */
+  text-overflow: ellipsis;
+}
 .now-playing-info--stacked [data-lcd="ticker"] > * {
   display: inline-block;
   will-change: transform;

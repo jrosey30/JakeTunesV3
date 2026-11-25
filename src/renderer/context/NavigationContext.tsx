@@ -139,7 +139,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     if (s.index >= s.history.length - 1) return
     navRef.current = { history: s.history, index: s.index + 1 }
     repaint()
-    markHistoryNavigation()
+    markHistoryNavigation('forward')
     restore(navRef.current.history[navRef.current.index])
   }, [restore, repaint])
 

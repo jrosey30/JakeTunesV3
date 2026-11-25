@@ -60,7 +60,8 @@ test('the Device page has no Apply step and no option nothing reads', () => {
     assert.doesNotMatch(view, gone, String(gone))
   }
   // Sync and Full Sync are disabled only while a sync runs.
-  assert.match(view, /className="device-itunes-btn device-itunes-btn--sync"\s*disabled=\{syncing\}/)
+  // V7 motion: the class also carries --due (pulse) when there is something to sync.
+  assert.match(view, /className=\{`device-itunes-btn device-itunes-btn--sync\$\{[^`]*\}`\}\s*disabled=\{syncing\}/)
   assert.match(view, /disabled=\{syncing\} onClick=\{handleFullSync\}/)
   // Every kept option saves on change.
   assert.match(view, /onChange=\{e => changeDeviceOption\(\{ optOpenOnConnect: e\.target\.checked \}\)\}/)

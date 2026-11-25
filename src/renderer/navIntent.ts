@@ -14,19 +14,31 @@
  * render of a different component exactly once, then clears.
  */
 let pending = false
+/** Which way the history move went (V7 motion: back slides the page out to the right). */
+let pendingDirection: 'back' | 'forward' | null = null
 let clearTimer: ReturnType<typeof setTimeout> | null = null
 
-export function markHistoryNavigation(): void {
+export function markHistoryNavigation(direction: 'back' | 'forward' = 'back'): void {
   pending = true
+  pendingDirection = direction
   // A back that lands on the same page (nothing remounts) must not leak the
   // mark into the next real arrival.
   if (clearTimer) clearTimeout(clearTimer)
-  clearTimer = setTimeout(() => { pending = false; clearTimer = null }, 500)
+  clearTimer = setTimeout(() => { pending = false; pendingDirection = null; clearTimer = null }, 500)
+}
+
+/**
+ * The direction of a history move still waiting to be taken, without taking
+ * it: the page slide decides which way to go before the new page mounts.
+ */
+export function peekHistoryDirection(): 'back' | 'forward' | null {
+  return pending ? pendingDirection : null
 }
 
 export function takeHistoryNavigation(): boolean {
   const was = pending
   pending = false
+  pendingDirection = null
   return was
 }
 

@@ -38,9 +38,9 @@ app.whenReady().then(async () => {
     win.showInactive() // composited (rAF runs at the display's rate) but invisible and never focused
     await win.webContents.executeJavaScript(`document.documentElement.dataset.motionLock = '1'; document.documentElement.dataset.motion = 'full'`)
     await trials(win, { direction: 'forward' }, 2) // warm-up: fonts, styles, GPU
-    // Back returns to a page with no entrance today (main-content.css
-    // [data-nav='return']); the slide out to the right adds it (V7 PR 2).
-    const DIRECTIONS = ['forward']
+    // Forward slides the new page in from the right; back slides the page
+    // you leave out to the right (pageSlide.ts, motion.css).
+    const DIRECTIONS = ['forward', 'back']
     const results = {}
     for (const dir of DIRECTIONS) results[dir] = await trials(win, { direction: dir }, TRIALS)
     await win.webContents.executeJavaScript(`document.documentElement.dataset.motion = 'reduce'`)

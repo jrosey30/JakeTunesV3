@@ -18,7 +18,10 @@
  */
 import { useEffect, type RefObject } from 'react'
 import { planLcdFit } from '../../../common/lcd-ticker'
-import { prefersReducedMotion } from '../../motion'
+import { MOTION_EASE, MOTION_MS, prefersReducedMotion } from '../../motion'
+
+/** Under Reduce Motion a long name shrinks to fit down to this, then ends in "…". */
+const REDUCED_MIN_SCALE = 0.72
 
 export const LCD_LINE_SELECTOR = '.now-playing-line-primary, .now-playing-line-secondary, .now-playing-line-tertiary'
 
@@ -48,6 +51,11 @@ export function useLcdTicker(rootRef: RefObject<HTMLElement>): void {
       // Measure at rest: undo our own shrink / scroll first.
       if (prev && !force && prev.text === text && prev.width === line.clientWidth) return
       reset(line, prev)
+      // A new song: the line fades in, like iTunes' screen (V7 motion). Only
+      // on a change of name, never on the clock's ticks (fit() returns above).
+      if (prev && prev.text !== text && typeof line.animate === 'function' && !prefersReducedMotion()) {
+        line.animate([{ opacity: 0 }, { opacity: 1 }], { duration: MOTION_MS.normal, easing: MOTION_EASE })
+      }
       const width = line.clientWidth
       const plan = planLcdFit(line.scrollWidth, width)
       const next: LineState = { text, width, anims: [] }
@@ -55,8 +63,15 @@ export function useLcdTicker(rootRef: RefObject<HTMLElement>): void {
       if (plan.kind === 'shrink') {
         line.setAttribute('data-lcd', 'shrink')
         for (const child of Array.from(line.children) as HTMLElement[]) child.style.fontSize = `${plan.scale}em`
-      } else if (plan.kind === 'ticker' && !prefersReducedMotion()) {
-        // Reduce Motion: the title holds still (clipped) instead of scrolling.
+      } else if (plan.kind === 'ticker' && prefersReducedMotion()) {
+        // Reduce Motion: a long name holds still. It shrinks as far as it
+        // reads (REDUCED_MIN_SCALE) and what still doesn't fit ends in "…"
+        // (toolbar.css [data-lcd="still"]): the end of a very long name is
+        // replaced by the ellipsis rather than sliced off at the pill's edge.
+        line.setAttribute('data-lcd', 'still')
+        const scale = Math.max(REDUCED_MIN_SCALE, Math.floor((width / line.scrollWidth) * 1000) / 1000)
+        for (const child of Array.from(line.children) as HTMLElement[]) child.style.fontSize = `${scale}em`
+      } else if (plan.kind === 'ticker') {
         line.setAttribute('data-lcd', 'ticker')
         const frames = plan.keyframes.map((k) => ({ offset: k.offset, transform: `translateX(${k.x}px)` }))
         for (const child of Array.from(line.children) as HTMLElement[]) {
@@ -88,6 +103,13 @@ export function useLcdTicker(rootRef: RefObject<HTMLElement>): void {
       if (touched) scan()
     })
     mo.observe(root, { childList: true, subtree: true, characterData: true })
+    // Reduce Motion switched on or off (System Settings, live): plan every
+    // line again, scrolling or still.
+    const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)')
+    const replan = (): void => scan(true)
+    mq?.addEventListener('change', replan)
+    const motionMo = new MutationObserver(replan)
+    motionMo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-motion'] })
     scan()
     // A name measured in the fallback face is the wrong width once the real
     // font lands.
@@ -96,6 +118,8 @@ export function useLcdTicker(rootRef: RefObject<HTMLElement>): void {
     return () => {
       alive = false
       mo.disconnect()
+      motionMo.disconnect()
+      mq?.removeEventListener('change', replan)
       ro.disconnect()
       for (const line of watched) reset(line, states.get(line))
       watched.clear()

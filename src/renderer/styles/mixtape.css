@@ -109,7 +109,7 @@
   letter-spacing: 1px;
 }
 
-.spool--spin { animation: spool-rotate var(--motion-spin) linear infinite; }
+.spool--spin { animation: spool-rotate var(--motion-tape-play) linear infinite; }
 @keyframes spool-rotate { to { transform: rotate(360deg); } }
 
 .mixtape-hero-info { min-width: 0; }
@@ -421,7 +421,7 @@
   font-family: inherit;
   font-size: 9px;
 }
-.deckbar-cassette--rolling .deckbar-spool { animation: spool-rotate var(--motion-spin) linear infinite; }
+.deckbar-cassette--rolling .deckbar-spool { animation: spool-rotate var(--motion-tape-roll) linear infinite; }
 .deckbar-counter { display: flex; flex-direction: column; min-width: 90px; }
 .deckbar-side { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: #f4eeda; }
 .deckbar-left { font-size: 11px; color: #aaa; font-variant-numeric: tabular-nums; }
@@ -699,7 +699,7 @@
 }
 
 /* Spool wind — held FF/REW: the reels blur, REW runs them backwards. */
-.spool--fast { animation-duration: calc(var(--motion-spin) * 0.25); }
+.spool--fast { animation-duration: var(--motion-tape-wind); }
 .spool--rev { animation-direction: reverse; }
 
 /* side-wide tape scrubber in the pill */

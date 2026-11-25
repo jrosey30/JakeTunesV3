@@ -4,6 +4,7 @@ import { useLibrary } from '../../context/LibraryContext'
 import { useAudio } from '../../hooks/useAudio'
 import '../../styles/queue.css'
 import { formatDuration } from '../../../common/format-duration'
+import { motionMs } from '../../motion'
 
 
 export type QueuePanelHandle = { requestClose: () => void }
@@ -25,7 +26,7 @@ const QueuePanel = forwardRef<QueuePanelHandle, { onClose: () => void }>(functio
   const requestClose = useCallback(() => {
     if (exiting) return
     setExiting(true)
-    window.setTimeout(() => onClose(), 220)
+    window.setTimeout(() => onClose(), motionMs('normal'))
   }, [exiting, onClose])
 
   useImperativeHandle(ref, () => ({ requestClose }), [requestClose])

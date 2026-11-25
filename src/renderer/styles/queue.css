@@ -1,11 +1,14 @@
+/* V7: Up Next and the Music Man (musicman-drawer.css) are Aqua drawers: they
+   slide out from the window's right edge and back in, solid the whole way
+   (no fade), at the normal speed. */
 @keyframes queue-slide-in {
-  from { transform: translateX(100%); opacity: 0.85; }
-  to { transform: translateX(0); opacity: 1; }
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
 }
 
 @keyframes queue-slide-out {
-  from { transform: translateX(0); opacity: 1; }
-  to { transform: translateX(100%); opacity: 0.85; }
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
 }
 
 .queue-panel {

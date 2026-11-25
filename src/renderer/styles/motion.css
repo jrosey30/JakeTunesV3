@@ -28,6 +28,14 @@
   --motion-display-stamp: 1300ms;
   --motion-display-verdict: 420ms;
   --motion-display-hint: 4500ms;
+  /* Listed exceptions, each a physical thing keeping its own pace:
+     the tape's spools (playing, the deck bar's roll, fast-wind), as they
+     turned before V7, and a marker that follows a live value (the booth's
+     beat-alignment and lesson meters) without lagging behind it. */
+  --motion-tape-play: 1800ms;
+  --motion-tape-roll: 1400ms;
+  --motion-tape-wind: 180ms;
+  --motion-follow: 60ms;
 
   /* Cover Flow stays as it is: its own soft overshoot, at the slow speed. */
   --ease-carousel: cubic-bezier(0.3, 1.04, 0.22, 1);
@@ -115,6 +123,70 @@
   aspect-ratio: auto 1 / 1;
 }
 
+/* ── Pages slide like an iPod menu (pageSlide.ts) ─────────────────────────
+   Only the content area takes part: while :root.jt-page-vt is on it is the
+   `jt-page` View Transition, and the rest of the window (root) does not
+   animate, so the sidebar, toolbar and Now Playing stay live and still.
+   Opening: the old page goes off to the left, the new one comes in from the
+   right. Back: the page you leave goes out to the right, the one you return
+   to comes in from the left. Both are pictures moved by the GPU. */
+:root.jt-page-vt .main-content-shell-view {
+  view-transition-name: jt-page;
+}
+:root.jt-page-vt::view-transition {
+  /* The slide's pictures sit over the window for 0.2 s; clicks go through to
+     the live page underneath (sidebar, toolbar, Pause), never swallowed. */
+  pointer-events: none;
+}
+:root.jt-page-vt::view-transition-group(root),
+:root.jt-page-vt::view-transition-old(root),
+:root.jt-page-vt::view-transition-new(root) {
+  animation: none;
+}
+:root.jt-page-vt::view-transition-group(jt-page) {
+  animation: none;
+  overflow: clip;
+}
+:root.jt-page-vt::view-transition-old(jt-page),
+:root.jt-page-vt::view-transition-new(jt-page) {
+  mix-blend-mode: normal;
+  animation-duration: var(--motion-normal);
+  animation-timing-function: var(--motion-ease);
+  animation-fill-mode: both;
+}
+:root.jt-page-vt--in::view-transition-old(jt-page) { animation-name: jt-page-off-left; }
+:root.jt-page-vt--in::view-transition-new(jt-page) { animation-name: jt-page-on-from-right; }
+:root.jt-page-vt--out::view-transition-old(jt-page) { animation-name: jt-page-off-right; }
+:root.jt-page-vt--out::view-transition-new(jt-page) { animation-name: jt-page-on-from-left; }
+@keyframes jt-page-off-left { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+@keyframes jt-page-on-from-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes jt-page-off-right { from { transform: translateX(0); } to { transform: translateX(100%); } }
+@keyframes jt-page-on-from-left { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+
+/* ── The default button pulses, like Aqua's ─────────────────────────────
+   The one button that is the point of the screen breathes a soft orange glow:
+   Sync on the iPod page when there is something to sync (DeviceView marks it
+   --due from common/sync-due.ts; never while it syncs), and the confirm button
+   of a dialog (Return). A glow on its own
+   layer that only changes opacity, so it costs the GPU and nothing else. */
+:root :is(.device-itunes-btn--sync.device-itunes-btn--due, .confirm-btn--confirm):not(:disabled) {
+  position: relative;
+}
+:root :is(.device-itunes-btn--sync.device-itunes-btn--due, .confirm-btn--confirm):not(:disabled)::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  box-shadow: 0 0 0 2px rgba(252, 85, 1, 0.5), 0 0 10px 1px rgba(252, 85, 1, 0.45);
+  pointer-events: none;
+  opacity: 0.15;
+  animation: jt-default-pulse var(--motion-pulse) ease-in-out infinite alternate;
+}
+@keyframes jt-default-pulse {
+  from { opacity: 0.15; }
+  to   { opacity: 1; }
+}
+
 /* Shared keyframes — iPod / Aqua weight: short, no bounce. */
 
 @keyframes overlay-backdrop-in {
@@ -174,17 +246,45 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Modal / sheet chrome */
-.confirm-overlay,
-.getinfo-overlay,
-.imp-backdrop {
+/* ── Dialogs are Aqua sheets ──────────────────────────────────────────────
+   Every dialog drops from under the toolbar, like a Mac OS X sheet from its
+   title bar: pinned to the top edge of the content, centred across it, top
+   corners square, sliding down at the normal speed (transform only, so the
+   GPU does it). The window behind dims and stays unclickable, as before.
+   One look for what were nine: confirm, Get Info, import/convert, the
+   activity sheets (sync review, sync history …), share, artist grouping,
+   picks, the track list sheet and the booth picker.
+   :root raises these above each component's own centring rule. */
+:root :is(.confirm-overlay, .getinfo-overlay, .imp-backdrop, .activity-sheet-overlay, .fshare-overlay,
+  .agm-overlay, .picks-overlay, .tl-sheet-backdrop, .booth-picker-backdrop) {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: calc(var(--titlebar-height) + var(--toolbar-height)) 16px 16px;
+  box-sizing: border-box;
   animation: overlay-backdrop-in var(--motion-normal) var(--motion-ease) both;
 }
-
-.confirm-dialog,
-.getinfo-modal,
-.imp-modal {
-  animation: sheet-enter var(--motion-normal) var(--motion-ease) both;
+:root :is(.confirm-dialog, .getinfo-modal, .imp-modal, .activity-sheet, .fshare-dialog,
+  .agm-dialog, .picks-sheet, .tl-sheet, .booth-picker) {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.32), 0 1px 0 rgba(0, 0, 0, 0.18);
+  animation: jt-sheet-drop var(--motion-normal) var(--motion-ease) both;
+}
+/* Attached under the toolbar, a sheet never runs off the bottom of the window. */
+:root .getinfo-modal { max-height: min(80vh, calc(100vh - var(--titlebar-height) - var(--toolbar-height) - 16px)); }
+:root .imp-modal { max-height: min(80vh, calc(100vh - var(--titlebar-height) - var(--toolbar-height) - 16px)); }
+:root .activity-sheet { max-height: min(90vh, 720px, calc(100vh - var(--titlebar-height) - var(--toolbar-height) - 16px)); }
+:root .fshare-dialog { max-height: calc(100vh - var(--titlebar-height) - var(--toolbar-height) - 16px); }
+:root .agm-dialog { max-height: min(80vh, calc(100vh - var(--titlebar-height) - var(--toolbar-height) - 16px)); }
+:root .picks-sheet { max-height: min(80vh, 640px, calc(100vh - var(--titlebar-height) - var(--toolbar-height) - 16px)); }
+:root .tl-sheet { max-height: min(80vh, 720px, calc(100vh - var(--titlebar-height) - var(--toolbar-height) - 16px)); }
+/* It comes out from under the toolbar: as it moves down, the part still
+   above the toolbar's edge is clipped away, so it never shows over the
+   toolbar (the clip and the move share one curve and stay in step). */
+@keyframes jt-sheet-drop {
+  from { transform: translateY(-100%); clip-path: inset(100% 0 0 0); }
+  to   { transform: translateY(0); clip-path: inset(0 0 0 0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
