@@ -8,7 +8,7 @@ import { evaluateSmartPlaylist, SMART_PLAYLIST_TITLES as TITLES } from '../utils
 import { smartPlaylistCover } from '../utils/playlistCovers'
 import { useListenMoreWeekly } from '../listenMoreWeekly'
 import { useTop1000List, useTop1000Movement, useTop1000Ranks } from '../top1000List'
-import { isRankedPlaylist, rankMovement, rotateRankSnap, top1000Movement, weekKeyOf, RANK_SNAPSHOT_KEYS, type RankSnap } from '../../common/rank-movement'
+import { compactMovement, isRankedPlaylist, rankMovement, rotateRankSnap, TOP_1000_RANK_COLUMN_WIDTH, weekKeyOf, RANK_SNAPSHOT_KEYS, type RankSnap } from '../../common/rank-movement'
 import { useIpodLists, entryColor, renameIpodList, setIpodListHeadline, useIpodListsRole } from '../ipodLists'
 import { useTop1000Name, renameTop1000 } from '../top1000Name'
 import ListRenameField from '../components/ListRenameField'
@@ -30,6 +30,7 @@ import { monthPlaylistName, monthTrackIds, parseMonthPlaylistId } from '../../co
 import { isTop25Rankable } from '../../common/top25-rankable'
 import { usePlaysElsewhere, useTracksEverywhere } from '../playsElsewhere'
 import { Track, type SmartPlaylistId } from '../types'
+import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { canonicalArtist } from '../utils/artistAlias'
 import TrackGridView from '../components/TrackGridView'
 import CoverFlowView from './CoverFlowView'
@@ -99,8 +100,6 @@ function isSameCalendarDay(isoDate: string): boolean {
   )
 }
 
-/** The Top 1000's '#' needs room for "1000 (1000) ▼999"; Top 25 keeps 80. */
-const TOP_1000_RANK_WIDTH = 116
 
 export default function SmartPlaylistView() {
   const { state: libState, dispatch } = useLibrary()
@@ -516,39 +515,53 @@ export default function SmartPlaylistView() {
   // rank is its place in the list's own order, whatever the table is sorted by.
   const ownRank = useMemo(() => new Map(ownOrder.map((t, i) => [t.id, i + 1])), [ownOrder])
   // Memoized: the rows are, and a new lead each render would redraw them all.
-  const rankLead = useMemo((): SongTableLead | undefined => (isRankedPlaylist(playlistId) ? {
-    label: '#',
-    width: playlistId === 'top-1000' ? TOP_1000_RANK_WIDTH : 80,
-    className: 'songs-cell--rank',
-    render: (track) => {
-      // Top 1000: the quiz's rank (a song homemini ranks but this library
-      // lacks leaves a gap, as it should). Top 25: position.
-      const rank = playlistId === 'top-1000'
-        ? (top1000Ranks?.[String(track.id)] ?? ownRank.get(track.id) ?? 0)
-        : (ownRank.get(track.id) ?? 0)
-      // Top 1000: homemini's weekly movement (green up, red down, NEW);
-      // nothing on a fresh-start week or for a song that held.
-      if (playlistId === 'top-1000') {
-        const mv = top1000Movement(rank, top1000Moves.movement?.[String(track.id)], top1000Moves.comparedTo)
+  const rankLead = useMemo((): SongTableLead | undefined => {
+    // Top 1000 (2026-11-25): a narrow '#' like iTunes — the rank right-aligned
+    // in tabular digits, homemini's weekly movement as one small mark beside
+    // it, and the speaker in that same place on the playing row (so the table
+    // drops its own speaker column).
+    if (playlistId === 'top-1000') return {
+      label: '#',
+      width: TOP_1000_RANK_COLUMN_WIDTH,
+      className: 'songs-cell--rank songs-cell--rank-compact',
+      headerClassName: 'songs-header-cell--rank-compact',
+      showsPlaying: true,
+      render: (track, _idx, playing) => {
+        const rank = top1000Ranks?.[String(track.id)] ?? ownRank.get(track.id) ?? 0
+        const mark = compactMovement(rank, top1000Moves.movement?.[String(track.id)], top1000Moves.comparedTo)
+        return (
+          <>
+            <span className="rank-mark">
+              {playing
+                ? <span role="img" aria-label="Now playing"><SpeakerPlayingIcon /></span>
+                : mark && <span className={mark.className} title={mark.title} role="img" aria-label={mark.title}>{mark.glyph}</span>}
+            </span>
+            <span className="rank-num">{rank}</span>
+          </>
+        )
+      },
+    }
+    if (!isRankedPlaylist(playlistId)) return undefined
+    return {
+      label: '#',
+      width: 80,
+      className: 'songs-cell--rank',
+      render: (track) => {
+        // Top 25: its position.
+        const rank = ownRank.get(track.id) ?? 0
+        // LW arrow only on All Time, and only once there is a snapshot (no flash of NEW).
+        if (topWindow !== 'all' || !rankSnap) return <span className="rank-num">{rank}</span>
+        const { arrow, arrowClass, lwLabel } = rankMovement(rank, rankSnap.prev?.[String(track.id)])
         return (
           <>
             <span className="rank-num">{rank}</span>
-            {mv && <span className={mv.arrowClass} title={mv.lwLabel ? `Last week: ${mv.lwLabel.slice(1, -1)}` : 'New this week'}>{mv.arrow}</span>}
+            {lwLabel && <span className="rank-lw">{lwLabel}</span>}
+            <span className={arrowClass}>{arrow}</span>
           </>
         )
-      }
-      // Top 25: LW arrow only on All Time, and only once there is a snapshot (no flash of NEW).
-      if (topWindow !== 'all' || !rankSnap) return <span className="rank-num">{rank}</span>
-      const { arrow, arrowClass, lwLabel } = rankMovement(rank, rankSnap.prev?.[String(track.id)])
-      return (
-        <>
-          <span className="rank-num">{rank}</span>
-          {lwLabel && <span className="rank-lw">{lwLabel}</span>}
-          <span className={arrowClass}>{arrow}</span>
-        </>
-      )
-    },
-  } : undefined), [playlistId, top1000Ranks, top1000Moves, ownRank, topWindow, rankSnap])
+      },
+    }
+  }, [playlistId, top1000Ranks, top1000Moves, ownRank, topWindow, rankSnap])
 
   // --- Summary stats ---
   const totalMs = sortedTracks.reduce((sum, t) => sum + (t.duration || 0), 0)

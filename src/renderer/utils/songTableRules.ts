@@ -64,6 +64,18 @@ export const SONG_COLUMNS: readonly SongColumn[] = [
   // The star is not a column: it sits after the title (hover to see it unstarred).
 ]
 
+/**
+ * The columns drawn when a page's lead column shows the playing speaker itself
+ * (the Top 1000's '#'): the table's own speaker column goes, widths with it,
+ * so no empty column sits between the '#' and Name. Pure; `widths` lines up
+ * with `visible`.
+ */
+export function withoutPlayingColumn<C extends { key: string }>(visible: readonly C[], widths: readonly number[], leadShowsPlaying: boolean): { visible: C[]; widths: number[] } {
+  if (!leadShowsPlaying) return { visible: visible.slice(), widths: widths.slice() }
+  const keep = visible.map((c, i) => ({ c, w: widths[i] })).filter((x) => x.c.key !== 'playing')
+  return { visible: keep.map((x) => x.c), widths: keep.map((x) => x.w) }
+}
+
 /** Columns the header's picker can't hide. */
 export const ALWAYS_VISIBLE: ReadonlySet<string> = new Set(['playing', 'title'])
 

@@ -58,7 +58,7 @@ import { TRACK_DRAG_TYPE } from '../utils/trackDrag'
 import { songMenuEntries } from '../utils/libraryMenus'
 import { hasPendingShowNowPlaying, takePendingShowNowPlaying } from '../nowPlayingNav'
 import {
-  ALWAYS_VISIBLE, ORIGINAL_ORDER, dragLabel, nextSort, type SongColumn, type SongSort,
+  ALWAYS_VISIBLE, ORIGINAL_ORDER, dragLabel, nextSort, withoutPlayingColumn, type SongColumn, type SongSort,
 } from '../utils/songTableRules'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { type MenuEntry } from './ContextMenu'
@@ -87,6 +87,11 @@ export interface SongTableLead {
   /** The cell. `idx` is the row's place in the list as shown. */
   render: (track: Track, idx: number, playing: boolean) => ReactNode
   className?: string
+  /** The header cell's own class (a right-aligned '#'). */
+  headerClassName?: string
+  /** The lead shows the speaker on the playing row itself, so the table
+   *  drops its own speaker column (no empty column beside the '#'). */
+  showsPlaying?: boolean
 }
 
 export interface SongTableRemoval {
@@ -612,11 +617,16 @@ export default function SongTable(props: SongTableProps): JSX.Element {
     window.addEventListener('mouseup', onUp)
   }
 
-  const allWidths = useMemo(() => (lead ? [lead.width, ...columns.widths] : columns.widths), [lead, columns.widths])
+  // A lead that shows the speaker itself takes the speaker column's place.
+  const { visible: visibleCols, widths: colWidths } = useMemo(
+    () => withoutPlayingColumn(columns.visible, columns.widths, !!lead?.showsPlaying),
+    [columns.visible, columns.widths, lead?.showsPlaying],
+  )
+  const allWidths = useMemo(() => (lead ? [lead.width, ...colWidths] : colWidths), [lead, colWidths])
   const gridTemplate = useMemo(() => {
-    const cols = songsGridTemplate(columns.visible, columns.widths)
+    const cols = songsGridTemplate(visibleCols, colWidths)
     return lead ? `${lead.width}px ${cols}` : cols
-  }, [columns.visible, columns.widths, lead])
+  }, [visibleCols, colWidths, lead])
   const gridTemplateFixed = useMemo(() => songsGridTemplateFixed(allWidths), [allWidths])
 
   // The drop line goes when the drag ends anywhere (dropped elsewhere, or Esc).
@@ -675,7 +685,7 @@ export default function SongTable(props: SongTableProps): JSX.Element {
     >
       {lead && (
         <div
-          className={`songs-header-cell songs-header-cell--lead ${!sort ? 'sorted' : ''}`}
+          className={`songs-header-cell songs-header-cell--lead ${lead.headerClassName ?? ''} ${!sort ? 'sorted' : ''}`}
           role="columnheader"
           title={ORIGINAL_ORDER}
           onClick={() => { if (sort) onSort(null) }}
@@ -683,7 +693,7 @@ export default function SongTable(props: SongTableProps): JSX.Element {
           {lead.label}
         </div>
       )}
-      {columns.visible.map((col, i) => (
+      {visibleCols.map((col, i) => (
         <div
           key={col.key}
           role="columnheader"
@@ -709,7 +719,7 @@ export default function SongTable(props: SongTableProps): JSX.Element {
         >
           {col.label}
           {sort?.column === col.key && <span className="sort-arrow"><SortArrowIcon direction={sort.direction} /></span>}
-          {col.resizable && <div className="col-resize-handle" onMouseDown={(e) => onResizeStart(col, columns.widths[i], e)} />}
+          {col.resizable && <div className="col-resize-handle" onMouseDown={(e) => onResizeStart(col, colWidths[i], e)} />}
         </div>
       ))}
     </div>
@@ -744,7 +754,7 @@ export default function SongTable(props: SongTableProps): JSX.Element {
                     isFindHit={findHitId === track.id}
                     isDropTarget={dropAt === idx}
                     gridTemplate={gridTemplate}
-                    visibleCols={columns.visible}
+                    visibleCols={visibleCols}
                     lead={lead}
                     starDispatch={libDispatch}
                     downloaded={isDownloaded(track.path)}

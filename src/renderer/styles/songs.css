@@ -515,3 +515,23 @@
   flex-direction: column;
   min-width: 0;
 }
+
+/* The Top 1000's '#' (2026-11-25): narrow, like iTunes. The rank sits right in
+   tabular digits; one small mark beside it (▲ ▼ ●, or the speaker on the
+   playing row) in a fixed slot, so the digits line up row to row. */
+.songs-cell--lead.songs-cell--rank-compact {
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 0 4px 0 2px;
+}
+.songs-header-cell--rank-compact { justify-content: flex-end; text-align: right; padding-right: 4px; }
+.rank-mark {
+  flex: none;
+  width: 9px;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+}
+.rank-mark svg { width: 9px; height: 9px; }
+.rank-mark-glyph { font-size: 9px; letter-spacing: 0; }
+.songs-cell--rank-compact .rank-num { min-width: 0; font-weight: 600; }

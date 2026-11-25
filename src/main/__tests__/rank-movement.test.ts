@@ -98,6 +98,7 @@ describe('Top 1000: homemini\'s weekly movement (2026-11-24)', () => {
     const memo = view.slice(view.indexOf('const currentRanks = useMemo'), view.indexOf('useEffect(', view.indexOf('const currentRanks = useMemo')))
     assert.ok(memo.length > 0)
     assert.doesNotMatch(memo, /top-1000|top1000Ranks/, 'the Top 1000 went back into the local snapshot')
-    assert.match(view, /top1000Movement\(rank, top1000Moves\.movement\?\.\[String\(track\.id\)\], top1000Moves\.comparedTo\)/)
+    // 2026-11-25: through compactMovement, which asks top1000Movement (rank-movement.ts).
+    assert.match(view, /compactMovement\(rank, top1000Moves\.movement\?\.\[String\(track\.id\)\], top1000Moves\.comparedTo\)/)
   })
 })
