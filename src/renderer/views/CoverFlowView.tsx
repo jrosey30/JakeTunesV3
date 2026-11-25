@@ -21,6 +21,7 @@ import PlayButton from '../components/PlayButton'
 import { JUKEBOX_WHEEL_OPTIONS } from '../../common/cover-flow-wheel'
 import { useCoverFlowWheel } from '../hooks/useCoverFlowWheel'
 import { useArrowKeyOwner } from '../hooks/useArrowKeyOwner'
+import { dragClickGuard } from '../../common/drag-click'
 import { overlayOpen } from '../utils/arrowKeyOwner'
 import { formatDuration } from '../../common/format-duration'
 
@@ -155,24 +156,27 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
   // Jukebox arc: the natural drag axis is VERTICAL (you flip pages up and
   // over). Dominant-axis detection keeps horizontal trackpad habits alive.
   const drag = useRef<{ startX: number; startY: number; startIdx: number; moved: boolean } | null>(null)
+  const clickGuard = useRef(dragClickGuard())
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     if (e.button !== 0) return
     drag.current = { startX: e.clientX, startY: e.clientY, startIdx: idx, moved: false }
+    clickGuard.current.down()
   }, [idx])
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     const d = drag.current
     if (!d) return
     const dx = e.clientX - d.startX
     const dy = e.clientY - d.startY
-    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) d.moved = true
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) { d.moved = true; clickGuard.current.moved() }
     // Drag UP = flip forward (page swings over the top); right also advances.
     const delta = Math.abs(dy) >= Math.abs(dx) ? -dy : -dx
     const steps = Math.round(delta / DRAG_STEP_PX)
     const next = Math.max(0, Math.min(albums.length - 1, d.startIdx + steps))
     setIdx(prev => { if (prev !== next) markStep(); return next })
   }, [albums.length, markStep])
-  const onPointerUp = useCallback(() => { drag.current = null }, [])
-  const dragMoved = () => drag.current?.moved ?? false
+  // pointerup clears the drag before the browser's click arrives, so the
+  // "moved" answer is kept by the guard until that click reads it.
+  const onPointerUp = useCallback(() => { drag.current = null; clickGuard.current.up() }, [])
 
   // stopPropagation on handled keys is LOAD-BEARING: App.tsx has a
   // document-level transport handler (←→ = next/prev track, ↑↓ = volume)
@@ -322,7 +326,7 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
                 data-card-kind="album"
                 style={style}
                 onClick={() => {
-                  if (dragMoved()) return
+                  if (!clickGuard.current.click()) return
                   if (!active) setIdx(i)
                   else libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: key })
                 }}

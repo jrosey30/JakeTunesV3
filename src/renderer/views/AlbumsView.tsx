@@ -168,9 +168,9 @@ export default function AlbumsView() {
 
   // Per-album work done ONCE per album list, not per card per render (it used
   // to run for all 2,579 cards on every playback tick). Running order + the
-  // Album Mode gate: the ▶'s tooltip says "front to back, gapless" ONLY when
-  // the record is verifiably complete — the same completeness doctrine the live-set merge
-  // uses (one definition, no twin).
+  // Album Mode gate: the ▶ shows ONLY when the record is verifiably complete,
+  // the same completeness doctrine the live-set merge uses (one definition,
+  // no twin).
   const albumMeta = useMemo(() => filteredAlbums.map((album) => {
     const ordered = sortAlbumTracks(album.tracks)
     const comp = verifyLiveSetCompleteness(ordered)

@@ -13,6 +13,7 @@ import {
   CARD_KINDS, HOME_ROW_TITLE, MENU_FOR, PLAY_LABEL, SEE_ALL,
   canDrag, cardAction, playTitle, seeAllShown, songRowAction, type Gesture,
 } from '../../common/card-rules.ts'
+import { dragClickGuard } from '../../common/drag-click.ts'
 
 const SRC = join(import.meta.dirname, '../..')
 const read = (rel: string): string => readFileSync(join(SRC, rel), 'utf8')
@@ -278,5 +279,39 @@ describe('words across the app', () => {
     // Comments may name the old buttons; only code counts.
     const code = (t: string): string => t.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n')
     for (const f of files) assert.doesNotMatch(code(readFileSync(f, 'utf8')), /▶\s*\{?\s*(Play|Album)|▶ \{setPlaying/, f)
+  })
+})
+
+describe('follow-up to #490', () => {
+  it('a drag that ends on a cover is not a click on it', () => {
+    const g = dragClickGuard()
+    g.down(); g.moved(); g.up()
+    assert.equal(g.click(), false, 'the click after a drag does nothing')
+    g.down(); g.up()
+    assert.equal(g.click(), true, 'a plain click still opens')
+    g.down(); g.moved(); g.up()
+    g.down(); g.up()
+    assert.equal(g.click(), true, 'the next press starts clean')
+    assert.equal(dragClickGuard().click(), true, 'a click with no pointer (keyboard) opens')
+  })
+  it('Cover Flow asks the guard, which pointerup does not clear', () => {
+    const cf = read('renderer/views/CoverFlowView.tsx')
+    assert.match(cf, /if \(!clickGuard\.current\.click\(\)\) return/)
+    assert.match(cf, /const onPointerUp = useCallback\(\(\) => \{ drag\.current = null; clickGuard\.current\.up\(\) \}/)
+    assert.doesNotMatch(cf, /dragMoved/)
+  })
+  it('Island Albums: the ▶ only on a complete record', () => {
+    assert.match(read('renderer/components/IslandAlbumsShelf.tsx'), /onPlayAlbum && isCompleteRecord\(s\.album\.tracks\) && <PlayButton/)
+  })
+  it('the old per-page play buttons left no CSS behind', () => {
+    for (const [f, cls] of [['albums.css', 'album-play-full'], ['home-madeforyou.css', 'home-mix-play'], ['artists-grid.css', 'ag-play']]) {
+      assert.doesNotMatch(read(`renderer/styles/${f}`), new RegExp(`\\.${cls}\\b`), `${cls} in ${f}`)
+    }
+  })
+  it('card motion is the instant step and the shared ease', () => {
+    assert.match(read('renderer/styles/card.css'), /transition: opacity var\(--motion-instant\) var\(--motion-ease\)/)
+  })
+  it('a concert row in the Listening List menu says Search once', () => {
+    assert.match(read('renderer/views/ListenToTheListView.tsx'), /r\.kind === 'concert' \? \[\] : \[\{ label: 'Find in Search'/)
   })
 })
