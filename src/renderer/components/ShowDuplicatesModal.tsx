@@ -265,7 +265,7 @@ export default function ShowDuplicatesModal({ tracks, onClose, onDelete }: Props
                       <button
                         className="dup-group-dismiss-btn"
                         onClick={() => handleDismiss(g)}
-                        title="Hide this group — these are intentionally distinct (e.g. clip vs full, AAC vs ALAC). Reappears if a new track joins the group."
+                        title="Hide this group: they are meant to be different. It comes back if another copy joins."
                       >
                         Not a duplicate
                       </button>

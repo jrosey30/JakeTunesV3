@@ -165,7 +165,7 @@ export default function IpodLibraryModal({ onClose }: Props) {
         </div>
 
         <div className="imp-body" style={{ gap: 10 }}>
-          {loading && <p className="imp-help">Reading iTunesDB from iPod…</p>}
+          {loading && <p className="imp-help">Reading the iPod…</p>}
           {error && <div className="imp-result imp-result--error">{error}</div>}
 
           {!loading && !error && (
@@ -203,7 +203,7 @@ export default function IpodLibraryModal({ onClose }: Props) {
                       className="imp-btn imp-btn--start"
                       onClick={handleImportIpodOnly}
                       disabled={importing}
-                      title="Add the iPod-only tracks to your local library so they show up everywhere in JakeTunes."
+                      title="Add the songs only on the iPod to your library."
                       style={{ flexShrink: 0 }}
                     >
                       {importing ? 'Importing…' : `Import ${recon.onlyOnIpod.length} to Library`}
@@ -222,7 +222,7 @@ export default function IpodLibraryModal({ onClose }: Props) {
                 <input
                   className="view-search-input"
                   type="search"
-                  placeholder={`Search ${ipodTracks.length} iPod tracks…`}
+                  placeholder={`Search ${ipodTracks.length.toLocaleString()} songs on the iPod…`}
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   style={{ flex: 1 }}

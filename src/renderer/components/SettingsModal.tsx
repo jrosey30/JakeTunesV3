@@ -715,7 +715,7 @@ export default function SettingsModal({ initial, onClose, onSaved, onApplied, in
                 ))}
               </select>
               <p className="imp-help" style={{ marginTop: 10 }}>
-                Used for every import: drag and drop, Import and Convert, and CDs. Lossless sources (FLAC, WAV, AIFF) convert to this format. MP3 and AAC are copied unchanged. Tracks already in the library are left alone.
+                Used for every import: drag and drop, Import and Convert, and CDs. Lossless sources (FLAC, WAV, AIFF) convert to this format. MP3 and AAC are copied unchanged. Songs already in the library are left alone.
               </p>
               {/* 4.4.13 — Inbox auto-import. Lets users point Qobuz (or any
                   other downloader) at a folder and have JakeTunes pick up
@@ -1053,7 +1053,7 @@ export default function SettingsModal({ initial, onClose, onSaved, onApplied, in
                 </label>
               </div>
               <p className="imp-help" style={{ marginTop: 0, marginBottom: 16 }}>
-                Sets the persona + voice for chat, picks, recommendations, and DJ Set commentary. Each host has distinct taste and opinions — they disagree on almost everything. Radio Mode co-hosts both regardless of this setting.
+                Who talks to you in chat, picks and DJ sets. They disagree on almost everything. Radio Mode always has both.
               </p>
 
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -1126,7 +1126,7 @@ export default function SettingsModal({ initial, onClose, onSaved, onApplied, in
               </p>
 
               <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#3a3a3a' }}>
-                Daily Claude API call ceiling
+                Most questions to the hosts in a day
               </label>
               <input
                 type="number"
@@ -1141,7 +1141,7 @@ export default function SettingsModal({ initial, onClose, onSaved, onApplied, in
                 style={{ width: 120, padding: 6, fontSize: 13 }}
               />
               <p className="imp-help" style={{ marginTop: 10 }}>
-                Hard cap on how many Claude calls JakeTunes makes per day (max 2000). After hitting the ceiling, fallback uses the most recent cached response.
+                Up to 2,000. After that, the hosts answer with what they last said.
               </p>
               {/* Spotify — Discover Weekly into the brain (greenlit 2026-07-14).
                   One-time setup: free dev app at developer.spotify.com with
