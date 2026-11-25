@@ -115,7 +115,7 @@ export default function MixDetailView() {
       { label: 'Get Info', onClick: () => setGetInfoState({ tracks: selectedTracks, index: idx }) },
       ...downloadMenuEntries(selectedTracks),
       { separator: true as const },
-      { label: 'Cynthia!!', onClick: () => openCynthia({ x: ctxMenu.x, y: ctxMenu.y, scope: { type: 'tracks', label: count > 1 ? `${count} tracks` : track.title, tracks: selectedTracks.map(toCynthiaTrack) } }) },
+      { label: 'Cynthia', onClick: () => openCynthia({ x: ctxMenu.x, y: ctxMenu.y, scope: { type: 'tracks', label: count > 1 ? `${count} songs` : track.title, tracks: selectedTracks.map(toCynthiaTrack) } }) },
     ]
   }, [ctxMenu, lib.selectedTrackIds, tracks, playTrack, pbDispatch, dispatch, openCynthia, mix])
 

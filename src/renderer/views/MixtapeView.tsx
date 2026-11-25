@@ -460,8 +460,7 @@ export default function MixtapeView() {
                 <div className="faceplate">
                   {/* The A/B tabs are gone — a tape is one sequence now, so
                       there is nothing to flip to (2026-08-08). */}
-                  <div className={`fp-counter${rolling || winding ? ' fp-counter--rolling' : ''}`}
-                    title="How much tape is on this reel — rolls while you record">
+                  <div className={`fp-counter${rolling || winding ? ' fp-counter--rolling' : ''}`}>
                     <span className="fp-counter-side">{counter.songs}/{counter.maxSongs}</span>
                     <span className="fp-counter-digits">
                       {winding
@@ -482,13 +481,11 @@ export default function MixtapeView() {
                   </div>
                   {/* A daily AI tape is homemini's — nothing records onto it, so
                       it has no REC, MIC or EJECT (it never goes in the deck). */}
-                  {!isAi && <button className={`fp-key fp-key--rec${armed ? ' is-down' : ''}`} onClick={() => { mechanicalSound('rec'); load({ recArmed: !armed }) }}
-                    title="RECORD — whatever plays goes on this tape. Press mid-song and it records from right there.">
+                  {!isAi && <button className={`fp-key fp-key--rec${armed ? ' is-down' : ''}`} onClick={() => { mechanicalSound('rec'); load({ recArmed: !armed }) }}>
                     <span className="fp-shape fp-shape--circle" /><span className="fp-label">REC</span>
                   </button>}
                   <button className={`fp-key${winding?.dir === -1 ? ' is-down' : ''}`} disabled={armed}
-                    onMouseDown={() => startWind(-1)} onMouseUp={finishWind} onMouseLeave={finishWind}
-                    title="REWIND — hold it down and the tape winds back, screaming past the song joins. Let go to drop back in. Locked while REC is down.">
+                    onMouseDown={() => startWind(-1)} onMouseUp={finishWind} onMouseLeave={finishWind}>
                     <span className="fp-shape fp-shape--rew" /><span className="fp-label">REW</span>
                   </button>
                   <button className="fp-key fp-key--play" onClick={() => { mechanicalSound('play'); pressPlay() }}
@@ -496,16 +493,13 @@ export default function MixtapeView() {
                     <span className="fp-shape fp-shape--tri" /><span className="fp-label">PLAY</span>
                   </button>
                   <button className={`fp-key${winding?.dir === 1 ? ' is-down' : ''}`} disabled={armed}
-                    onMouseDown={() => startWind(1)} onMouseUp={finishWind} onMouseLeave={finishWind}
-                    title="FAST-FORWARD — hold it down and the tape winds ahead, straight through the middle of songs. Let go to drop back in. Locked while REC is down.">
+                    onMouseDown={() => startWind(1)} onMouseUp={finishWind} onMouseLeave={finishWind}>
                     <span className="fp-shape fp-shape--ff" /><span className="fp-label">FF</span>
                   </button>
-                  {!isAi && <button className={`fp-key fp-key--mic${micOn ? ' is-down' : ''}`} onClick={() => { mechanicalSound('mic'); load({ micOn: !micOn }) }}
-                    title="MIC — mic on means mic ready. Your voice records onto the tape only while REC is down.">
+                  {!isAi && <button className={`fp-key fp-key--mic${micOn ? ' is-down' : ''}`} onClick={() => { mechanicalSound('mic'); load({ micOn: !micOn }) }}>
                     <span className="fp-shape fp-shape--mic"><MicShape /></span><span className="fp-label">MIC</span>
                   </button>}
-                  {!isAi && <button className="fp-key fp-key--eject" onClick={() => { if (loaded) { mechanicalSound('eject'); setDeckState(null) } }} disabled={!loaded}
-                    title="EJECT — take the tape out of the deck">
+                  {!isAi && <button className="fp-key fp-key--eject" onClick={() => { if (loaded) { mechanicalSound('eject'); setDeckState(null) } }} disabled={!loaded}>
                     <span className="fp-shape fp-shape--eject" /><span className="fp-label">EJECT</span>
                   </button>}
                 </div>
@@ -518,7 +512,6 @@ export default function MixtapeView() {
                     className="fp-voice-select"
                     value={(loaded && currentCastId(deckState?.micVoiceId ?? '')) || 'me'}
                     onChange={(e) => load({ micVoiceId: e.target.value })}
-                    title="Whose voice goes on the tape — yours, or anyone from the station (your take, their voice)"
                   >
                     {(voices.length ? voices : [{ id: 'me', name: 'My voice' }]).map((v) => (
                       <option key={v.id} value={v.id}>{v.name}</option>
@@ -580,7 +573,7 @@ export default function MixtapeView() {
         <ConfirmDialog
           message={`Throw out “${tape.title}”?`}
           detail="The tape and its recorded intro are deleted. The songs stay in your library."
-          confirmLabel="Throw it out"
+          confirmLabel="Delete Tape"
           onConfirm={() => {
             setConfirmDelete(false)
             void window.electronAPI.deleteMixtape?.(tape.id)

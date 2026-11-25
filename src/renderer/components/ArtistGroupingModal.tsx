@@ -71,7 +71,7 @@ export default function ArtistGroupingModal({ onClose }: { onClose: () => void }
       <div className="agm-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="agm-head">
           <div>
-            <h2 className="agm-title">Group artists</h2>
+            <h2 className="agm-title">Group Artists</h2>
             <p className="agm-sub">The Music Man classified your artist tags. Approve the merges you want — nothing changes until you apply.</p>
           </div>
           <button className="agm-x" onClick={onClose} aria-label="Close">✕</button>
@@ -85,7 +85,7 @@ export default function ArtistGroupingModal({ onClose }: { onClose: () => void }
         {!loading && !error && (
           <>
             {personas.length === 0 ? (
-              <div className="agm-empty">No new merges suggested — your artists already read cleanly. 🎉</div>
+              <div className="agm-empty">No new merges suggested — your artists already read cleanly.</div>
             ) : (
               <div className="agm-section">
                 <div className="agm-section-head">

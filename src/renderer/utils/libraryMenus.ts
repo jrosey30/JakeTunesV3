@@ -174,7 +174,7 @@ export function songMenuEntries(o: SongMenuOptions): MenuEntry[] {
     ...addToIpodPlaylistEntries(selectedTracks, selectedTracks),
     ...(getDeckState() ? [
       {
-        label: `Lay on the tape (${selectedTracks.length} song${selectedTracks.length === 1 ? '' : 's'})`,
+        label: `Add to Tape (${selectedTracks.length} song${selectedTracks.length === 1 ? '' : 's'})`,
         onClick: () => {
           void layOnDeck(selectedTracks.map(t => t.id), (id) => selectedTracks.find(t => t.id === id)?.duration || undefined)
             .then(async (msg) => { const a = await import('../activity'); a.setNotice(msg) })
@@ -215,13 +215,13 @@ export function songMenuEntries(o: SongMenuOptions): MenuEntry[] {
     })() : []),
     { separator: true as const },
     {
-      label: 'Cynthia!!',
+      label: 'Cynthia',
       onClick: () => {
         o.openCynthia({
           x: o.at.x, y: o.at.y,
           scope: {
             type: 'tracks',
-            label: count > 1 ? `${count} tracks` : track.title,
+            label: count > 1 ? `${count} songs` : track.title,
             tracks: selectedTracks.map(toCynthiaTrack),
           },
         })
@@ -255,7 +255,7 @@ export function albumMenuEntries(o: AlbumMenuOptions): MenuEntry[] {
   const liveSet = album.name.endsWith(' (Live Set)') ? null : liveSetFor(key, o.library)
   const mergedTrack = liveSet ? (o.library.find(t => t.id === liveSet.mergedTrackId) ?? null) : null
   const liveEntries: MenuEntry[] = liveSet && mergedTrack
-    ? [{ label: 'Play Live Set', onClick: () => playTrack(mergedTrack, [mergedTrack], 0, undefined, true) }]
+    ? [{ label: 'Play Live Album', onClick: () => playTrack(mergedTrack, [mergedTrack], 0, undefined, true) }]
     : album.name.endsWith(' (Live Set)')
       ? []
       : [{
@@ -275,11 +275,11 @@ export function albumMenuEntries(o: AlbumMenuOptions): MenuEntry[] {
               libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: key })
               return
             }
-            if (isDeclareInFlight()) { setNotice('A live set is already merging'); return }
-            setNotice(`Merging live set — ${album.name}…`)
+            if (isDeclareInFlight()) { setNotice('A live album is already merging'); return }
+            setNotice(`Merging live album — ${album.name}…`)
             declareLiveSet({ albumKey: key, name: album.name, artist: album.artist, genre: ordered[0]?.genre, year: album.year, tracks: ordered })
-              .then(() => setNotice(`Live set ready — ${album.name}`))
-              .catch((err) => setNotice(`Live set failed: ${err instanceof Error ? err.message : String(err)}`))
+              .then(() => setNotice(`Live album ready — ${album.name}`))
+              .catch((err) => setNotice(`Live album failed: ${err instanceof Error ? err.message : String(err)}`))
           },
         }]
   const compCtx = verifyLiveSetCompleteness(ordered)

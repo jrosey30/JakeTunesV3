@@ -84,7 +84,7 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   { label: 'Songs', view: 'songs' },
   { label: 'Artists', view: 'artists' },
   { label: 'Albums', view: 'albums' },
-  { label: 'Live Concerts', view: 'concerts' },
+  { label: 'Live Albums', view: 'concerts' },
   { label: 'Genres', view: 'genres' },
   { label: 'Top 1000 Quiz', view: 'top1000' },
   // Backlog 2026-06-06: "Listen to the List" + "New for You" merged into one
@@ -558,7 +558,7 @@ export default function Sidebar() {
         hint={carried ? 'Renames the playlist. The iPod keeps its own name.' : null}
         onSave={async (name) => {
           const r = isTop ? await renameTop1000(name) : await renameIpodList(deviceId!, name)
-          if (r.ok && r.homemini === 'later') setNotice(`Renamed to ${r.name}. homemini will get it when it's back.`, { kind: 'info', durationMs: 5000 })
+          if (r.ok && r.homemini === 'later') setNotice(`Renamed to ${r.name}.`, { kind: 'info', durationMs: 5000 })
           return r.ok ? { ok: true } : r
         }}
         onDone={() => setRenamingIpodRow(null)}
@@ -1100,7 +1100,7 @@ export default function Sidebar() {
         <ConfirmDialog
           message={`Throw out “${tapeDeleteConfirm.title}”?`}
           detail="The tape and its recorded intro are deleted. The songs stay in your library."
-          confirmLabel="Throw it out"
+          confirmLabel="Delete Tape"
           onConfirm={() => {
             const { id } = tapeDeleteConfirm
             setTapeDeleteConfirm(null)
