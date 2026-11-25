@@ -24,6 +24,12 @@ describe('listKeyIntent', () => {
   test('⌥↑/⌥↓ are left to the sidebar section headers', () => {
     assert.equal(listKeyIntent(key('ArrowDown', { altKey: true })), null)
   })
+  test('⌘↑/⌘↓ and Ctrl+↑/↓ are the volume keys, never a selection move', () => {
+    assert.equal(listKeyIntent(key('ArrowUp', { metaKey: true })), null)
+    assert.equal(listKeyIntent(key('ArrowDown', { metaKey: true })), null)
+    assert.equal(listKeyIntent(key('ArrowUp', { ctrlKey: true })), null)
+    assert.equal(listKeyIntent(key('ArrowDown', { ctrlKey: true, shiftKey: true })), null)
+  })
   test('←/→ are never taken (transport / Cover Flow)', () => {
     assert.equal(listKeyIntent(key('ArrowLeft')), null)
     assert.equal(listKeyIntent(key('ArrowRight')), null)

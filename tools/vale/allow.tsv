@@ -44,6 +44,5 @@ src/renderer/views/MusicManView.tsx	Done — X tracks analyzed.	the self-care re
 src/renderer/views/MusicManView.tsx	In the Store	the self-care rebuild (feat/v7-self-care) rewrites this page
 src/renderer/views/MusicManView.tsx	Re-run BPM/key analysis on every track — fixes half/double tempo errors from older analysis	the self-care rebuild (feat/v7-self-care) rewrites this page
 src/renderer/views/MusicManView.tsx	Songs where the brain has written a prose descriptor of how the track FEELS	the self-care rebuild (feat/v7-self-care) rewrites this page
-src/renderer/views/SongsView.tsx	JakeTunes can't find this track's audio file. The library entry is preserved — re-import the file to restore playback.	needs a rewrite, not a swap (for-jake-desktop.json)
 src/renderer/views/Top1000AuditPanel.tsx	This build can’t reach the blind check.	means this build has no such feature, not Offline
 src/renderer/views/Top1000QuizView.tsx	This build can’t reach the quiz.	means this build has no such feature, not Offline

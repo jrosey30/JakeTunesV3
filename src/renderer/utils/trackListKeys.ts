@@ -13,6 +13,7 @@
  *   a letter     type-to-find on the title (800 ms buffer)
  *
  * ⌥↑ / ⌥↓ are never taken: a sidebar section header uses them to move itself.
+ * ⌘↑ / ⌘↓ (Ctrl+↑ / Ctrl+↓) are never taken either: they are the volume keys.
  */
 
 export type ListKeyIntent =
@@ -31,7 +32,8 @@ export interface ListKeyLike {
 
 export function listKeyIntent(e: ListKeyLike): ListKeyIntent | null {
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-    if (e.altKey) return null
+    // ⌥↑/⌥↓ move a sidebar section; ⌘↑/⌘↓ (Ctrl on others) are the volume keys.
+    if (e.altKey || e.metaKey || e.ctrlKey) return null
     return { kind: 'move', dir: e.key === 'ArrowDown' ? 1 : -1, extend: e.shiftKey }
   }
   if (e.key === 'Enter') return { kind: 'enter' }

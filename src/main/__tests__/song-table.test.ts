@@ -100,7 +100,7 @@ describe('the menu: one order on every page', () => {
     download: item('Download 3 Songs'),
     share: item('Share…'),
     getInfo: item('Get Info'),
-    more: [item('Cynthia!!')],
+    more: [item('Cynthia')],
     extras: [item('Remove from Playlist')],
     del: item('Delete Song'),
     ...over,
@@ -111,7 +111,7 @@ describe('the menu: one order on every page', () => {
   })
   test('then the rest, the page\'s own, and Delete last; separators only between groups', () => {
     const out = labels(assembleSongMenu(parts()))
-    assert.deepEqual(out.slice(-7), ['Get Info', '—', 'Cynthia!!', '—', 'Remove from Playlist', '—', 'Delete Song'])
+    assert.deepEqual(out.slice(-7), ['Get Info', '—', 'Cynthia', '—', 'Remove from Playlist', '—', 'Delete Song'])
     assert.equal(out.at(-1), 'Delete Song')
     assert.ok(out.indexOf('Remove from Playlist') > out.indexOf('Get Info'))
     assert.notEqual(out[0], '—')
