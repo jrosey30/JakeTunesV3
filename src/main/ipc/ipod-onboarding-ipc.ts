@@ -48,8 +48,9 @@ import type { IpodList } from '../../common/ipod-list-doc.ts'
 import { checkIpodName } from '../../common/ipod-name.ts'
 import { normalizeIpodColor } from '../../common/ipod-covers.ts'
 import { artworkFamilies, rememberArtworkFamily, rememberedArtworkFamily } from '../ipod-artwork.ts'
+import { carryProfileForMovedCard, profileStorePath } from '../ipod-audio-profiles.ts'
 import {
-  STABLE_READS_NEEDED, artworkFamilyFor, confirmationMatches, detectHardware, coverMismatch, healthBlindRefusal, healthSyncRefusal, ipodHealthCheck,
+  STABLE_READS_NEEDED, artworkFamilyFor, confirmationMatches, detectHardware, deviceSerial, coverMismatch, healthBlindRefusal, healthSyncRefusal, ipodHealthCheck,
   onboardingActionRefusal, onboardingStep, rebindRecord, replacedLabel, sameIpodOffer,
   type IpodDeviceFacts, type OnboardingAction, type OnboardingProgress, type OnboardingStep, type OnboardingTarget,
 } from '../../common/ipod-onboarding.ts'
@@ -282,6 +283,11 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
         confirmedMove: f.marker !== null && confirmationMatches(replacedLabel(f), arg.typed),
       })
       if (!done.ok) return done
+      // A card moved to another list keeps its audio format (Brief 265 Part 2).
+      if (f.marker && target.kind === 'list' && f.marker.id !== target.listId) {
+        await carryProfileForMovedCard(profileStorePath(host.stateDir),
+          { fromId: f.marker.id, toId: target.listId, serial: deviceSerial(f)?.serial ?? null })
+      }
       const notes: string[] = []
       // Which iPod this is, for its covers: kept with the iPod before its first sync (2026-11-23).
       if (coverFamily) {

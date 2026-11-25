@@ -12,7 +12,9 @@
 //  state and exposes accessors for it.
 // ════════════════════════════════════════════════════════════════════════
 
-import { convertOptionsForIpod } from '../../common/ipod-audio-format.ts'
+import { convertOptionsForProfile, describeProfile } from '../../common/ipod-audio-format.ts'
+import { profileForSync, profileStorePath, profileStoreRefusal } from '../ipod-audio-profiles.ts'
+import { readOnboardingRecords } from '../ipod-onboarding.ts'
 import { app } from 'electron'
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
@@ -385,19 +387,32 @@ export function createSyncEngine(host: SyncEngineHost) {
         ipodModel = lists?.find((l) => l.id === ipod.device!.id)?.model
       }
       if (ipod.device && !ipod.device.primary) console.log(`sync-to-ipod: ${ipod.device.name} — its own sync state lives in ${ipod.stateDir}`)
-      // The small iPods carry smaller files (2026-11-24): Gen 1 MP3, Y2KPod and IndieSleaze
-      // 256k AAC, whatever the Device page's convert setting says (common/ipod-audio-format.ts).
-      const ownFormat = convertOptionsForIpod(ipod.device?.id, convertOptions)
+      // Each iPod's own format (Brief 265 Part 2): its stored profile, keyed by the ID file on
+      // the iPod, else Jake's seed (Gen 1 MP3 320, IndieSleaze AAC 256, Y2KPod / punkPod / the
+      // Original ALAC), else the Device page's convert setting (common/ipod-audio-format.ts).
+      // Keyed by the physical iPod: its serial from the set-up record when it has one.
+      const setupRecord = ipod.device
+        ? (await readOnboardingRecords(STATE_DIR)).find((r) => r.listId === ipod.device!.id && !r.released) ?? null
+        : null
+      const resolved = await profileForSync(profileStorePath(STATE_DIR),
+        { serial: setupRecord?.serial ?? null, deviceId: ipod.device?.id, primary: !!ipod.device?.primary })
+      if (!resolved.ok) {
+        const msg = profileStoreRefusal(resolved.reason)
+        console.error(`sync-to-ipod: REFUSED — ${msg}`)
+        return { ok: false, copied: 0, error: msg }
+      }
+      const audioProfile = resolved.profile
+      const ownFormat = convertOptionsForProfile(audioProfile, convertOptions)
       // Only the one-button Sync knows how to put MP3s on Gen 1 (names, codec, songs that
       // can't be converted left off). The whole-library sync doesn't, and a whole library
       // wouldn't fit on it anyway (review of PR #471).
       if (ownFormat?.codec === 'mp3' && syncOpts?.origin !== 'activity-click') {
-        const msg = `${ipod.device?.name ?? 'This iPod'} plays MP3 only. Use Sync to fill it.`
+        const msg = `${ipod.device?.name ?? 'This iPod'} is set to get MP3 files. Use Sync to fill it.`
         console.error(`sync-to-ipod: REFUSED — ${msg}`)
         return { ok: false, copied: 0, error: msg }
       }
       if (ownFormat !== convertOptions) {
-        console.log(`sync-to-ipod: ${ipod.device?.name} gets ${ownFormat?.targetKbps}k ${ownFormat?.codec === 'mp3' ? 'MP3' : 'AAC'} files`)
+        console.log(`sync-to-ipod: ${ipod.device?.name} gets ${describeProfile(audioProfile)}`)
         convertOptions = ownFormat
       }
       // Plays first (2026-10-28): keep a copy of Play Counts/OTG + the pre-sync
