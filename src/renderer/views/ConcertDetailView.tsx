@@ -47,6 +47,7 @@ import '../styles/concert-stage.css'
 import { albumArtUrl, artRevision, bumpArtRevisions } from '../artRevision'
 import { posterMatte } from '../../common/concert-poster'
 import { setNotice } from '../activity'
+import PlayButton from '../components/PlayButton'
 
 function mmss(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
@@ -271,7 +272,7 @@ export default function ConcertDetailView() {
             <div><span>{liveSet.cues.length} songs · {hms(liveSet.totalDurationMs)}</span></div>
           </div>
           <div className="cd-actions">
-            <button className="cd-btn cd-btn--play" onClick={startShow}>▶ {setPlaying ? 'Playing' : 'Play the show'}</button>
+            <PlayButton className="cd-btn cd-btn--play" name={setPlaying ? '' : 'Live Album'} label={setPlaying ? 'Playing' : undefined} onPlay={startShow} />
             <button
               className={`cd-btn cd-btn--crowd${crowdOn ? ' is-on' : ''}${crowdState === 'preparing' ? ' is-busy' : ''}`}
               onClick={() => { if (crowdState !== 'preparing') toggleCrowd() }}

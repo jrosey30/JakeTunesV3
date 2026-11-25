@@ -30,8 +30,11 @@ import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import type { Track } from '../types'
 import '../styles/artist-detail.css'
-import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
-import { addToIpodPlaylistEntries } from '../ipodPlaylistAdd'
+import { albumMenuEntries } from '../utils/libraryMenus'
+import { groupTracksIntoAlbums } from '../utils/albumGroups'
+import Card from '../components/Card'
+import { isCompleteRecord } from '../utils/liveSetCompleteness'
+import PlayButton from '../components/PlayButton'
 import { setAlbumDragPayload } from '../utils/trackDrag'
 import { normTitle } from '../utils/normTitle'
 import { classifyRelease, RELEASE_KIND_LABEL, type ReleaseKind } from '../../common/release-kind'
@@ -140,9 +143,6 @@ const shuffled = <T,>(xs: readonly T[]): T[] => {
   return a
 }
 
-function PlayGlyph() {
-  return <svg width="10" height="12" viewBox="0 0 14 16" aria-hidden="true"><path d="M1 1.5v13l12-6.5z" fill="currentColor" /></svg>
-}
 function ShuffleGlyph() {
   return (
     <svg width="13" height="12" viewBox="0 0 18 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -163,17 +163,16 @@ export default function ArtistDetailView() {
   const playsOf = useCallback((t: Track) => playsEverywhere(t, elsewhere), [elsewhere])
   const [albumCtx, setAlbumCtx] = useState<{ x: number; y: number; name: string; tracks: Track[] } | null>(null)
   const playQueue = useCallback((q: Track[]) => { if (q.length) playTrack(q[0], q, 0, undefined, true) }, [playTrack])
-  const albumCtxItems = useCallback((name: string, albumTracks: Track[]): MenuEntry[] => {
-    const ordered = sortAlbumTracks(albumTracks)
-    return [
-      { label: `Play "${name}"`, onClick: () => playQueue(ordered) },
-      { label: 'Shuffle', onClick: () => playQueue(shuffled(ordered)) },
-      { separator: true as const },
-      ...queueMenuEntries(ordered, pbDispatch),
-      addToPlaylistEntry(ordered, lib.playlists, (pid, ids) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
-      ...addToIpodPlaylistEntries(ordered, lib.tracks),
-    ]
-  }, [playQueue, pbDispatch, lib.playlists, dispatch])
+  const playAlbumInOrder = useCallback((albumTracks: Track[]) => {
+    const q = sortAlbumTracks(albumTracks)
+    if (q.length) playTrack(q[0], q, 0, undefined, true, true)
+  }, [playTrack])
+  // V7: the Albums view's own album menu (utils/libraryMenus.ts) — this page
+  // had its own shorter copy (no Live Concert Mode, Island Albums, Share, Go to).
+  const albumCtxItems = useCallback((_name: string, albumTracks: Track[]): MenuEntry[] => {
+    const album = groupTracksIntoAlbums(albumTracks)[0]
+    return album ? albumMenuEntries({ album, library: lib.tracks, playlists: lib.playlists, playTrack, libDispatch: dispatch, pbDispatch }) : []
+  }, [lib.tracks, lib.playlists, playTrack, dispatch, pbDispatch])
   const artist = lib.activeArtist || ''
 
   // Contextual back navigation. Artist detail is reachable from Artists,
@@ -667,25 +666,26 @@ export default function ArtistDetailView() {
     // to see the amount of plays next to each album" — plays live in the
     // header, the Your <Artist> table and the Most played record card.
     const meta = albumTileMeta(showKind ? RELEASE_KIND_SINGULAR[kind] : '', g.year)
+    // V7 (components/Card.tsx): click opens, the hover ▶ plays, right-click is
+    // the album menu, drag carries it in running order.
     return (
-      <button
+      <Card
         key={g.name}
-        type="button"
+        kind="album"
+        name={g.name}
         className="ad-cover"
-        onClick={() => openAlbum(personaName, g.name)}
-        onContextMenu={(e) => { e.preventDefault(); setAlbumCtx({ x: e.clientX, y: e.clientY, name: g.name, tracks: g.tracks }) }}
-        draggable
-        /* Drag an album straight from the artist page onto a playlist;
-           running order, same as the Albums grid. */
-        onDragStart={(e) => setAlbumDragPayload(e, sortAlbumTracks(g.tracks).map(t => t.id))}
+        artClassName="ad-cover-art ad-lift"
+        onOpen={() => openAlbum(personaName, g.name)}
+        // Album Mode gate: the ▶ only on a complete record.
+        onPlay={isCompleteRecord(g.tracks) ? () => playAlbumInOrder(g.tracks) : undefined}
+        onMenu={(e) => setAlbumCtx({ x: e.clientX, y: e.clientY, name: g.name, tracks: g.tracks })}
+        dragIds={() => sortAlbumTracks(g.tracks).map(t => t.id)}
         title={`Open ${g.name}`}
+        art={hash ? <AlbumArtImage hash={hash} alt={`${g.name} cover`} size={480} /> : <span className="ad-cover-blank" aria-hidden="true" />}
       >
-        <span className="ad-cover-art ad-lift">
-          {hash ? <AlbumArtImage hash={hash} alt={`${g.name} cover`} size={480} /> : <span className="ad-cover-blank" aria-hidden="true" />}
-        </span>
         <span className="ad-cover-title">{g.name}</span>
         {meta && <span className="ad-cover-meta">{meta}</span>}
-      </button>
+      </Card>
     )
   }
 
@@ -714,7 +714,7 @@ export default function ArtistDetailView() {
             <div className="ad-stat"><span className="ad-stat-num">{totalPlays.toLocaleString('en-US')}</span><span className="ad-stat-label">{totalPlays === 1 ? 'Play' : 'Plays'}</span></div>
           </div>
           <div className="ad-hero-actions ad-rise ad-d5">
-            <button type="button" className="ad-btn ad-btn--play" onClick={() => playQueue(pageQueue)} disabled={pageQueue.length === 0}><PlayGlyph />Play</button>
+            <PlayButton className="ad-btn ad-btn--play" name={artist} onPlay={() => playQueue(pageQueue)} disabled={pageQueue.length === 0} />
             <button type="button" className="ad-btn ad-btn--ghost" onClick={() => playQueue(shuffled(ownedReleases.flatMap((g) => g.tracks)))} disabled={pageQueue.length === 0}><ShuffleGlyph />Shuffle</button>
           </div>
         </div>
@@ -779,9 +779,12 @@ export default function ArtistDetailView() {
                       role="row"
                       className={`ad-table-row${i % 2 ? ' is-alt' : ''}`}
                       tabIndex={0}
-                      onClick={() => playQueue([s.track, ...top.filter((x) => x !== s).map((x) => x.track)])}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); playQueue([s.track, ...top.filter((x) => x !== s).map((x) => x.track)]) } }}
-                      title={`Play ${s.track.title}`}
+                      // V7: a song list plays like the song table — double-click
+                      // or Enter (common/card-rules.ts songRowAction); a single
+                      // click no longer plays.
+                      onDoubleClick={() => playQueue([s.track, ...top.filter((x) => x !== s).map((x) => x.track)])}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); playQueue([s.track, ...top.filter((x) => x !== s).map((x) => x.track)]) } }}
+                      title={`Double-click to play ${s.track.title}`}
                     >
                       <span role="cell" className="ad-num ad-rank">{i + 1}</span>
                       <span role="cell" className="ad-song">
@@ -817,7 +820,7 @@ export default function ArtistDetailView() {
                       <div className="ad-bar ad-bar--wide"><span style={{ width: `${Math.round((record.plays / Math.max(1, totalPlays)) * 100)}%` }} /></div>
                       {recordSince != null && <span className="ad-record-since">In your library since {dayMonthYear(recordSince)}</span>}
                     </div>
-                    <button type="button" className="ad-btn ad-btn--play ad-btn--small" onClick={() => playQueue(sortAlbumTracks(record.group.tracks))}>Play album</button>
+                    <PlayButton className="ad-btn ad-btn--play ad-btn--small" name={record.group.name} onPlay={() => playAlbumInOrder(record.group.tracks)} />
                   </div>
                 </div>
               </div>

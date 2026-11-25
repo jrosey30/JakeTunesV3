@@ -74,7 +74,7 @@ export default function MoreFromList({ artist, releases, ownedTrack, onPlay }: M
                         return (
                           <li key={`${t.position}-${t.title}`} className={have ? 'is-owned' : ''}>
                             {have ? (
-                              <button type="button" className="ad-more-track" onClick={() => onPlay(have)} title="In your library — click to play">
+                              <button type="button" className="ad-more-track" onDoubleClick={() => onPlay(have)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onPlay(have) } }} title="In your library — double-click to play">
                                 <span className="ad-more-pos">{t.position}</span>
                                 <span className="ad-more-dot" aria-hidden="true" />
                                 <span className="ad-more-track-title">{t.title}</span>

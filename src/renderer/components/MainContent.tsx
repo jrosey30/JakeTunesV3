@@ -6,6 +6,7 @@ import ArtistDetailView from '../views/ArtistDetailView'
 import AlbumsView from '../views/AlbumsView'
 import AlbumDetailView from '../views/AlbumDetailView'
 import ConcertsView from '../views/ConcertsView'
+import ShowsView from '../views/ShowsView'
 import ConcertDetailView from '../views/ConcertDetailView'
 import MixtapeView from '../views/MixtapeView'
 import MixDetailView from '../views/MixDetailView'
@@ -178,6 +179,7 @@ export default function MainContent() {
     case 'albums': viewElement = <AlbumsView />; break
     case 'album-detail': viewElement = <AlbumDetailView />; break
     case 'concerts': viewElement = <ConcertsView />; break
+    case 'shows': viewElement = <ShowsView />; break   // V7: Home's Shows See All
     case 'year-in-review': viewElement = <YearInReviewView />; break
     case 'made-for-you': viewElement = <MadeForYouView />; break
     case 'music-news': viewElement = <NewsView />; break

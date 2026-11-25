@@ -28,16 +28,16 @@ import { flushSync } from 'react-dom'
 import AlbumArtImage from './AlbumArtImage'
 import type { Album } from '../utils/albumGroups'
 import type { Track } from '../types'
-import { setAlbumDragPayload } from '../utils/trackDrag'
+import Card from './Card'
 import { computeGridWindow, windowCovers, sameWindow, sameGeometry, scrollTopForIndex, type GridGeometry } from '../utils/gridWindow'
 
 export interface AlbumGridItem {
   key: string
   album: Album
   artHash?: string
-  /** Running order — the drag payload and what ▶ Album plays. */
+  /** Running order — the drag payload and what the ▶ plays. */
   ordered: Track[]
-  /** Album Mode gate: a verifiably complete record shows the ▶ Album button. */
+  /** Album Mode gate: only a verifiably complete record shows the ▶. */
   fullAlbum?: boolean
 }
 
@@ -49,11 +49,9 @@ export interface AlbumGridHandle {
 interface CardHandlers {
   onOpen: (key: string) => void
   onContextMenu: (e: React.MouseEvent, album: Album) => void
-  /** Albums only: the ▶ Album button on complete records. */
+  /** The hover ▶ on complete records (the Album Mode gate): plays the album in running order. */
   onPlayAlbum?: (ordered: Track[]) => void
-  /** Grid mode: double-click plays the album. */
-  onDoubleClick?: (album: Album) => void
-  /** Albums: drag a whole album onto a playlist. */
+  /** Drag a whole album onto Up Next or a playlist. */
   draggable?: boolean
 }
 
@@ -75,36 +73,27 @@ const DiscGlyph = (): JSX.Element => (
   </svg>
 )
 
-const AlbumGridCard = memo(function AlbumGridCard({ item, onOpen, onContextMenu, onPlayAlbum, onDoubleClick, draggable }: CardHandlers & { item: AlbumGridItem }) {
+const AlbumGridCard = memo(function AlbumGridCard({ item, onOpen, onContextMenu, onPlayAlbum, draggable }: CardHandlers & { item: AlbumGridItem }) {
   const { key, album, artHash, ordered, fullAlbum } = item
+  // V7: click opens; on a complete record the hover ▶ plays it in running order.
   return (
-    <div
+    <Card
+      kind="album"
+      name={album.name}
       className="album-card"
-      data-album-key={key}
-      onClick={() => onOpen(key)}
-      onDoubleClick={onDoubleClick ? () => onDoubleClick(album) : undefined}
-      onContextMenu={(e) => { e.preventDefault(); onContextMenu(e, album) }}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(key) } }}
-      role="button"
-      tabIndex={0}
-      draggable={draggable || undefined}
+      artClassName="album-card-art"
+      data={{ 'album-key': key }}
+      onOpen={() => onOpen(key)}
+      // Album Mode gate: the ▶ only on a verifiably complete record, as before.
+      onPlay={fullAlbum && onPlayAlbum ? () => onPlayAlbum(ordered) : undefined}
+      onMenu={(e) => onContextMenu(e, album)}
       // In running order, not the grouping order, so a playlist reads the way the record does.
-      onDragStart={draggable ? (e) => setAlbumDragPayload(e, ordered.map((t) => t.id)) : undefined}
+      dragIds={draggable ? () => ordered.map((t) => t.id) : undefined}
+      art={artHash ? <AlbumArtImage hash={artHash} alt={album.name} className="album-card-img" size={320} /> : <DiscGlyph />}
     >
-      <div className="album-card-art">
-        {fullAlbum && onPlayAlbum && (
-          <button
-            type="button"
-            className="album-play-full"
-            title={`Play ${album.name}`}
-            onClick={(e) => { e.stopPropagation(); onPlayAlbum(ordered) }}
-          >▶ Album</button>
-        )}
-        {artHash ? <AlbumArtImage hash={artHash} alt={album.name} className="album-card-img" size={320} /> : <DiscGlyph />}
-      </div>
       <div className="album-card-title">{album.name}</div>
       <div className="album-card-artist">{album.artist}</div>
-    </div>
+    </Card>
   )
 })
 
@@ -123,7 +112,7 @@ const geometryCache = new Map<string, GridGeometry>()
 interface ViewState { geo: GridGeometry | null; st: number }
 
 const AlbumGrid = forwardRef<AlbumGridHandle, AlbumGridProps>(function AlbumGrid(
-  { items, scrollRef, geometryKey, initialScrollTop = 0, onOpen, onContextMenu, onPlayAlbum, onDoubleClick, draggable },
+  { items, scrollRef, geometryKey, initialScrollTop = 0, onOpen, onContextMenu, onPlayAlbum, draggable },
   ref,
 ) {
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -273,7 +262,6 @@ const AlbumGrid = forwardRef<AlbumGridHandle, AlbumGridProps>(function AlbumGrid
             onOpen={onOpen}
             onContextMenu={onContextMenu}
             onPlayAlbum={onPlayAlbum}
-            onDoubleClick={onDoubleClick}
             draggable={draggable}
           />
         ))}

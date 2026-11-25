@@ -26,7 +26,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useCynthia } from '../context/CynthiaContext'
 import { useGetInfoHandlers } from '../hooks/useGetInfoHandlers'
-import { songMenuEntries, albumMenuEntries } from '../utils/libraryMenus'
+import { songMenuEntries, albumMenuEntries, artistMenuEntries, playlistMenuEntries } from '../utils/libraryMenus'
 import { withSongMenuExtras, type SongMenuExtras } from '../utils/songMenuExtras'
 import { groupTracksIntoAlbums } from '../utils/albumGroups'
 import { ensureLiveSetsLoaded } from '../liveSets'
@@ -46,6 +46,10 @@ export interface HomeItemMenusApi {
   /** A daily AI tape on the Mixtapes row (2026-10-22): Keep / Kept — the
    *  phone rail's long-press menu (MixesSection.swift), nothing else. */
   openTapeMenu: (e: React.MouseEvent, tape: AiMixtape) => void
+  /** An artist card (V7): the Artists grid's artist menu. */
+  openArtistMenu: (e: React.MouseEvent, name: string, tracks: Track[]) => void
+  /** A mix or a row that opens a playlist (V7): the playlist menu. */
+  openPlaylistMenu: (e: React.MouseEvent, name: string, tracks: Track[], open: () => void) => void
 }
 
 const HomeItemMenusContext = createContext<HomeItemMenusApi | null>(null)
@@ -112,7 +116,19 @@ export function useHomeItemMenusHost(playTrack: PlayTrack): { api: HomeItemMenus
     })
   }, [])
 
-  const api = useMemo(() => ({ openSongMenu, openAlbumMenu, openTapeMenu }), [openSongMenu, openAlbumMenu, openTapeMenu])
+  const openArtistMenu = useCallback((e: React.MouseEvent, name: string, tracks: Track[]) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setMenu({ x: e.clientX, y: e.clientY, items: artistMenuEntries({ name, tracks, playlists: lib.playlists, playTrack, libDispatch, pbDispatch }) })
+  }, [lib.playlists, playTrack, libDispatch, pbDispatch])
+
+  const openPlaylistMenu = useCallback((e: React.MouseEvent, name: string, tracks: Track[], open: () => void) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setMenu({ x: e.clientX, y: e.clientY, items: playlistMenuEntries({ name, tracks, open, playlists: lib.playlists, playTrack, libDispatch, pbDispatch }) })
+  }, [lib.playlists, playTrack, libDispatch, pbDispatch])
+
+  const api = useMemo(() => ({ openSongMenu, openAlbumMenu, openTapeMenu, openArtistMenu, openPlaylistMenu }), [openSongMenu, openAlbumMenu, openTapeMenu, openArtistMenu, openPlaylistMenu])
   const overlays = (
     <>
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}

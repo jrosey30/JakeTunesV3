@@ -175,7 +175,7 @@ describe('the wiring', () => {
   })
   test('the matte is the show\'s own on the concert page and the list', () => {
     assert.match(read('renderer/views/ConcertDetailView.tsx'), /style=\{\{ background: posterMatte\(c\) \}\}/)
-    assert.match(read('renderer/views/ConcertsView.tsx'), /style=\{\{ background: posterMatte\(c\.entry\.concert\) \}\}/)
+    assert.match(read('renderer/views/ConcertsView.tsx'), /(?:artS|s)tyle=\{\{ background: posterMatte\(c\.entry\.concert\) \}\}/)  // V7: the row is a Card; its art box carries the matte
     assert.match(read('renderer/views/ArtistDetailView.tsx'), /matte=\{tile\.concert\.posterMatte\}/)
   })
   test('declaring a show makes its poster, and that never fails the declare', () => {

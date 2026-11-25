@@ -10,17 +10,18 @@ import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import EmptyState from '../components/EmptyState'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { albumKeyFromStrings } from '../utils/albumKey'
-import { canonicalArtist } from '../utils/artistAlias'
 import { groupTracksIntoAlbums, type Album } from '../utils/albumGroups'
 import type { Track } from '../types'
 import '../styles/coverflow.css'
-import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
-import { addToIpodPlaylistEntries } from '../ipodPlaylistAdd'
+import { albumMenuEntries } from '../utils/libraryMenus'
+import { sortAlbumTracks } from '../utils/albumTrackOrder'
+import { ensureLiveSetsLoaded } from '../liveSets'
+import { isCompleteRecord } from '../utils/liveSetCompleteness'
+import PlayButton from '../components/PlayButton'
 import { JUKEBOX_WHEEL_OPTIONS } from '../../common/cover-flow-wheel'
 import { useCoverFlowWheel } from '../hooks/useCoverFlowWheel'
 import { useArrowKeyOwner } from '../hooks/useArrowKeyOwner'
 import { overlayOpen } from '../utils/arrowKeyOwner'
-import { shuffle } from '../../common/shuffle'
 import { formatDuration } from '../../common/format-duration'
 
 /// V5 facelift: Cover Flow — reimagined as THE JUKEBOX ARC (Jake's pick
@@ -186,30 +187,28 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
     // ⌘/Ctrl/⌥ + arrow is the transport's (previous / next track); with a
     // menu or dialog open the flow keeps its hands off.
     if (e.metaKey || e.ctrlKey || e.altKey || overlayOpen()) return
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); go(-1) }
-    else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); go(1) }
+    // V7: ↓ moves to the NEXT album, like ↓ in every list (it used to step
+    // back, to the left). ↑ steps back. Enter opens the album, like a click.
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); go(-1) }
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); go(1) }
     else if (e.key === 'Enter') {
       e.preventDefault()
       e.stopPropagation()
       const album = albums[idx]
-      if (album && album.tracks.length) playTrack(album.tracks[0], album.tracks, 0, undefined, true)
+      if (album) libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyFromStrings(album.artist, album.name) })
     }
-  }, [go, albums, idx, playTrack])
+  }, [go, albums, idx, libDispatch])
 
-  const albumMenuItems = useCallback((album: Album): MenuEntry[] => {
-    const ordered = album.tracks
-    return [
-      { label: `Play "${album.name}"`, onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true) } },
-      { label: 'Shuffle', onClick: () => { const s = shuffle(ordered); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
-      { separator: true as const },
-      ...queueMenuEntries(ordered, pbDispatch),
-      addToPlaylistEntry(ordered, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
-      ...addToIpodPlaylistEntries(ordered, lib.tracks),
-      { separator: true as const },
-      { label: 'Go to Album', onClick: () => libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyFromStrings(album.artist, album.name) }) },
-      { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(album.artist || '') }) },
-    ]
-  }, [playTrack, pbDispatch, libDispatch])
+  // V7: the Albums view's own album menu (utils/libraryMenus.ts) — this one
+  // had drifted (no Live Concert Mode, Island Albums or Share).
+  useEffect(() => { void ensureLiveSetsLoaded() }, [])
+  const albumMenuItems = useCallback((album: Album): MenuEntry[] => albumMenuEntries({
+    album, library: lib.tracks, playlists: lib.playlists, playTrack, libDispatch, pbDispatch,
+  }), [lib.tracks, lib.playlists, playTrack, libDispatch, pbDispatch])
+  const playAlbum = useCallback((album: Album) => {
+    const ordered = sortAlbumTracks(album.tracks)
+    if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true, true)
+  }, [playTrack])
 
   if (albums.length === 0) {
     return <EmptyState query={lib.searchQuery} noun={emptyNoun} />
@@ -238,6 +237,7 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerLeave={onPointerUp}
+        onPointerCancel={onPointerUp}
       >
         <div className={`coverflow-fan${turbo ? ' coverflow-fan--turbo' : ''}`}>
           {windowed.map((album, wi) => {
@@ -312,15 +312,24 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
                   pointerEvents: 'none',
                 }
             return (
-              <button
+              // V7: a side cover's click brings it to the front; the front
+              // cover's click OPENS the album and its hover ▶ plays it.
+              <div
                 key={key}
-                type="button"
-                className={`coverflow-card${active ? ' coverflow-card--active' : ''}`}
+                role="button"
+                tabIndex={-1}
+                className={`jt-card coverflow-card${active ? ' coverflow-card--active' : ''}`}
+                data-card-kind="album"
                 style={style}
-                onClick={() => { if (!dragMoved() && !active) setIdx(i) }}
-                onDoubleClick={() => { if (active && album.tracks.length) playTrack(album.tracks[0], album.tracks, 0, undefined, true) }}
+                onClick={() => {
+                  if (dragMoved()) return
+                  if (!active) setIdx(i)
+                  else libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: key })
+                }}
                 onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, album }) }}
-                title={active ? `Play "${album.name}"` : album.name}
+                // Never draggable: a drag up on the front cover is the flip.
+                draggable={false}
+                title={active ? `Open "${album.name}"` : album.name}
                 aria-label={album.name}
               >
                 {/* Two real faces (backface-visibility: hidden on each):
@@ -350,11 +359,12 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
                     </span>
                   )}
                   <span className="coverflow-dim" style={{ opacity: dim }} aria-hidden="true" />
+                  {active && isCompleteRecord(album.tracks) && <PlayButton variant="overlay" className="jt-card-play" name={album.name} onPlay={() => playAlbum(album)} />}
                 </span>
                 <span className="coverflow-face coverflow-face--back" aria-hidden="true">
                   <span className="coverflow-back-ring" />
                 </span>
-              </button>
+              </div>
             )
           })}
         </div>

@@ -35,6 +35,13 @@ function num(v: number | string | undefined | null): number {
   return Number.isFinite(x) && x > 0 ? x : 0
 }
 
+/** The Album Mode gate (one definition): a record the files prove complete.
+ *  Only these show the ▶ on an album card. */
+export function isCompleteRecord(tracks: Track[]): boolean {
+  const c = verifyLiveSetCompleteness(tracks)
+  return !!(c.complete && c.verifiedTotal)
+}
+
 export function verifyLiveSetCompleteness(tracks: Track[]): CompletenessResult {
   if (tracks.length === 0) return { complete: false, reason: 'no songs found for this album' }
 

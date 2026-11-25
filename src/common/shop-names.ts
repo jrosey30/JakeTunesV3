@@ -46,10 +46,11 @@ export const RETIRED_SHOP_NAMES = [
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /**
- * The retired names in some words a person reads, as whole words with their
- * case kept ("your lists" of playlists is another thing; "Listen" alone is a
- * verb).
+ * The retired names in some words a person reads, as whole words in any case
+ * ("On Your List" is "your list" in Title Case; "your lists" of playlists is
+ * another thing; "Listen" alone is a verb).
  */
 export function retiredNamesIn(words: string): string[] {
-  return RETIRED_SHOP_NAMES.filter((n) => new RegExp(`\\b${escape(n)}\\b`).test(words))
+  // Case-insensitive: "On Your List" is the retired "your list" in Title Case.
+  return RETIRED_SHOP_NAMES.filter((n) => new RegExp(`\\b${escape(n)}\\b`, 'i').test(words))
 }

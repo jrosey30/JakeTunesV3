@@ -55,6 +55,8 @@ describe('the retired names', () => {
     assert.deepEqual(retiredNamesIn('Add it to the Listen List'), ['Listen List'])
     assert.deepEqual(retiredNamesIn('Listen to the List'), ['Listen to the List'])
     assert.deepEqual(retiredNamesIn('already on your list.'), ['your list'])
+    assert.deepEqual(retiredNamesIn('On Your List'), ['your list'], 'any case')
+    assert.deepEqual(retiredNamesIn('LISTEN LIST'), ['Listen List'], 'any case')
     assert.deepEqual(retiredNamesIn('For You · The Racks'), ['The Racks'])
     assert.deepEqual(retiredNamesIn('Bandcamp Store'), ['Bandcamp Store'])
     assert.deepEqual(retiredNamesIn('Get all'), ['Get all'])
@@ -88,7 +90,9 @@ describe('no screen says a retired name', () => {
     const hits: string[] = []
     for (const p of files) {
       const lines = withoutComments(readFileSync(p, 'utf-8')).split('\n')
-      lines.forEach((line, i) => { for (const name of retiredNamesIn(line)) hits.push(`${relative(SRC, p)}:${i + 1} says “${name}”`) })
+      // goAnywhere's `also:` is what people may type to find a page (an old
+      // name included), never words a screen shows; the match is any case now.
+      lines.forEach((line, i) => { for (const name of retiredNamesIn(line.replace(/\balso: '[^']*'/g, ''))) hits.push(`${relative(SRC, p)}:${i + 1} says “${name}”`) })
     }
     assert.deepEqual(hits, [], `retired names (common/shop-names.ts): ${RETIRED_SHOP_NAMES.join(', ')}`)
   })

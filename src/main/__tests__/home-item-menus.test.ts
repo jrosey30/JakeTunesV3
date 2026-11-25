@@ -58,9 +58,10 @@ describe('one song menu, one album menu', () => {
 
 describe('the Home\'s items right-click and drag like library items', () => {
   it('every shelf row (Recently Added too, now songs) gets the song menu + a track drag', () => {
-    assert.match(shelves, /onContextMenu=\{\(e\) => menus\?\.openSongMenu\(e, c\.track, play, queue, i\)\}/)
-    assert.match(shelves, /onDragStart=\{\(e\) => setTrackDragPayload\(e, c\.track\.id\)\}/)
-    assert.match(shelves, /title="Recently Added" scrollKey="home-row-recent"/)
+    // V7: the shelf card is a Card (components/Card.tsx): onMenu / dragIds.
+    assert.match(shelves, /onMenu=\{\(e\) => menus\?\.openSongMenu\(e, c\.track, play, queue, i\)\}/)
+    assert.match(shelves, /dragIds=\{\(\) => \[c\.track\.id\]\}/)
+    assert.match(shelves, /title=\{HOME_ROW_TITLE\['recently-added'\]\} scrollKey="home-row-recent"/)
   })
   it('the hero cover is an album; the island covers are albums; Now Digging drags as the artist, like an Artists tile', () => {
     // V7: the hero is HomeHero; the island Cover Flow + Now Digging moved to Made for You.
@@ -71,7 +72,8 @@ describe('the Home\'s items right-click and drag like library items', () => {
     assert.match(g, /tracksForArtist\(tracks, d\.artist\)/)
   })
   it("a daily mix drags as its songs in order (Rediscover and Today's pick were cut in V7)", () => {
-    assert.match(mixes, /onDragStart=\{\(e\) => setAlbumDragPayload\(e, m\.tracks\.map/)
+    // V7: the mix card is a Card (components/Card.tsx): dragIds.
+    assert.match(mixes, /dragIds=\{\(\) => m\.tracks\.map/)
   })
   it('Made for You is its own menu host, like the Home', () => {
     assert.match(mfy, /<HomeItemMenusProvider value=\{menus\.api\}>/)
