@@ -111,3 +111,25 @@ export function top1000Movement(
   const mv = rankMovement(rank, m.lastWeekRank)
   return mv.direction === 'same' ? null : mv
 }
+
+/**
+ * The Top 1000's '#' column is narrow (2026-11-25, Jake's screenshot: the
+ * column was ~116 px wide with the rank at its far left, and "▲523" / NEW
+ * needed that room). The movement is now one small mark beside the rank:
+ * ▲ up, ▼ down, ● new, with the places in its tooltip. Nothing when there is
+ * no movement to show (a fresh-start week, a song that held).
+ */
+export const TOP_1000_RANK_COLUMN_WIDTH = 48
+
+export interface CompactMovement { glyph: '▲' | '▼' | '●'; className: string; title: string }
+
+export function compactMovement(mv: RankMovement | null): CompactMovement | null {
+  if (!mv || mv.direction === 'same') return null
+  if (mv.direction === 'new') return { glyph: '●', className: `${mv.arrowClass} rank-mark-glyph`, title: 'New this week' }
+  const places = Number(mv.arrow.slice(1)) || 0
+  const lw = mv.lwLabel.slice(1, -1)
+  const word = places === 1 ? 'place' : 'places'
+  return mv.direction === 'up'
+    ? { glyph: '▲', className: `${mv.arrowClass} rank-mark-glyph`, title: `Up ${places} ${word} (last week ${lw})` }
+    : { glyph: '▼', className: `${mv.arrowClass} rank-mark-glyph`, title: `Down ${places} ${word} (last week ${lw})` }
+}
