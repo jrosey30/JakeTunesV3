@@ -1,3 +1,4 @@
+import { useEscape } from '../hooks/useKeyboard'
 import { useEffect, useState } from 'react'
 import '../styles/import-convert.css'
 
@@ -36,6 +37,8 @@ export default function PlayCacheModal({ mode, onClose }: Props) {
   const [progress, setProgress] = useState<Progress | null>(null)
   const [result, setResult] = useState<string>('')
   const [error, setError] = useState<string>('')
+  // Escape closes; it never stops a prepare that's running (Cancel does).
+  useEscape('play-cache', true, () => { if (!running) onClose() })
 
   // Subscribe to per-track progress events from main during a prepare run.
   useEffect(() => {

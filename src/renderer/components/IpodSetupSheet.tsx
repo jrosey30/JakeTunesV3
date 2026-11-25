@@ -9,6 +9,7 @@
  *   mode 'tail'  — an iPod already set up: first sync, the on-device checklist,
  *                  and anything the plug-in check says must be looked at
  */
+import { useEscape } from '../hooks/useKeyboard'
 import { useCallback, useEffect, useState } from 'react'
 import { IPOD_COLORS } from '../../common/ipod-covers'
 import type { IpodSetupLook, OnboardingCheck } from '../../common/ipod-onboarding'
@@ -41,6 +42,8 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
   const [matchCover, setMatchCover] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Escape is Cancel (setup only, and never mid-step).
+  useEscape('ipod-setup', mode === 'setup' && !!onClose && !busy, () => onClose?.())
   const [notes] = useState<string[]>(() => {
     if (mode !== 'tail') return []
     const n = carriedNotes
@@ -119,7 +122,9 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
   }
 
   return (
-    <div className="ipod-setup">
+    // A dialog only while setting up (Escape is Cancel from its fields); the
+    // inline strip on the Device page is not an overlay.
+    <div className="ipod-setup" {...(mode === 'setup' ? { role: 'dialog', 'aria-label': 'Set up this iPod' } : {})}>
       {stops.length > 0 && <Checks checks={stops} />}
       {look.sameIpod && (
         <form

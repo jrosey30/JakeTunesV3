@@ -1,3 +1,4 @@
+import { addKeyLayer } from '../../keyboard'
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { audioFromBase64Mpeg } from '../../audio/base64-audio'
 import { claimTransportKeys } from '../../input-mode'
@@ -152,25 +153,24 @@ export default function ScotusView() {
   }, [])
 
   // Keyboard transport while the exhibit is open: Space = play/pause the
-  // ARGUMENT, ←/→ = ±15s — and nothing else (spec-02). App.tsx's own Space
-  // handler is ALSO a capture listener on window, registered first, so
-  // stopPropagation here never reached it: Space toggled the music and the
-  // argument at once. The courtroom claims the transport keys instead (the
-  // same claim Step Inside uses); App's handlers stand aside while it holds,
-  // and leaving the room releases it. Media keys and the toolbar still
-  // drive the music.
+  // ARGUMENT, ←/→ = ±15s — and nothing else (spec-02). A page layer on the
+  // keyboard host (keyboard.ts), and a claim on the plain keys so the app's
+  // play/pause stands aside even if a focused control let Space through.
+  // ⌘←/⌘→ still skip the music; leaving the room releases both. Media keys
+  // and the toolbar still drive the music.
   useEffect(() => {
     const release = claimTransportKeys('scotus')
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
       if (e.code === 'Space') { e.preventDefault(); e.stopPropagation(); toggle() }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); seekBy(-15) }
       else if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); seekBy(15) }
     }
-    window.addEventListener('keydown', onKey, true)
+    const releaseLayer = addKeyLayer('scotus', onKey)
     return () => {
-      window.removeEventListener('keydown', onKey, true)
+      releaseLayer()
       release()
     }
   }, [toggle, seekBy])

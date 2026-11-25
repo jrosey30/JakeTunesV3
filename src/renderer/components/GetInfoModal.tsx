@@ -3,6 +3,8 @@ import type { Track } from '../types'
 import { lastPlayedEverywhere, playsEverywhere } from '../../common/plays-elsewhere'
 import { formatAppDateTime } from '../utils/formatDate'
 import { usePlaysElsewhere } from '../playsElsewhere'
+import { useEscape } from '../hooks/useKeyboard'
+import { addKeyLayer } from '../keyboard'
 import '../styles/getinfo.css'
 import { formatDuration } from '../../common/format-duration'
 
@@ -239,14 +241,10 @@ export default function GetInfoModal({
     }
   }, [currentIdx, allTracks, commitCurrentEdits])
 
-  // Keyboard: Escape to close, Enter to save
+  // Keyboard: Escape closes (keyboard host's stack), Enter saves
+  useEscape('get-info', true, onClose)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        e.stopImmediatePropagation()
-        onClose()
-      }
       // Enter (not in a textarea) saves and closes
       if (
         e.key === 'Enter' &&
@@ -258,9 +256,8 @@ export default function GetInfoModal({
         handleSave()
       }
     }
-    window.addEventListener('keydown', handler, true)
-    return () => window.removeEventListener('keydown', handler, true)
-  }, [onClose, handleSave])
+    return addKeyLayer('get-info', handler, { modal: true })
+  }, [handleSave])
 
   // Artwork lookup — works for single track AND multi-track (shows first match)
   const artTrack = currentTrack || (isMulti ? tracks[0] : null)

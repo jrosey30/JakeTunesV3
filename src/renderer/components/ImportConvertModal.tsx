@@ -1,3 +1,4 @@
+import { useEscape } from '../hooks/useKeyboard'
 import { useCallback, useEffect, useState } from 'react'
 import { enqueueFiles } from '../importQueue'
 import { IMPORT_FORMAT_LABELS, importFormatFromSettings, type ImportFormat } from '../../common/import-format'
@@ -20,6 +21,7 @@ export default function ImportConvertModal({ onClose }: Props) {
   const [submitted, setSubmitted] = useState(false)
   const [dropHere, setDropHere] = useState(false)
   const [error, setError] = useState('')
+  useEscape('import-convert', true, onClose)
 
   // Shown only: the main process reads the same setting for each file.
   useEffect(() => {

@@ -1,0 +1,112 @@
+/* ⌘K Go Anywhere and the ⌘/ Keyboard Shortcuts sheet (V7). Same cream
+ * card as the search dropdown (search-panel.css): #f7f3e6 → #ece6d1, a
+ * #b8a87f hairline, the app's orange (#e0812e) on the row under the cursor. */
+
+.go-anywhere-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.go-anywhere,
+.kb-sheet {
+  background: linear-gradient(180deg, #f7f3e6, #ece6d1);
+  border: 1px solid #b8a87f;
+  border-radius: 10px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28), 0 2px 6px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  animation: go-anywhere-in var(--motion-normal) var(--motion-ease) both;
+}
+
+@keyframes go-anywhere-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+/* Reduce Motion is motion.css's, for every animation in the app. */
+
+.go-anywhere {
+  width: min(560px, calc(100vw - 32px));
+  padding: 10px;
+}
+
+.go-anywhere-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 34px;
+  padding: 0 12px;
+  font-size: 15px;
+  border: 1px solid #b8a87f;
+  border-radius: 7px;
+  background: #fffdf6;
+  color: #222;
+  outline: none;
+}
+.go-anywhere-input:focus { border-color: #e0812e; box-shadow: 0 0 0 2px rgba(224, 129, 46, 0.25); }
+
+.go-anywhere-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.go-anywhere-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: default;
+  font-size: 13px;
+  color: #222;
+}
+.go-anywhere-row--on { background: #e0812e; color: #fff; }
+.go-anywhere-title { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.go-anywhere-detail { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: #7a6f55; }
+.go-anywhere-row--on .go-anywhere-detail { color: rgba(255, 255, 255, 0.85); }
+.go-anywhere-empty { padding: 8px 10px; font-size: 12px; color: #7a6f55; }
+
+.go-anywhere-foot {
+  margin-top: 8px;
+  padding: 0 4px;
+  font-size: 11px;
+  color: #8a7f63;
+}
+
+.kb-sheet {
+  width: min(820px, calc(100vw - 32px));
+  max-height: 76vh;
+  overflow-y: auto;
+  padding: 14px 18px 18px;
+}
+.kb-sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.kb-sheet-title { margin: 0; font-size: 15px; font-weight: 600; color: #222; }
+.kb-sheet-close {
+  font-size: 12px; padding: 3px 12px; border-radius: 12px; border: 1px solid #a3a3a3;
+  background: linear-gradient(180deg, #fcfcfc, #e6e6e6); color: #333; cursor: pointer;
+}
+.kb-sheet-cols { columns: 2 340px; column-gap: 28px; }
+.kb-sheet-section { break-inside: avoid; margin: 0 0 14px; }
+.kb-sheet-section-title {
+  margin: 0 0 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #8a7f63;
+}
+.kb-sheet-section dl { margin: 0; }
+.kb-sheet-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 3px 0; border-bottom: 1px solid rgba(184, 168, 127, 0.35); }
+.kb-sheet-row dt { font-size: 12px; color: #222; }
+.kb-sheet-note { display: block; font-size: 10.5px; color: #8a7f63; }
+.kb-sheet-row dd { margin: 0; display: flex; gap: 4px; flex: none; }
+.kb-sheet-row kbd {
+  font: 11px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  padding: 3px 6px;
+  border: 1px solid #b8a87f;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #fffdf6;
+  color: #333;
+  white-space: nowrap;
+}

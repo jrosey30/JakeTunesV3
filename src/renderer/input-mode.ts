@@ -1,53 +1,34 @@
 /**
- * Who owns the keyboard right now.
+ * The transport-key claim, kept for the pages that use it (the Supreme Court
+ * room, the Listen List's Inbox, the Top 1000 blind check). Since V7 it is a
+ * thin name over the keyboard host's general claim (keyboard.ts claimKeys):
+ * while a page holds a claim, the app's global shortcuts leave those keys
+ * alone when pressed plain (⌘→ still skips), and the page's own key layer
+ * handles them.
  *
- * The app binds transport shortcuts globally — Space, and the four arrows
- * for next/previous/volume — on `document` AND in the CAPTURE phase on
- * `window`. Capture phase matters: it runs before any view's own listener,
- * so a view cannot take a key back by calling stopPropagation. Step Inside
- * uses Space and the arrows for digging, so without this the arrows skipped
- * tracks while you were flipping through a crate.
- *
- * Deliberately a CLAIM, not focus. The game's canvas often does not hold
- * DOM focus (you might have clicked the HUD, or nothing at all), and
- * "arrows skip tracks unless the canvas happens to be focused" is exactly
- * the unpredictable behaviour we are removing.
- *
- * Narrow on purpose:
- *   • Only the transport keys are withheld.
- *   • Escape, Cmd+F, "/" and the dedicated media keys keep working — a
- *     media key is explicit hardware intent, and Escape is the way out.
- *   • Mouse playback controls are untouched; this is keyboard only.
- *   • Releasing is immediate, and idempotent, so leaving the game — by
- *     button, by Escape, or by the view unmounting — restores the app's
- *     shortcuts in the same tick.
+ * Deliberately a CLAIM, not focus: a game's canvas often doesn't hold DOM
+ * focus, and "Space toggles the music unless the canvas happens to be
+ * focused" is the unpredictable behaviour this removes. Escape, ⌘F, "/" and
+ * the media keys are never transport keys, so they keep working. Releasing is
+ * immediate and idempotent; a stale release from a page that already handed
+ * over does nothing to the live claim.
  */
+import { claimKeys, isClaimed, keysClaimed } from './keyboard.ts'
+
 export type TransportKey = 'Space' | 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown'
 
-/** The keys a claim withholds by default. Everything else falls through to the app. */
 const TRANSPORT_KEYS: readonly TransportKey[] = ['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']
 
-let owner: string | null = null
-let withheld: ReadonlySet<string> = new Set(TRANSPORT_KEYS)
-
-/** Claim the transport keys. Returns the release function; call it on
- *  unmount. Releasing a claim someone else now holds does nothing.
- *
- *  A view that only uses some of them names those (the Listen List moves
- *  with ↑/↓ and previews with Space, so ←/→ keep skipping tracks there).
- *  A narrower claim never withholds a key the view would then ignore. */
+/** Claim the transport keys (all five, or the ones named). Returns the release. */
 export function claimTransportKeys(id: string, keys: readonly TransportKey[] = TRANSPORT_KEYS): () => void {
-  owner = id
-  withheld = new Set(keys)
-  return () => { if (owner === id) owner = null }
+  return claimKeys(id, keys)
 }
 
 export function transportKeysClaimed(): boolean {
-  return owner !== null
+  return keysClaimed()
 }
 
-/** True when the app's global shortcut handlers must ignore this event.
- *  Takes the event's `code` so it is testable without a DOM. */
+/** True when the app's global shortcuts must ignore a key with this `code`. */
 export function shouldYieldToClaim(code: string): boolean {
-  return owner !== null && withheld.has(code)
+  return isClaimed(code)
 }

@@ -143,21 +143,12 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     restore(navRef.current.history[navRef.current.index])
   }, [restore, repaint])
 
-  // ⌘[ / ⌘] (ctrl on non-mac) — skip while typing in a field.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.altKey) return
-      const tag = (e.target as HTMLElement | null)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
-      if (e.key === '[') { e.preventDefault(); goBack() }
-      else if (e.key === ']') { e.preventDefault(); goForward() }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [goBack, goForward])
+  // ⌘[ / ⌘] are the keyboard host's (common/keymap.ts; never while typing),
+  // and App runs goBack / goForward for them. Go → Back / Forward picked with
+  // the mouse sends 'history-back' / 'history-forward', as the swipe below does.
 
   // 2026-10-21 — parity with the phone's swipe-back. Every input below runs
-  // the same goBack/goForward as ‹ › and ⌘[ ⌘] (so the same smooth return).
+  // the same goBack/goForward as the back pill and ⌘[ ⌘] (so the same smooth return).
   useEffect(() => {
     const go = (d: 'back' | 'forward' | null): void => { if (d === 'back') goBack(); else if (d === 'forward') goForward() }
     // Mouse side buttons (MX Master's thumb buttons): button 3 / 4. Swallow

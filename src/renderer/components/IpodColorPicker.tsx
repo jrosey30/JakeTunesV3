@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { IPOD_COLORS, ipodColorHex } from '../../common/ipod-covers'
 import { setIpodListColor } from '../ipodLists'
+import { useEscape } from '../hooks/useKeyboard'
 import '../styles/contextmenu.css'
 import '../styles/ipod-color-picker.css'
 
@@ -31,11 +32,10 @@ export function IpodColorPicker({ deviceId, ipodName, current, x, y, onClose, on
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose() }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('mousedown', onDown)
-    window.addEventListener('keydown', onKey)
-    return () => { window.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onKey) }
+    return () => { window.removeEventListener('mousedown', onDown) }
   }, [onClose])
+  useEscape('ipod-color', true, onClose)
 
   // Keep the popover on screen.
   useEffect(() => {

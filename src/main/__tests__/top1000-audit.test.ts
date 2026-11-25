@@ -58,11 +58,10 @@ describe('blind check: a 429 holds until homemini\'s next day', () => {
 
 describe('blind check: Space belongs to the preview while a question is up', () => {
   const src = readFileSync(join(import.meta.dirname, '../../renderer/views/Top1000AuditPanel.tsx'), 'utf-8')
-  it('claims Space (so App.tsx stands aside) and listens in the capture phase', () => {
+  it('claims Space (so the app\'s play/pause stands aside) and takes keys as a layer on the keyboard host', () => {
     assert.match(src, /claimTransportKeys\('top1000-audit', \['Space'\]\)/)
     assert.match(src, /if \(!asking\) return\s*\n\s*return claimTransportKeys/)
-    assert.match(src, /window\.addEventListener\('keydown', onKey, true\)/)
-    assert.match(src, /window\.removeEventListener\('keydown', onKey, true\)/)
+    assert.match(src, /return addKeyLayer\('top1000-audit', onKey\)/)
   })
   it('the claim makes the app\'s play/pause yield on Space only', () => {
     const release = claimTransportKeys('top1000-audit', ['Space'])

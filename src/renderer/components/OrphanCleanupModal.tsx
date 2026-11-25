@@ -1,3 +1,4 @@
+import { useEscape } from '../hooks/useKeyboard'
 import { useEffect, useState } from 'react'
 import ConfirmDialog from './ConfirmDialog'
 import '../styles/import-convert.css'
@@ -40,6 +41,7 @@ export default function OrphanCleanupModal({ onClose, onLibraryChanged }: Props)
   const [result, setResult] = useState('')
   const [confirmPurge, setConfirmPurge] = useState(false)
   const [confirmDead, setConfirmDead] = useState(false)
+  useEscape('orphan-cleanup', true, () => { if (!running) onClose() })
 
   useEffect(() => {
     void (async () => {

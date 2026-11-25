@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { addKeyLayer } from '../keyboard'
 
 /**
  * 4.5: ⌘F "find in view" state — Word-style find, not search-filter.
@@ -40,8 +41,8 @@ export function useFindState(enabled = true): FindState {
         setOpen(true)
       }
     }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    // A page's find bar takes ⌘F ahead of the app's Search (keyboard.ts).
+    return addKeyLayer('find-bar', onKey)
   }, [])
 
   const setQuery = useCallback((q: string) => { setQueryRaw(q); setCursor(0) }, [])

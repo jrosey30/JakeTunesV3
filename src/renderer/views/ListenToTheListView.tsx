@@ -16,6 +16,8 @@
  * Reuses the PROVEN layer untouched: useListenToTheList (identity-safe sync),
  * ltlDownload (serial Qobuz queue), previewPlayer, friends/Scouts ledger.
  */
+import { addKeyLayer } from '../keyboard'
+import { useUndoShortcut } from '../hooks/useKeyboard'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import PageGate from '../components/PageGate'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
@@ -205,15 +207,14 @@ export default function ListenToTheListView() {
     setTossing(null)
   }, [])
   useEffect(() => () => { if (tossTimer.current) clearTimeout(tossTimer.current) }, [])
+  // ⌘Z (outside a text field) is the toast's Undo while it shows.
+  useUndoShortcut('listen-list-toss', tossing !== null, undoToss)
 
   // ── Keyboard fly-through (Inbox only; never steals from inputs) ───────────
-  // App.tsx binds Space (play/pause) as a capture listener on window that
-  // registers first, and ↑/↓ (volume) on document — so stopPropagation here
-  // never reached either: Space previewed AND toggled the music, and moving
-  // the selection nudged the volume. The Inbox claims just the keys it uses
-  // (see input-mode.ts) while it has rows; App's handlers stand aside. ←/→
-  // still skip tracks, media keys still work, and an empty Inbox hands Space
-  // back to the music.
+  // A page layer on the keyboard host (keyboard.ts). The Inbox also claims
+  // the keys it uses while it has rows, so the app's play/pause stands aside
+  // even if a focused control let Space through. ⌘←/⌘→ still skip tracks,
+  // media keys still work, and an empty Inbox hands Space back to the music.
   const inboxHasRows = inboxFlat.length > 0
   useEffect(() => {
     if (!inboxHasRows) return
@@ -225,6 +226,8 @@ export default function ListenToTheListView() {
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return
       // An album's songs are open over the list: its keys are the sheet's (Esc closes it).
       if (songsOf) return
+      // ⌘↑/⌘↓ are volume, ⌘←/⌘→ skip, ⌘A and friends are the app's.
+      if (e.metaKey || e.ctrlKey || e.altKey) return
       if (inboxFlat.length === 0) return
       const cur = inboxFlat[Math.min(sel, inboxFlat.length - 1)]
       switch (e.key) {
@@ -237,8 +240,7 @@ export default function ListenToTheListView() {
         default: return
       }
     }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    return addKeyLayer('listen-list', onKey)
   }, [inboxFlat, sel, previewReco, getReco, tossReco, songsOf])
 
   // ── Capture (omnibox — unchanged proven flow) ────────────────────────────

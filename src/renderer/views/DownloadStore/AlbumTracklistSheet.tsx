@@ -13,6 +13,7 @@ import { useLibrary } from '../../context/LibraryContext'
 import { enqueue, getQueue, itemFor, subscribeQueue, type QueueOrigin } from './downloadQueue'
 import { editionsState, loadEditions, ownedKey, saveSongsLabel, songJobsFor, subscribeEditions, tracklistSource, type EditionTrack } from './albumEditions'
 import EditionMenu from './EditionMenu'
+import { useEscape } from '../../hooks/useKeyboard'
 import './edition-menu.css'
 
 const mmss = (secs: number): string => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
@@ -59,11 +60,7 @@ export default function AlbumTracklistSheet({ artist, album, origin, onSaveAlbum
     return () => { live = false }
   }, [artist, album, albumKey, source])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  useEscape('album-tracklist', true, onClose)
 
   const list = tracks.list ?? []
   const jobs = songJobsFor({ tracks: list, ticked, owned, albumName: tracks.albumName, origin })

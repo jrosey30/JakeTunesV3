@@ -16,7 +16,7 @@ import { useEffect, useRef, useState } from 'react'
 import { getVisualizerBins, ensureVisualizerChain } from '../audio/eq'
 import { usePlayback } from '../context/PlaybackContext'
 import { decayFor, easeFor, frameSeconds, newBloom, stepBloom } from '../utils/visualizerClock'
-import { isTypingTarget } from '../utils/trackListKeys'
+import { useEscape } from '../hooks/useKeyboard'
 import '../styles/visualizer.css'
 
 function Stage({ onClose }: { onClose: () => void }) {
@@ -138,33 +138,15 @@ export default function Visualizer() {
   const [active, setActive] = useState(false)
 
   useEffect(() => {
+    // ⌘T (common/keymap.ts 'visualizer', never in a text field) and View →
+    // Visualizer both arrive as this event.
     const onToggle = (): void => setActive((a) => !a)
-    const onKey = (e: KeyboardEvent): void => {
-      // ⌘T in a text field is the field's, never a full-screen takeover mid-word.
-      if (isTypingTarget(e.target as HTMLElement | null)) return
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 't') {
-        e.preventDefault()
-        setActive((a) => !a)
-      }
-    }
     window.addEventListener('toggle-visualizer', onToggle)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('toggle-visualizer', onToggle)
-      window.removeEventListener('keydown', onKey)
-    }
+    return () => window.removeEventListener('toggle-visualizer', onToggle)
   }, [])
 
-  // Esc closes the visualizer (capture + stopPropagation so the global Esc
-  // handler in App.tsx doesn't also fire underneath us).
-  useEffect(() => {
-    if (!active) return
-    const onEsc = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setActive(false) }
-    }
-    window.addEventListener('keydown', onEsc, true)
-    return () => window.removeEventListener('keydown', onEsc, true)
-  }, [active])
+  // Esc closes the visualizer: it's the top-most surface while it's up.
+  useEscape('visualizer', active, () => setActive(false))
 
   if (!active) return null
   return <Stage onClose={() => setActive(false)} />

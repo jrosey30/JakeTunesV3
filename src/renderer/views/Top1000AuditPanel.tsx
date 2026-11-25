@@ -12,6 +12,7 @@
  * or stops the preview. The quiz's wrong-click guards apply: nothing counts in
  * a question's first 250 ms, a press that began before it appeared, or a held key.
  */
+import { addKeyLayer } from '../keyboard'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { useLibrary } from '../context/LibraryContext'
@@ -122,9 +123,9 @@ export default function Top1000AuditPanel({ byId, artFor, onClose }: Props): JSX
     void hear(song)
   }, [hearing, stopSnippet, hear])
 
-  // App.tsx toggles the music on Space in the capture phase on window, before any view hears it.
-  // While a question is up, Space is the preview's (as the Listen List does): claim it, and listen in
-  // the capture phase too, so Space never starts or stops the library's music here.
+  // While a question is up, Space is the preview's (as the Listen List does): a page layer on the
+  // keyboard host (keyboard.ts) takes it ahead of the app's play/pause, and a claim on Space keeps
+  // the app's play/pause standing aside, so Space never starts or stops the library's music here.
   const asking = phase.kind === 'ask'
   useEffect(() => {
     if (!asking) return
@@ -149,8 +150,7 @@ export default function Top1000AuditPanel({ byId, artFor, onClose }: Props): JSX
       if (e.repeat || !ready()) return
       void send(q, choice)
     }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    return addKeyLayer('top1000-audit', onKey)
   }, [phase, send, ready, spacePlay])
 
   const card = (q: AuditQuestion, s: QuizSongRef, i: number) => {

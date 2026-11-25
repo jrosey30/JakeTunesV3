@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { refreshMixtapes, setDeckState, pickInk } from '../mixtapes'
 import type { Mixtape } from '../types'
+import { useEscape } from '../hooks/useKeyboard'
 import '../styles/activity-sheet.css'
 import '../styles/mixtape.css'
 
@@ -21,18 +22,8 @@ export default function BlankTapeSheet({ onClose }: Props) {
   // Enter auto-repeats when held — one tape per press, not one per repeat.
   const creatingRef = useRef(false)
 
-  // Esc backs out from anywhere in the sheet (capture, like ConfirmDialog,
-  // so nothing behind the sheet also acts on it).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      onClose()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose])
+  // Esc backs out from anywhere in the sheet, its title field included.
+  useEscape('blank-tape', true, onClose)
 
   const create = async () => {
     if (creatingRef.current) return

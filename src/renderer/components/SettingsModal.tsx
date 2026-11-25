@@ -1,3 +1,4 @@
+import { useEscape } from '../hooks/useKeyboard'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { AppSettings, DEFAULT_APP_SETTINGS, ImportFormatChoice } from '../types'
 import { IMPORT_FORMATS, IMPORT_FORMAT_LABELS } from '../../common/import-format'
@@ -29,7 +30,8 @@ interface Props {
   initialTab?: Tab
 }
 
-type Tab = 'Playback' | 'EQ' | 'Library' | 'Music Sources' | 'Sync' | 'Audio' | 'AI'
+export type SettingsTab = 'Playback' | 'EQ' | 'Library' | 'Music Sources' | 'Sync' | 'Audio' | 'AI'
+type Tab = SettingsTab
 const TABS: Tab[] = ['Playback', 'EQ', 'Library', 'Music Sources', 'Sync', 'Audio', 'AI']
 
 // Pretty Hz labels for the band frequencies (31, 62, 125, 250, 500,
@@ -139,6 +141,8 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
     setEnhanceConfig(initial.audio)
     onClose()
   }
+  // Escape is Cancel: the sound goes back the way it was.
+  useEscape('settings', true, closeAndRevertAudio)
 
   const [draft, setDraft] = useState<AppSettings>(initial)
   const [radioCaptions, setRadioCaptions] = useState(getCaptionsOn())  // 4.5 radioV2 CC toggle

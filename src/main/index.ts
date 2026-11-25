@@ -16,6 +16,7 @@ process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '64'
 
 
 import { registerConcertsIpc } from './ipc/concerts-ipc.ts'
+import { buildAppMenu } from './app-menu.ts'
 import { parseHubAdoptAck, startHubCatalogPoll } from './hub-catalog'
 import { forTheScreen } from './claude-screen-text.ts'
 import { ensureCompanionTokenFromEnvFile, withCompanionInit } from './hub-companion.ts'
@@ -2633,55 +2634,56 @@ async function createWindow(): Promise<void> {
   }
 }
 
-const menuTemplate: Electron.MenuItemConstructorOptions[] = [
-  {
-    label: 'JakeTunes',
-    submenu: [
-      {
-        label: 'About JakeTunes',
-        click: async () => {
-          // Resolve the logo path. Dev = unhashed source PNG; production
-          // = hashed file in out/renderer/assets (vite asset pipeline).
-          // We copy the resolved PNG to OS temp so the About HTML (also
-          // written to temp) can reference it via a sibling file:// path
-          // — large logos blow past Chromium's data-URL limit (~2MB)
-          // and silently render a blank window if inlined.
-          const { tmpdir } = await import('os')
-          const { readdir } = await import('fs/promises')
-          const tmpDir = join(tmpdir(), 'jaketunes-about')
-          await mkdir(tmpDir, { recursive: true }).catch(() => {})
-          let logoFilename = ''
-          try {
-            let logoPath = ''
-            if (isDev) {
-              logoPath = join(app.getAppPath(), 'src/renderer/assets/jaketunes-logo.png')
-            } else {
-              const assetsDir = join(__dirname, '../renderer/assets')
-              const entries = await readdir(assetsDir).catch(() => [] as string[])
-              const match = entries.find(n => /^jaketunes-logo.*\.png$/i.test(n))
-              if (match) logoPath = join(assetsDir, match)
-            }
-            if (logoPath) {
-              logoFilename = 'jaketunes-logo.png'
-              await copyFile(logoPath, join(tmpDir, logoFilename))
-            }
-          } catch { /* logo absent → text-only About */ }
+// The menu bar is main/app-menu.ts, built from the keymap (common/keymap.ts):
+// one wiring per shortcut. The About window is main's own, so it's passed in.
+const menuTemplate: Electron.MenuItemConstructorOptions[] = buildAppMenu({
+  send: sendMenuAction,
+  hubOffload: menuHubOffload,
+  about: {
+    label: 'About JakeTunes',
+    click: async () => {
+      // Resolve the logo path. Dev = unhashed source PNG; production
+      // = hashed file in out/renderer/assets (vite asset pipeline).
+      // We copy the resolved PNG to OS temp so the About HTML (also
+      // written to temp) can reference it via a sibling file:// path
+      // — large logos blow past Chromium's data-URL limit (~2MB)
+      // and silently render a blank window if inlined.
+      const { tmpdir } = await import('os')
+      const { readdir } = await import('fs/promises')
+      const tmpDir = join(tmpdir(), 'jaketunes-about')
+      await mkdir(tmpDir, { recursive: true }).catch(() => {})
+      let logoFilename = ''
+      try {
+        let logoPath = ''
+        if (isDev) {
+          logoPath = join(app.getAppPath(), 'src/renderer/assets/jaketunes-logo.png')
+        } else {
+          const assetsDir = join(__dirname, '../renderer/assets')
+          const entries = await readdir(assetsDir).catch(() => [] as string[])
+          const match = entries.find(n => /^jaketunes-logo.*\.png$/i.test(n))
+          if (match) logoPath = join(assetsDir, match)
+        }
+        if (logoPath) {
+          logoFilename = 'jaketunes-logo.png'
+          await copyFile(logoPath, join(tmpDir, logoFilename))
+        }
+      } catch { /* logo absent → text-only About */ }
 
-          const about = new BrowserWindow({
-            width: 460,
-            height: 540,
-            resizable: false,
-            minimizable: false,
-            maximizable: false,
-            ...(IS_MAC ? { titleBarStyle: 'hiddenInset' as const } : {}),
-            backgroundColor: '#1a1410',
-            webPreferences: { nodeIntegration: false, contextIsolation: true },
-          })
-          about.setMenu(null)
-          const ver = app.getVersion()
-          const year = new Date().getFullYear()
-          const htmlPath = join(tmpDir, 'about.html')
-          const html = `
+      const about = new BrowserWindow({
+        width: 460,
+        height: 540,
+        resizable: false,
+        minimizable: false,
+        maximizable: false,
+        ...(IS_MAC ? { titleBarStyle: 'hiddenInset' as const } : {}),
+        backgroundColor: '#1a1410',
+        webPreferences: { nodeIntegration: false, contextIsolation: true },
+      })
+      about.setMenu(null)
+      const ver = app.getVersion()
+      const year = new Date().getFullYear()
+      const htmlPath = join(tmpDir, 'about.html')
+      const html = `
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><style>
@@ -2802,117 +2804,11 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
   <div class="footer">© ${year} · 2008 visuals · 2040 brain</div>
 </body>
 </html>`
-          await writeFile(htmlPath, html, 'utf8')
-          about.loadFile(htmlPath)
-        },
-      },
-      { type: 'separator' },
-      { label: 'Preferences…', accelerator: 'CmdOrCtrl+,', click: () => sendMenuAction('open-preferences') },
-      { type: 'separator' },
-      { label: 'Quit JakeTunes', accelerator: 'CmdOrCtrl+Q', role: 'quit' }
-    ]
+      await writeFile(htmlPath, html, 'utf8')
+      about.loadFile(htmlPath)
+    },
   },
-  {
-    label: 'File',
-    submenu: [
-      { label: 'New Playlist', accelerator: 'CmdOrCtrl+N', click: () => sendMenuAction('new-playlist') },
-      { label: 'Import…', accelerator: 'CmdOrCtrl+O', click: () => sendMenuAction('import-files') },
-      { label: 'Import and Convert…', accelerator: 'Shift+CmdOrCtrl+O', click: () => sendMenuAction('open-import-convert') },
-      { type: 'separator' },
-      { label: 'Get Info', accelerator: 'CmdOrCtrl+I', click: () => sendMenuAction('get-info') },
-      { type: 'separator' },
-      {
-        label: 'Library',
-        submenu: [
-          // (V7 steady: "Fix iPod Compatibility…" is gone. It re-encoded the
-          // library's own hi-res ALAC masters down to 16-bit, in place.
-          // Sync already makes iPod-safe copies in its cache
-          // (buildIpodSafeAlacMirror), so the tool could only damage
-          // masters. master-never-reencoded.test.ts keeps it gone.)
-          // 4.1: ALAC play-cache management. Replaces the launch-time
-          // prewarm scanner with explicit user actions.
-          { label: 'Prepare ALAC Songs for Instant Play…', click: () => sendMenuAction('prepare-alac-cache') },
-          { label: 'Prune Play-Cache…', click: () => sendMenuAction('prune-alac-cache') },
-          { label: 'Clean Orphan Files…', click: () => sendMenuAction('clean-orphan-files') },
-          // Surface library entries that share artist+title+album so the
-          // user can pick which copies to remove. Per-row delete only —
-          // never bulk, never auto. Solves the "iPod Shuffle shows 4542
-          // but library has 4550" gap caused by re-imported tracks.
-          { label: 'Show Duplicates…',         click: () => sendMenuAction('show-duplicates') },
-          { type: 'separator' },
-          // Brief 020: push the user-edited override fields (title, artist,
-          // album, genre, year, track/disc numbers) into the audio files'
-          // embedded tags so Plex sees the corrected metadata on its next
-          // scan. Per-edit write-back fires automatically inside
-          // save-metadata-override; this menu item is the one-shot
-          // backfill for the ~1.6k existing writable overrides that
-          // accumulated before the per-edit hook existed.
-          { label: 'Apply Overrides to Files…',  click: () => sendMenuAction('apply-overrides-to-files') },
-          // Brief 016 commit 2: one-shot retrofit of stale library.json
-          // fileSize values. Diagnostic phase found 29.7% of tracks had
-          // library.json fileSize ≠ actual on-disk size (likely from a
-          // historical "Fix iPod Compatibility" re-encode pass that cut
-          // ~515KB per track). This menu walks every track, stats the
-          // actual file, and writes back the corrected fileSize. Audio
-          // files themselves are NOT modified.
-          { label: 'Refresh File Sizes…',         click: () => sendMenuAction('refresh-file-sizes') },
-          { type: 'separator' },
-          { label: 'Offload Audio — Dry Run', click: () => menuHubOffload('dry-run') },
-          { label: 'Offload Audio — Start', click: () => menuHubOffload('start') },
-          { label: 'Undo Offload (pull audio back)', click: () => menuHubOffload('rehydrate') },
-        ],
-      },
-      { type: 'separator' },
-      { label: 'Close Window', accelerator: 'CmdOrCtrl+W', role: 'close' }
-    ]
-  },
-  {
-    label: 'Edit',
-    submenu: [
-      { label: 'Undo', accelerator: 'CmdOrCtrl+Z', role: 'undo' },
-      { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', role: 'redo' },
-      { type: 'separator' },
-      { label: 'Cut', accelerator: 'CmdOrCtrl+X', role: 'cut' },
-      { label: 'Copy', accelerator: 'CmdOrCtrl+C', role: 'copy' },
-      { label: 'Paste', accelerator: 'CmdOrCtrl+V', role: 'paste' },
-      { label: 'Select All', accelerator: 'CmdOrCtrl+A', role: 'selectAll' }
-    ]
-  },
-  {
-    label: 'Controls',
-    submenu: [
-      { label: 'Play/Pause', accelerator: 'F8', click: () => sendMenuAction('play-pause') },
-      { label: 'Previous', accelerator: 'F7', click: () => sendMenuAction('prev-track') },
-      { label: 'Next', accelerator: 'F9', click: () => sendMenuAction('next-track') },
-      { type: 'separator' },
-      { label: 'Increase Volume', accelerator: 'CmdOrCtrl+Up', click: () => sendMenuAction('volume-up') },
-      { label: 'Decrease Volume', accelerator: 'CmdOrCtrl+Down', click: () => sendMenuAction('volume-down') },
-      { type: 'separator' },
-      { label: 'Go to Current Song', accelerator: 'CmdOrCtrl+L', click: () => sendMenuAction('show-now-playing') },
-      { label: 'Star Current Song', accelerator: 'Shift+CmdOrCtrl+S', registerAccelerator: false, click: () => sendMenuAction('star-current-song') },
-      { type: 'separator' },
-      { label: 'Radio Mode', accelerator: 'Shift+CmdOrCtrl+R', click: () => sendMenuAction('toggle-radio-mode') },
-      { label: 'DJ Mode', accelerator: 'Shift+CmdOrCtrl+D', click: () => sendMenuAction('toggle-dj-mode') }
-    ]
-  },
-  {
-    label: 'View',
-    submenu: [
-      { label: 'Songs', click: () => sendMenuAction('view-songs') },
-      { label: 'Artists', click: () => sendMenuAction('view-artists') },
-      { label: 'Albums', click: () => sendMenuAction('view-albums') },
-      { label: 'Genres', click: () => sendMenuAction('view-genres') },
-      { type: 'separator' },
-      { label: 'The Music Man', accelerator: 'Shift+CmdOrCtrl+M', click: () => sendMenuAction('toggle-music-man') },
-      { label: 'Lyrics', accelerator: 'Shift+CmdOrCtrl+L', click: () => sendMenuAction('toggle-lyrics') },
-      // ⌘T is handled in the renderer (Visualizer.tsx keydown) — show the
-      // shortcut here without registering it, or one press toggles twice.
-      { label: 'Visualizer', accelerator: 'CmdOrCtrl+T', registerAccelerator: false, click: () => sendMenuAction('toggle-visualizer') },
-      { type: 'separator' },
-      { label: 'Toggle Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', role: 'toggleDevTools' }
-    ]
-  },
-]
+})
 
 
 // Search MusicBrainz for accurate music data (genre, country, years

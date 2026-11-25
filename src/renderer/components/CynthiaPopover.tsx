@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { CynthiaScope, CynthiaFix, CynthiaMissingTrack, CynthiaAlbumFindings, CynthiaSweepFinding, CynthiaLedgerEntry } from '../types'
 import { albumKeyOf } from '../utils/albumKey'
+import { useEscape } from '../hooks/useKeyboard'
 import '../styles/cynthia.css'
 
 // Chat-style popover. Cynthia is two models stacked:
@@ -183,16 +184,12 @@ export default function CynthiaPopover({ x, y, scope, onClose }: Props) {
       if (busyRef.current) return
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) onClose()
     }
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !busyRef.current) onClose()
-    }
     window.addEventListener('mousedown', handleMouseDown)
-    window.addEventListener('keydown', handleKey)
     return () => {
       window.removeEventListener('mousedown', handleMouseDown)
-      window.removeEventListener('keydown', handleKey)
     }
   }, [onClose])
+  useEscape('cynthia', true, () => { if (!busyRef.current) onClose() })
 
   const sendMessage = useCallback(async (userText: string) => {
     const trimmed = userText.trim()
@@ -338,6 +335,8 @@ export default function CynthiaPopover({ x, y, scope, onClose }: Props) {
   return (
     <div
       ref={containerRef}
+      role="dialog"
+      aria-label="Cynthia"
       className="cynthia-popover"
       style={{ left: pos.left, top: pos.top, width: POPOVER_WIDTH }}
       onMouseDown={(e) => e.stopPropagation()}

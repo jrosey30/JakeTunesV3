@@ -8,6 +8,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { nameKey } from '../../common/fold-text.ts'
+import { useEscape } from '../hooks/useKeyboard'
 import '../styles/synced-picks.css'
 
 export interface PickerItem {
@@ -47,18 +48,9 @@ export default function PicksPicker({ title, sub, placeholder, items, emptyText,
 
   useEffect(() => { setCursor(0) }, [query])
 
-  // Esc backs out from anywhere in the sheet (capture, like BlankTapeSheet,
-  // so nothing behind the sheet also acts on it).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      onClose()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose])
+  // Esc backs out from anywhere in the sheet, its search field included
+  // (the sheet is the top-most surface on the keyboard host's stack).
+  useEscape('picks-picker', true, onClose)
 
   useEffect(() => {
     listRef.current?.querySelector(`[data-i="${cursor}"]`)?.scrollIntoView({ block: 'nearest' })

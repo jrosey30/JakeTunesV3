@@ -39,7 +39,7 @@ import { noteScreen } from '../usageLog'
 import { takeHistoryNavigation, pageArrival } from '../navIntent'
 import { useNavigation } from '../context/NavigationContext'
 import { useBackLabel } from '../hooks/useBackLabel'
-import { showsSharedBack } from '../backPill'
+import { reservesBackStrip, showsSharedBack } from '../backPill'
 import BackButton from './chrome/BackButton'
 import '../styles/main-content.css'
 
@@ -209,9 +209,11 @@ export default function MainContent() {
   // strip, never behind it (main-content.css).
   return (
     <div className="main-content-shell">
-      {backStrip && (
+      {/* The strip keeps its height whether or not the pill shows (backPill.ts
+          reservesBackStrip), so a page doesn't jump when history appears. */}
+      {reservesBackStrip(view) && (
         <div className="view-back-strip">
-          <BackButton label={backLabel} onClick={goBack} />
+          {backStrip && <BackButton label={backLabel} onClick={goBack} />}
         </div>
       )}
       <div className="main-content-shell-view">

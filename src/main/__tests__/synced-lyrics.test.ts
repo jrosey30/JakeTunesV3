@@ -81,7 +81,8 @@ describe('the Lyrics panel is wired like Up Next', () => {
   const toggle = src('components', 'playback', 'LyricsToggle.tsx')
   const panel = src('components', 'playback', 'LyricsPanel.tsx')
   const store = src('lyricsStore.ts')
-  const menu = readFileSync(join(import.meta.dirname, '..', 'index.ts'), 'utf8')
+  const menu = readFileSync(join(import.meta.dirname, '..', 'app-menu.ts'), 'utf8')
+  const keymap = readFileSync(join(import.meta.dirname, '..', '..', 'common', 'keymap.ts'), 'utf8')
 
   it('the toolbar panel group carries the Lyrics button', () => {
     assert.match(toolbar, /<LyricsToggle open=\{showLyrics\} onToggle=\{onToggleLyrics\} \/>/)
@@ -90,17 +91,19 @@ describe('the Lyrics panel is wired like Up Next', () => {
   })
 
   it('View → Lyrics (⇧⌘L) reaches the same toggle', () => {
-    assert.match(menu, /label: 'Lyrics', accelerator: 'Shift\+CmdOrCtrl\+L', click: \(\) => sendMenuAction\('toggle-lyrics'\)/)
+    assert.match(keymap, /\{ id: 'lyrics', label: 'Lyrics', section: 'Panels', keys: \['Shift\+CmdOrCtrl\+L'\], wiring: 'menu', action: 'toggle-lyrics' \}/)
+    assert.match(menu, /i\('lyrics'\)/)
     assert.match(app, /case 'toggle-lyrics': toggleLyricsRef\.current\(\); break/)
     assert.match(toggle, /title="Lyrics \(⇧⌘L\)"/)
-    // ⌘L (Go to Current Song) stands aside for ⇧⌘L — one press, one action.
-    assert.match(app, /\(e\.metaKey \|\| e\.ctrlKey\) && !e\.shiftKey && e\.key === 'l'/)
+    // ⌘L (Go to Current Song) is its own menu item — one press, one action
+    // (V7: both are menu-wired; keymap.test.ts checks no key is wired twice).
+    assert.match(keymap, /keys: \['CmdOrCtrl\+L'\], wiring: 'menu', action: 'show-now-playing'/)
   })
 
   it('one right-hand drawer at a time: every other opener closes Lyrics', () => {
     const opens = app.match(/setShow(?:Queue|MusicMan|Downloads)\(true\)/g) ?? []
     const closes = app.match(/lyricsRef\.current\?\.requestClose\(\);[^\n]*setShow(?:Queue|MusicMan|Downloads)\(true\)/g) ?? []
-    assert.ok(opens.length >= 5)
+    assert.ok(opens.length >= 4, 'Downloads, Up Next (toggle + open), Music Man (V7: one toggle for the button and ⇧⌘M)')
     assert.equal(closes.length, opens.length, 'an opener that leaves Lyrics open stacks two drawers')
   })
 

@@ -4,6 +4,7 @@
  * (what the iPod brought home) in one newest-first timeline. Pure
  * presentation over get-sync-history; the ledgers stay the truth.
  */
+import { useEscape } from '../hooks/useKeyboard'
 import { useEffect, useMemo, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { leftOffKind } from '../../common/ipod-one-sync-plan'
@@ -120,6 +121,7 @@ export function SyncHistoryRows({ entries, limit }: { entries: Entry[]; limit?: 
 }
 
 export default function SyncHistorySheet({ onClose }: { onClose: () => void }) {
+  useEscape('sync-history', true, onClose)
   const [entries, setEntries] = useState<Entry[] | null>(null)
 
   useEffect(() => {

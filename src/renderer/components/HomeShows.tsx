@@ -48,6 +48,7 @@ import { concertPhotoFrameCached, concertPhotoFrameOf } from '../concertPhotoFra
 import { snippetPlaying, stopSnippet, subscribeSnippet, toggleSnippet } from '../concertSnippet'
 import { usePlayback } from '../context/PlaybackContext'
 import type { Track } from '../types'
+import { useEscape } from '../hooks/useKeyboard'
 import {
   canMark, cardBill, cardReason, concertBadges, formatOnSale, formatShowTime, longDate, markedNights, nightCard, nightsByRoom,
   nightsOf, nightWhen, nyDate, runNightsLine, runStamp, ticketUrl, whereLine,
@@ -463,17 +464,8 @@ function NightsSheet({ item, going, openLink, close }: { item: ConcertItem; goin
   const bill = cardBill(item)
   const nights = nightsOf(item)
   const closeRef = useRef<HTMLButtonElement>(null)
-  useEffect(() => {
-    closeRef.current?.focus()
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      close()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [close])
+  useEffect(() => { closeRef.current?.focus() }, [])
+  useEscape('nights-sheet', true, close)
   return createPortal(
     <div className="home-concert-nights-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}>
     <div className="home-concert-nights-sheet" role="dialog" aria-modal="true" aria-label={`Every night of ${bill.artist} in New York`}>
