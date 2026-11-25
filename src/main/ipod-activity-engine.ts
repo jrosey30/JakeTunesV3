@@ -64,6 +64,9 @@ import {
   remountVerifyEntries,
   retireIpodFirmwareScratch,
 } from './ipod-sync-card.ts'
+import { isAacEncoderMissing } from './aac-mirror-recipe.ts'
+import { applyFileStamps, createFileStampCache, fileToStamp } from './ipod-file-stamps.ts'
+import { backupItunesDb, backupRefusal } from './ipod-db-backup.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
 import { wipeListingMatchesKeep, keepStreak } from './activity-keep.ts'
 import {
@@ -123,6 +126,12 @@ export interface ActivitySyncHost {
   coreScript: (rel: string) => string
   tempDir: string
   stateDir: string
+  /** Where the iTunesDB is backed up on this Mac before it is rewritten (ipod-db-backup.ts). Default: <stateDir>/itunesdb-backups. */
+  dbBackupRoot?: string
+  /** The sync-convert cache folder: a mirror there is probed for the DB stamps (ipod-file-stamps.ts). */
+  convertCacheDir?: string
+  /** Remembered file stamps (path + size + mtime). Default: a file in tempDir. */
+  stampCacheFile?: string
   pid: number
   musicDir: string
   pathSep: '/' | '\\'
@@ -761,6 +770,12 @@ async function runActivitySyncHolding(
             }
           }
         } catch (err) {
+          // No Apple encoder: refused and named, never an ffmpeg AAC or the lossless
+          // master in its place (aac-mirror-recipe.ts, Brief 265).
+          if (isAacEncoderMissing(err)) {
+            console.error(`activity-sync: ${err instanceof Error ? err.message : String(err)}`)
+            return { ok: false, kind: 'unconvertible', why: 'no Apple AAC encoder (afconvert)' }
+          }
           console.warn(`activity-sync: AAC mirror failed for ${title}, copying original:`, err)
         }
         // Gen 1 plays MP3 only: a song that isn't one and couldn't be made one stays off,
@@ -1311,6 +1326,18 @@ async function runActivitySyncHolding(
     // (Artists). mhia + the type-52 tables (3 Songs, 4 Albums, 5 Artists,
     // 7 Genres) are built inside write_itunesdb.
     tracks = orderTracksForIpodTitleIndex(tracks.map((t) => stampIpodSortArtist(t)))
+    // Sample rate, bitrate and length from the file that is on the iPod, not the master
+    // (Brief 265 Part 3; ipod-file-stamps.ts). Probed once per file, remembered.
+    // A host with no convert cache (tests, replicas) stamps as before.
+    if (host.convertCacheDir) {
+      const convertCacheDir = host.convertCacheDir
+      const stampCache = createFileStampCache({ file: host.stampCacheFile ?? join(host.tempDir, 'jaketunes-ipod-file-stamps.json') })
+      const restamped = await applyFileStamps(tracks,
+        (t) => fileToStamp(dstById.get(Number(t.id)), writtenById.get(Number(t.id))?.srcPath, convertCacheDir),
+        stampCache)
+      await stampCache.flush()
+      if (restamped > 0) console.log(`activity-sync: stamped ${restamped} song(s) from the file on the iPod (sample rate, bitrate, length)`)
+    }
     for (const t of tracks) {
       const dst = dstById.get(Number(t.id))
       if (!dst) continue
@@ -1371,6 +1398,13 @@ async function runActivitySyncHolding(
     // One .bak per run (the catalog the run started from): a swap's second
     // catalog write must not spend another write on a copy of its interim.
     if (!catalogBakDone) {
+      // On this Mac first: no backup, no catalog write (Brief 265 Part 3; ipod-db-backup.ts).
+      const backup = await backupItunesDb({ mount: IPOD_MOUNT, root: host.dbBackupRoot ?? join(host.stateDir, 'itunesdb-backups') })
+      if (!backup.ok) {
+        console.error(`activity-sync: ${backupRefusal(backup.reason)}`)
+        return stop(false, { copied, copyErrors, target, error: backupRefusal(backup.reason) })
+      }
+      if (backup.dir) console.log(`activity-sync: iTunesDB backed up to ${backup.dir}`)
       catalogBakDone = true
       try { await copyFile(ipodDb, ipodDb + '.bak') } catch { /* non-fatal */ }
     }

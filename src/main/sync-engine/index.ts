@@ -40,6 +40,13 @@ import {
   exceedsIpodPlayableCeiling, ipodPlayableDestPath, needsIpodAlacTranscode, sampleRateForItunesDb,
 } from '../ipod-reconcile.ts'
 import { confirmWriteOnCard, flushCardCaches, remountVerifyEntries, retireIpodFirmwareScratch } from '../ipod-sync-card.ts'
+import { isAacEncoderMissing } from '../aac-mirror-recipe.ts'
+import { applyFileStamps, createFileStampCache, fileToStamp } from '../ipod-file-stamps.ts'
+import { backupItunesDb, backupRefusal } from '../ipod-db-backup.ts'
+
+/** userData folders for Brief 265 Part 3: the Mac-side iTunesDB backups and the remembered file stamps. */
+const IPOD_DB_BACKUP_SUBDIR = 'ipod-db-backups'
+const IPOD_FILE_STAMPS_FILE = 'ipod-file-stamps.json'
 import { securePlaysBeforeSync } from '../ipod-plays-archive.ts'
 import { uniqueTmpPath, type RoundTripHost } from './roundtrip.ts'
 import { deviceKeyOf } from '../../common/ipod-device-playlists.ts'
@@ -430,6 +437,9 @@ export function createSyncEngine(host: SyncEngineHost) {
         coreScript: (rel) => join(app.isPackaged ? process.resourcesPath : app.getAppPath(), rel),
         tempDir: app.getPath('temp'),
         stateDir: syncStateDir,
+        dbBackupRoot: join(app.getPath('userData'), IPOD_DB_BACKUP_SUBDIR),
+        convertCacheDir: join(app.getPath('userData'), 'sync-convert-cache'),
+        stampCacheFile: join(app.getPath('userData'), IPOD_FILE_STAMPS_FILE),
         pid: process.pid,
         musicDir: host.getMusicDir(),
         pathSep: IS_WINDOWS ? '\\' : '/',
@@ -1176,6 +1186,16 @@ export function createSyncEngine(host: SyncEngineHost) {
             }
           }
         } catch (err) {
+          // No Apple encoder: the song is refused and named, never copied as its
+          // lossless master or as an ffmpeg AAC (aac-mirror-recipe.ts, Brief 265).
+          if (isAacEncoderMissing(err)) {
+            console.error(`sync-to-ipod: ${err instanceof Error ? err.message : String(err)}`)
+            copyErrors++
+            sendToRenderer('sync-progress', {
+              phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
+            })
+            continue
+          }
           // Conversion failed — fall through and copy the original. Worse
           // case: the iPod gets a bigger file than the user expected, but
           // sync still completes.
@@ -1622,6 +1642,20 @@ export function createSyncEngine(host: SyncEngineHost) {
     // present with a positive size. Prefer writtenById's expected size when we
     // have one.
     {
+      // Sample rate, bitrate and length from the file that is on the iPod, not the master
+      // (Brief 265 Part 3; ipod-file-stamps.ts). Probed once per file, remembered.
+      const stampCache = createFileStampCache({ file: join(app.getPath('userData'), IPOD_FILE_STAMPS_FILE) })
+      const convertCacheDir = join(app.getPath('userData'), 'sync-convert-cache')
+      const restamped = await applyFileStamps(tracks, (t) => {
+        const remembered = writtenById.get(t.id as number)
+        const colonPath = String(t.path || '')
+        const dst = remembered?.dstPath || (colonPath ? join(IPOD_MOUNT, tsaRelFromColon(colonPath, pathSep)) : undefined)
+        return fileToStamp(dst, remembered?.srcPath, convertCacheDir)
+      }, stampCache)
+      await stampCache.flush()
+      if (restamped > 0) console.log(`sync-to-ipod: stamped ${restamped} song(s) from the file on the iPod (sample rate, bitrate, length)`)
+    }
+    {
       const present: typeof tracks = []
       let sizeRewrites = 0
       for (const t of tracks) {
@@ -1728,6 +1762,16 @@ export function createSyncEngine(host: SyncEngineHost) {
     sendToRenderer('sync-progress', {
       phase: 'db', current: 0, total: 1, title: 'Writing iTunesDB...',
     })
+
+    // Back up the iTunesDB on this Mac first: no backup, no catalog write
+    // (Brief 265 Part 3; ipod-db-backup.ts). The files are already on the card;
+    // refusing here leaves the old catalog describing the old files.
+    const dbBackup = await backupItunesDb({ mount: IPOD_MOUNT, root: join(app.getPath('userData'), IPOD_DB_BACKUP_SUBDIR) })
+    if (!dbBackup.ok) {
+      console.error(`sync-to-ipod: ${backupRefusal(dbBackup.reason)}`)
+      return { ok: false, error: backupRefusal(dbBackup.reason), copied, copyErrors }
+    }
+    if (dbBackup.dir) console.log(`sync-to-ipod: iTunesDB backed up to ${dbBackup.dir}`)
 
     // Backup existing iTunesDB on the card (template + recovery).
     const ipodDb = join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')

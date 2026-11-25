@@ -52,6 +52,7 @@ import { computeDeletedPaths } from './library-deletions'; import { createPhoneI
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createPlayCache } from './play-cache.ts'
 import { atBackgroundPriority } from './background-priority.ts'
+import { AacEncoderMissingError, aacMirrorCacheName, afconvertAacArgs, pcmDecodeArgs, probeAfconvert } from './aac-mirror-recipe.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
 import { mergeQueuedDuringPass, runConvertPass, type ConvertOutcome, type QueueTrack, type StreamConvertItem } from './stream-convert-pass.ts'; import { confirmHomeminiHoldsFile, keptLocalMessage, USER_PENDING_RETRIES, type RefusalMemo } from './offload-confirm.ts'
@@ -3372,24 +3373,19 @@ const SYNC_CONVERT_CACHE_SUBDIR = 'sync-convert-cache'
 const LOSSLESS_EXTS = new Set(['.alac', '.flac', '.wav', '.wave', '.aiff', '.aif'])
 const LOSSLESS_CODECS = new Set(['alac', 'flac', 'pcm_s16le', 'pcm_s24le', 'pcm_s32le', 'pcm_s16be', 'pcm_s24be'])
 
-// Is Apple's afconvert (the CoreAudio AAC encoder that iTunes itself used)
-// available? Memoized. We prefer it over ffmpeg's native `aac` encoder for
-// iPod sync mirrors: the device's ~20-year-old hardware AAC decoder is the
-// same lineage as afconvert's output, whereas ffmpeg's native-AAC bitstream
-// — though spec-clean and decode-perfect in software — is the one variable
-// that changed the sync Jake reported as "a lot of squeaks" (2026-07-11).
-// macOS-only; every other platform falls back to (capped) ffmpeg.
+// Is Apple's afconvert (the CoreAudio AAC encoder) here? Memoized. iPod AAC is
+// Apple's or none: with no afconvert the conversion is refused, never made with
+// ffmpeg's own encoder (aac-mirror-recipe.ts; Brief 265: the old `--help` check
+// exited 2, said "missing" on every Mac, and every mirror was ffmpeg's).
 let _afconvertOk: Promise<boolean> | null = null
 async function afconvertAvailable(): Promise<boolean> {
-  if (process.platform !== 'darwin') return false
   if (_afconvertOk) return _afconvertOk
   _afconvertOk = (async () => {
-    try {
-      const { execFile } = await import('child_process')
-      const { promisify } = await import('util')
-      await promisify(execFile)('afconvert', ['--help'], { timeout: 4000 })
-      return true
-    } catch { return false }
+    const { execFile } = await import('child_process')
+    const { promisify } = await import('util')
+    const ok = await probeAfconvert(() => promisify(execFile)('afconvert', ['-hf'], { timeout: 4000 }))
+    if (!ok) console.error('[sync-convert] Apple\'s AAC encoder (afconvert) is not available: iPod AAC conversions will be refused')
+    return ok
   })()
   return _afconvertOk
 }
@@ -3403,7 +3399,6 @@ async function buildAacMirror(srcPath: string, targetKbps: number, format: 'aac'
   const execP = promisify(execFile)
   // The converts run at background priority: at normal priority they made Jake's music pop during syncs (background-priority.ts).
   const bgExec = (cmd: string, args: string[], o: { timeout: number }) => { const [f, a] = atBackgroundPriority(cmd, args); return execP(f, a, o) }
-  const { createHash } = await import('crypto')
 
   // Quick ext gate: if the source doesn't smell lossless, skip without
   // even probing. Saves the ~200-500ms ffprobe round trip per non-
@@ -3439,66 +3434,34 @@ async function buildAacMirror(srcPath: string, targetKbps: number, format: 'aac'
   // produce different mirror files.
   const cacheDir = join(app.getPath('userData'), SYNC_CONVERT_CACHE_SUBDIR)
   await mkdir(cacheDir, { recursive: true }).catch(() => {})
-  // Cache key carries an encoder-format version token. `afenc-44100-2-v2`
-  // invalidates every mirror produced by the old ffmpeg-native path so the
-  // next sync re-encodes them with afconvert + the iPod-safe 44.1k/stereo
-  // cap. Bump this token whenever the encode recipe changes.
-  const hash = createHash('sha1').update(`${srcPath}|${targetKbps}|afenc-cbr-44100-2-v3`).digest('hex').slice(0, 16)
-  const cached = join(cacheDir, `${hash}.m4a`)
+  // The recipe token is in the name (aac-mirror-recipe.ts): v4 since 2026-11-24, so the
+  // v3 files (ffmpeg-made) are never reused. They stay on disk; nothing here deletes them.
+  const cached = join(cacheDir, aacMirrorCacheName(srcPath, targetKbps))
   try {
     const cStat = await stat(cached)
     if (cStat.mtimeMs >= srcStat.mtimeMs) return cached  // fresh
   } catch { /* not cached yet */ }
 
+  // Apple's encoder or nothing: a refusal is thrown, so the sync never quietly copies the
+  // lossless master or an ffmpeg AAC in its place (the callers name it and skip the song).
+  if (!(await afconvertAvailable())) throw new AacEncoderMissingError(srcPath)
   // Transcode. ~5-30s per track depending on length + CPU.
   const tmp = cached + '.partial.m4a'
   const { rename: renameFS } = await import('fs/promises')
+  // Two stages: ffmpeg decodes ANY source (FLAC/ALAC/WAV/AIFF, hi-res too) to clean
+  // 44.1 kHz / 16-bit stereo LPCM; Apple's afconvert encodes AAC-LC the iPod's decoder plays.
+  const pcm = cached + '.partial.wav'
   try {
-    if (await afconvertAvailable()) {
-      // Two-stage, iPod-native path: ffmpeg decodes ANY source (FLAC/ALAC/
-      // WAV/AIFF, incl. hi-res) down to clean 44.1kHz/16-bit stereo LPCM;
-      // Apple's afconvert then encodes AAC-LC that the iPod hardware decoder
-      // is guaranteed to handle. The -ar/-ac cap also fixes any >48kHz
-      // source that the old ffmpeg-only path passed through untouched.
-      const pcm = cached + '.partial.wav'
-      try {
-        await bgExec('ffmpeg', [
-          '-nostdin', '-y', '-i', srcPath, '-vn',
-          '-ar', '44100', '-ac', '2', '-c:a', 'pcm_s16le',
-          '-f', 'wav', pcm,
-        ], { timeout: 600000 })
-        await bgExec('afconvert', [
-          pcm, '-o', tmp,
-          '-d', 'aac',                    // AAC-LC (not aach/HE — iPod-safe)
-          '-f', 'm4af',                   // MPEG-4 Audio container (.m4a)
-          '-b', String(targetKbps * 1000),
-          '-q', '127',                    // max encoder quality
-          '-s', '0',                      // TRUE CBR — the iTunes-era-native mode every Mini shipped against
-        ], { timeout: 600000 })
-        await renameFS(tmp, cached)
-        return cached
-      } finally {
-        try { await unlink(pcm) } catch { /* already gone */ }
-      }
-    }
-
-    // Fallback (non-macOS / afconvert missing): ffmpeg native AAC, but now
-    // hard-capped to iPod-safe 44.1kHz/stereo so a hi-res source can never
-    // pass through at a rate the device can't clock.
-    await bgExec('ffmpeg', [
-      '-nostdin', '-y', '-i', srcPath, '-vn',
-      '-c:a', 'aac', '-b:a', `${targetKbps}k`,
-      '-ar', '44100', '-ac', '2',
-      '-map_metadata', '0',
-      '-movflags', '+faststart',
-      tmp,
-    ], { timeout: 600000 })
+    await bgExec('ffmpeg', pcmDecodeArgs(srcPath, pcm), { timeout: 600000 })
+    await bgExec('afconvert', afconvertAacArgs(pcm, tmp, targetKbps), { timeout: 600000 })
     await renameFS(tmp, cached)
     return cached
   } catch (err) {
     try { await unlink(tmp) } catch { /* already gone */ }
     console.warn(`[sync-convert] transcode failed for ${srcPath}:`, err)
     return null
+  } finally {
+    try { await unlink(pcm) } catch { /* already gone */ }
   }
 }
 
