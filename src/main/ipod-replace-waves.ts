@@ -128,6 +128,31 @@ export function cardListsPath(listed: Map<string, number> | null, colon: string)
   return false
 }
 
+/**
+ * The full-library sync's view of the card's song list (Brief 266 1c). No iTunesDB at all: an
+ * empty list (nothing is listed, so nothing is protected, as before). An iTunesDB that exists but
+ * can't be read or parsed: 'unreadable', and every file already on the card counts as listed.
+ */
+export type CardListing = Map<string, number> | 'unreadable'
+export async function readCardListing(mount: string): Promise<CardListing> {
+  let buf: Buffer
+  try {
+    buf = await readFile(join(mount, 'iPod_Control', 'iTunes', 'iTunesDB'))
+  } catch (e) {
+    return (e as NodeJS.ErrnoException)?.code === 'ENOENT' ? new Map() : 'unreadable'
+  }
+  return catalogSizesByPath(buf) ?? 'unreadable'
+}
+
+/** The guard before an in-place copy: true = a song the card lists (or may list) is at `dst`; never overwrite it. */
+export async function keepListedOnCard(listing: CardListing, mount: string, dst: string): Promise<boolean> {
+  const there = await stat(dst).catch(() => null)
+  if (!there) return false
+  if (listing === 'unreadable') return true
+  const rel = dst.slice(mount.length).replace(/^[\\/]+/, '')
+  return cardListsPath(listing, ':' + rel.split(/[\\/]/).join(':'))
+}
+
 // ── The waves journal ───────────────────────────────────────────────────────
 //
 // One file in the iPod's state folder, written ONLY by the waves (never by a catalog's manifest

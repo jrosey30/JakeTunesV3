@@ -44,7 +44,7 @@ import {
 import { confirmWriteOnCard, flushCardCaches, remountVerifyEntries, retireIpodFirmwareScratch } from '../ipod-sync-card.ts'
 import { isAacEncoderMissing } from '../aac-mirror-recipe.ts'
 import { deleteLandedRecord } from '../ipod-landed-record.ts'
-import { cardListsPath, catalogSizesByPath } from '../ipod-replace-waves.ts'
+import { keepListedOnCard, readCardListing } from '../ipod-replace-waves.ts'
 import { applyFileStamps, createFileStampCache, fileToStamp } from '../ipod-file-stamps.ts'
 import { backupItunesDb, backupRefusal } from '../ipod-db-backup.ts'
 
@@ -1117,7 +1117,9 @@ export function createSyncEngine(host: SyncEngineHost) {
     }
 
     // The catalog on the card now: a file it lists (at that size) is a song on the iPod, never overwritten in place.
-    const listedOnCard = catalogSizesByPath(await readFile(join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')).catch(() => Buffer.alloc(0))) ?? new Map<string, number>()
+    // A song list that exists but can't be read or parsed protects every file already on the card (Brief 266 1c).
+    const listedOnCard = await readCardListing(IPOD_MOUNT)
+    if (listedOnCard === 'unreadable') console.warn('sync-to-ipod: the iPod\'s song list could not be read — no song already on the iPod is replaced in place')
     for (const { local, ipod, title, trackId } of toCopy) {
       // 4.5.0-109: cancellation check at the file boundary. Per-file is the
       // right granularity — fine enough that a Cancel click is felt within
@@ -1325,9 +1327,8 @@ export function createSyncEngine(host: SyncEngineHost) {
       // doesn't do that: the song stays as it is on the iPod and is named in the result; the
       // iPod's own Sync replaces songs safely, beside the originals.
       {
-        const there = await stat(dstToCopy).catch(() => null)
         // Listed at any size, in any letter case (FAT and HFS+ ignore case): it's a song on the iPod.
-        if (there && cardListsPath(listedOnCard, ':' + dstToCopy.slice(IPOD_MOUNT.length + 1).split(pathSep).join(':'))) {
+        if (await keepListedOnCard(listedOnCard, IPOD_MOUNT, dstToCopy)) {
           const tr = trackByLocal.get(local)
           console.warn(`sync-to-ipod: "${title}" is on the iPod in another form — kept as it is (no in-place replacement)`)
           notReplaced.push({ id: Number(tr?.id), title: String(tr?.title ?? title), artist: String(tr?.artist ?? '') })
