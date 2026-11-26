@@ -22,6 +22,25 @@ import { aacMirrorCacheName, ipodAlacMirrorCacheName, mp3MirrorCacheName } from 
 
 const KBPS = [128, 192, 256, 320]
 
+/**
+ * The protected copies couldn't be worked out. `message` is for the log (it may name a file or
+ * a song id); `plain` is what the Device page shows: plain words, never an id or a path.
+ */
+export class ProtectionUnknownError extends Error {
+  readonly plain: string
+  constructor(message: string, plain: string) { super(message); this.name = 'ProtectionUnknownError'; this.plain = plain }
+}
+
+const RECORD_UNREADABLE = 'The record of what’s on one of your iPods couldn’t be read. Sync that iPod, then try again.'
+/** A song deleted from the library that an iPod still holds (Brief 265 review of #506). */
+export const DELETED_SONG_ON_IPOD = 'A song deleted from the library is still on an iPod. Sync that iPod, then try again.'
+export const LIBRARY_LOADING = 'The library is still loading. Try again in a minute.'
+
+/** What the page says about a failed protection: the error's plain words, else a generic line. */
+export function plainProtectionWhy(err: unknown): string {
+  return err instanceof ProtectionUnknownError ? err.plain : 'Couldn’t tell which converted copies the songs on your iPods use. Try again in a minute.'
+}
+
 /** Every cache name a song's master can have been converted under. */
 export function mirrorNamesFor(masterAbs: string): string[] {
   return [
@@ -38,16 +57,16 @@ async function manifestIds(file: string): Promise<number[]> {
     text = await readFile(file, 'utf-8')
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
-    throw new Error(`a sync record can't be read (${file}): ${err instanceof Error ? err.message : String(err)}`)
+    throw new ProtectionUnknownError(`a sync record can't be read (${file}): ${err instanceof Error ? err.message : String(err)}`, RECORD_UNREADABLE)
   }
   let m: { tracks?: unknown }
   try { m = JSON.parse(text) as { tracks?: unknown } } catch {
-    throw new Error(`a sync record is damaged (${file})`)
+    throw new ProtectionUnknownError(`a sync record is damaged (${file})`, RECORD_UNREADABLE)
   }
-  if (!Array.isArray(m.tracks)) throw new Error(`a sync record has no song list (${file})`)
+  if (!Array.isArray(m.tracks)) throw new ProtectionUnknownError(`a sync record has no song list (${file})`, RECORD_UNREADABLE)
   return (m.tracks as Array<{ id?: unknown }>).map((t) => {
     const id = Number(t?.id)
-    if (!Number.isInteger(id) || id < 0) throw new Error(`a sync record names a song it can't (${file})`)
+    if (!Number.isInteger(id) || id < 0) throw new ProtectionUnknownError(`a sync record names a song it can't (${file})`, RECORD_UNREADABLE)
     return id
   })
 }
@@ -61,14 +80,14 @@ export async function protectedMirrorNames(opts: {
   libraryRoot: string | null
   tracks: ReadonlyArray<{ id?: unknown; path?: unknown }>
 }): Promise<Set<string>> {
-  if (!opts.libraryRoot) throw new Error('the library folder isn’t known yet')
-  if (opts.tracks.length === 0) throw new Error('the library can’t be read (no songs)')
+  if (!opts.libraryRoot) throw new ProtectionUnknownError('the library folder isn’t known yet', LIBRARY_LOADING)
+  if (opts.tracks.length === 0) throw new ProtectionUnknownError('the library can’t be read (no songs)', 'The library couldn’t be read. Try again in a minute.')
   const files = [join(opts.stateDir, 'last-sync-manifest.json')]
   let pools: string[] = []
   try {
     pools = await readdir(join(opts.stateDir, 'ipod-pools'))
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`the iPods' sync records can't be listed: ${err instanceof Error ? err.message : String(err)}`)
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw new ProtectionUnknownError(`the iPods' sync records can't be listed: ${err instanceof Error ? err.message : String(err)}`, 'The record of what’s on your iPods couldn’t be read. Try again in a minute.')
   }
   for (const p of pools) files.push(join(opts.stateDir, 'ipod-pools', p, 'last-sync-manifest.json'))
   const pathById = new Map<number, string>()
@@ -77,7 +96,7 @@ export async function protectedMirrorNames(opts: {
   for (const f of files) {
     for (const id of await manifestIds(f)) {
       const colon = pathById.get(id)
-      if (!colon) throw new Error(`song ${id} is on an iPod but not in the library`)
+      if (!colon) throw new ProtectionUnknownError(`song ${id} is on an iPod (${f}) but not in the library`, DELETED_SONG_ON_IPOD)
       const abs = join(opts.libraryRoot, ...colon.replace(/^:/, '').split(':'))
       for (const n of mirrorNamesFor(abs)) out.add(n)
     }

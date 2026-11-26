@@ -18,6 +18,7 @@
  */
 import { readdir, rm, stat, unlink, utimes, readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { plainProtectionWhy } from './sync-convert-cache-protect.ts'
 
 export const SYNC_CONVERT_CACHE_SUBDIR = 'sync-convert-cache'
 export const CACHE_SETTINGS_FILE = 'sync-convert-cache-settings.json'
@@ -76,7 +77,7 @@ export function planPrune(files: readonly CacheFile[], capBytes: number, protect
 }
 
 export type PruneResult =
-  | { pruned: false; why: 'no cap set' | 'a sync is running' | 'under the cap' | 'protection unknown'; detail?: string }
+  | { pruned: false; why: 'no cap set' | 'a sync is running' | 'under the cap' | 'protection unknown'; detail?: string; plain?: string }
   | { pruned: true; removed: number; freedBytes: number; leftBytes: number }
 
 /** Prune to the cap. No cap (the default) = nothing is ever deleted. */
@@ -91,7 +92,7 @@ export async function pruneToCap(dir: string, capGb: number | null, opts: { sync
   try { protect = opts.protect ? await opts.protect() : new Set() } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
     console.warn(`[sync-cache] could not tell which copies the iPods use — nothing pruned: ${detail}`)
-    return { pruned: false, why: 'protection unknown', detail }
+    return { pruned: false, why: 'protection unknown', detail, plain: plainProtectionWhy(err) }
   }
   const victims = planPrune(files, cap, protect)
   if (victims.length === 0) return { pruned: false, why: 'under the cap' }
@@ -113,7 +114,9 @@ export async function clearCache(dir: string, opts: { syncInFlight: () => boolea
   if (opts.syncInFlight()) return { ok: false, error: 'An iPod sync is running. Clear the cache when it’s done.' }
   let protect: ReadonlySet<string>
   try { protect = opts.protect ? await opts.protect() : new Set() } catch (err) {
-    return { ok: false, error: `Couldn’t tell which copies the songs on your iPods use (${err instanceof Error ? err.message : String(err)}), so nothing was emptied.` }
+    // The page gets plain words; the detail (a file, a song id) goes to the log only.
+    console.warn(`[sync-cache] could not tell which copies the iPods use — nothing emptied: ${err instanceof Error ? err.message : String(err)}`)
+    return { ok: false, error: `Nothing was emptied. ${plainProtectionWhy(err)}` }
   }
   let removed = 0
   let freed = 0
@@ -121,7 +124,7 @@ export async function clearCache(dir: string, opts: { syncInFlight: () => boolea
   for (const f of await listCache(dir)) {
     if (protect.has(f.name)) { kept++; continue }
     // A sync that starts part-way through stops the clear: it may be reading these files.
-    if (opts.syncInFlight()) return { ok: false, error: `An iPod sync started. ${removed} file(s) were cleared; clear again when it’s done.` }
+    if (opts.syncInFlight()) return { ok: false, error: `An iPod sync started, so emptying stopped after ${removed} ${removed === 1 ? 'copy' : 'copies'}. Empty again when it’s done.` }
     try { await rm(f.path, { force: true }); removed++; freed += f.size } catch (err) { console.warn(`[sync-cache] could not remove ${f.name}:`, err instanceof Error ? err.message : err) }
   }
   return { ok: true, removed, freedBytes: freed, kept }

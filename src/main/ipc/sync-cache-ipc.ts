@@ -16,6 +16,7 @@ import {
   CACHE_SETTINGS_FILE, SYNC_CONVERT_CACHE_SUBDIR, cacheStatus, clearCache, pruneToCap, readCapGb, sweepPartials, writeCapGb,
   type PruneResult,
 } from '../sync-convert-cache.ts'
+import { LIBRARY_LOADING, ProtectionUnknownError } from '../sync-convert-cache-protect.ts'
 
 export interface SyncCacheHost {
   userData: string
@@ -36,7 +37,7 @@ export function startSyncConvertCache(ipc: IpcRegistrar, host: SyncCacheHost): {
   // Until the host is ready (the library folder known), the protected copies can't be worked out:
   // nothing is pruned or emptied (the protect function throws too; this says why sooner).
   const protect = async (): Promise<ReadonlySet<string>> => {
-    if (host.ready && !host.ready()) throw new Error('the library folder isn’t known yet')
+    if (host.ready && !host.ready()) throw new ProtectionUnknownError('the library folder isn’t known yet', LIBRARY_LOADING)
     return host.protectedNames ? host.protectedNames() : new Set()
   }
   const prune = async (why: string): Promise<PruneResult> => {
@@ -61,7 +62,7 @@ export function startSyncConvertCache(ipc: IpcRegistrar, host: SyncCacheHost): {
     await writeCapGb(settings, capGb)
     const r = await prune('cap set')
     const note = !r.pruned && r.why === 'protection unknown'
-      ? `Nothing was emptied: couldn’t tell which copies the songs on your iPods use (${r.detail}).`
+      ? `Nothing was emptied. ${r.plain ?? ''}`.trim()
       : undefined
     return { ok: true, ...(await cacheStatus(dir, settings)), ...(note ? { note } : {}) }
   }, { refuse: REFUSED_SENDER })
