@@ -51,7 +51,8 @@ describe('the movement is one small mark, or nothing', () => {
   test('the mark and the speaker are named for screen readers; the glyph is 9 px', () => {
     const v = read('views', 'SmartPlaylistView.tsx')
     assert.match(v, /role="img" aria-label=\{mark\.title\}/)
-    assert.match(v, /<span role="img" aria-label="Now playing"><SpeakerPlayingIcon \/><\/span>/)
+    assert.match(v, /className="rank-playing" role="img" aria-label=\{`Now playing, number \$\{rank\}`\}[^>]*><SpeakerPlayingIcon \/><\/span>/)
+    assert.doesNotMatch(read('styles', 'songs.css'), /\.rank-mark svg/, 'the speaker is never squeezed into the 9 px mark slot')
     assert.match(read('styles', 'songs.css'), /\.rank-mark-glyph \{ font-size: 9px;/)
   })
   test('the header # lines up with the digits (4 px in from the edge, like the cell)', () => {
