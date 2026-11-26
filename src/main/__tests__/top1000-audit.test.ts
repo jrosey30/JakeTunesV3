@@ -355,3 +355,15 @@ describe('blind check: answers go on disk first and leave in order', () => {
     }
   })
 })
+
+describe('the blind check panel asks for a question once, not on every redraw', () => {
+  const src = readFileSync(new URL('../../renderer/views/Top1000AuditPanel.tsx', import.meta.url), 'utf-8')
+  it('fetchNext never changes identity (no props or hooks in its deps)', () => {
+    const m = src.match(/const fetchNext = useCallback\(async \(\) => \{[\s\S]*?\n {2}\}, \[([^\]]*)\]\)/)
+    assert.ok(m, 'fetchNext is a useCallback')
+    assert.equal(m![1].trim(), '', `fetchNext deps must be empty, got [${m![1]}]: a redraw would fetch again and restart the click guard`)
+  })
+  it('the same question again keeps its phase, so the click guard is not restarted', () => {
+    assert.match(src, /prev\.kind === 'ask' && prev\.q\.qid === s\.question\.qid \? prev/)
+  })
+})
