@@ -62,7 +62,7 @@ describe('the rule', () => {
   })
   test('a phone edit counts only for its own song (fingerprint, loosely)', () => {
     const phone = { '5': { fp: 'reelin in the years|steely dan|275000', fields: { year: '1972' } } }
-    assert.deepEqual(phoneEdit(phone, 5, 'year', 'Reelin In The Years|Steely Dan|274000'), { v: '1972' })
+    assert.deepEqual(phoneEdit(phone, 5, 'year', 'Reelin In The Years|Steely Dan|274000'), { v: '1972', dur: 275000 })
     assert.equal(phoneEdit(phone, 5, 'year', 'something else|someone|275000'), undefined)
     assert.equal(phoneEdit(phone, 5, 'genre', 'reelin in the years|steely dan|275000'), undefined)
     assert.equal(sameFingerprint('a|b|1000', 'A |b|1500'), true)
@@ -256,6 +256,17 @@ describe('the override merge keeps his other fields when he corrects a title', (
     assert.deepEqual(await timed(7, 'dirty work|steely dan|400000'), { title: [], artist: [] }, 'his edit was of a song of another length: not evidence here')
     const broken = createJakeNames(createJakeEdits({ readJournal: async () => { throw new Error('torn') }, readPhone: async () => null }))
     assert.deepEqual(await broken(7), { title: [], artist: [] }, 'unreadable: no evidence, so a changed fingerprint starts fresh')
+  })
+  test('a title Jake fixed on the phone, then a tempo write: the desktop fields stay', async () => {
+    // homemini keeps the phone entry under the song as it was BEFORE his edit.
+    const phone = { '21': { fp: 'track 03|steely dan|237000', fields: { title: 'Peg' } } }
+    const names = createJakeNames(createJakeEdits({ readJournal: async () => null, readPhone: async () => phone }))
+    const jake = await names(21, 'peg|steely dan|237400')
+    assert.deepEqual(jake, { title: ['Peg'], artist: [] }, 'his phone fix counts, matched by id and length')
+    const o: Record<string, unknown> = { '21': { fp: 'track 03|steely dan|237000', fields: { genre: 'Yacht Rock', year: '1977', rating: '100' } } }
+    mergeOverrideField(o, 21, 'bpm', '96', 'peg|steely dan|237400', jake)   // the tempo writer
+    assert.deepEqual(o['21'], { fp: 'peg|steely dan|237400', fields: { genre: 'Yacht Rock', year: '1977', rating: '100', bpm: '96' } })
+    assert.deepEqual(await names(21, 'peg|steely dan|400000'), { title: [], artist: [] }, 'a song of another length under that id: not his')
   })
   test('a non-Jake writer hitting a mismatched fingerprint with no evidence never restamps his entry', () => {
     const o: Record<string, unknown> = { '3': { fp: 'song a|band a|200000', fields: { genre: 'Jazz' } } }

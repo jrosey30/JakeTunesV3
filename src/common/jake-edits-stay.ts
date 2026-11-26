@@ -90,7 +90,10 @@ export function phoneEdit(
   const v = e?.fields?.[field]
   if (v === undefined || v === null) return undefined
   if (e?.fp && fp && !sameFingerprint(e.fp, fp)) return undefined
-  return { v: String(v) }
+  // The entry's length rides along, so a caller matching by id + length (a title
+  // the phone itself just changed) can still tell another song apart.
+  const dur = e?.fp ? Number(e.fp.slice(e.fp.lastIndexOf('|') + 1)) || undefined : undefined
+  return dur ? { v: String(v), dur } : { v: String(v) }
 }
 
 type Update = { trackId: number; field: string; newValue: string }

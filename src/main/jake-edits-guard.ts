@@ -72,13 +72,16 @@ export function createHeldForJake(edits: { lookup: () => Promise<JakeEditLookup>
  * no evidence: a changed fingerprint then starts the entry fresh, as it always did.
  */
 export function createJakeNames(edits: { lookup: () => Promise<JakeEditLookup> }) {
-  /** `fingerprint`: the song the id names now; his records for a song of another length (or another phone entry) don't count. */
+  /** `fingerprint`: the song the id names now; his records (journal or phone) for a song of another length don't count. */
   return async (trackId: number | string, fingerprint?: string): Promise<{ title: string[]; artist: string[] }> => {
     let look: JakeEditLookup
     try { look = await edits.lookup() } catch { return { title: [], artist: [] } }
     const id = Number(trackId)
     const dur = fingerprint ? Number(fingerprint.slice(fingerprint.lastIndexOf('|') + 1)) || undefined : undefined
-    const names = (field: string): string[] => look(id, field, fingerprint).filter((e) => sameLength(e.dur, dur)).map((e) => e.v)
+    // By id + length, never by the phone's fingerprint: the phone's entry carries
+    // the song as it was BEFORE his edit (homemini util/mobileMetadata.ts), so a
+    // title he fixed there never matches the new fingerprint (review of #505).
+    const names = (field: string): string[] => look(id, field, undefined).filter((e) => sameLength(e.dur, dur)).map((e) => e.v)
     return { title: names('title'), artist: names('artist') }
   }
 }
