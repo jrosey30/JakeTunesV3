@@ -35,8 +35,8 @@
  *                    play-events.jsonl, the per-play log (this Mac's plays +
  *                    iPod round-trips) that Top 25's Last Week / Last Month
  *                    and Home's spotlight already read
- *   island-album     the 10 island albums, slot order, disc / track order
- *   favorite-artist  the 5 favorite artists' tracks, slot order, most played first
+ *   island-album     the island albums, slot order, disc / track order
+ *   favorite-artist  the favorite artists' tracks, slot order, most played first
  *   playlist         Jake's own playlists, most recently edited first
  *   most-played      everything else with plays, by lifetime playCount
  *

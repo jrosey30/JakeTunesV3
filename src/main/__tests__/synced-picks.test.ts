@@ -5,13 +5,15 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ISLAND_ALBUMS_SPEC, FAVORITE_ARTISTS_SPEC, ISLAND_SLOT_COUNT, FAVORITE_ARTIST_SLOT_COUNT,
-  validateIslandSlots, validateFavoriteArtists, parsePicksDoc, emptyPicksDoc, toWireDoc,
+  validateIslandSlots, validateFavoriteArtists, parsePicksDoc, emptyPicksDoc, toWireDoc, isShortPicksDoc, countWord,
   placeInSlot, clearSlot, moveSlot, slotOf, firstEmptySlot, sameValues,
   islandAlbumKey, favoriteArtistKey, isPicksKind, identityKey, primaryArtistOf,
   type IslandSlot, type FavoriteSlot, type IslandAlbum,
 } from '../../common/synced-picks.ts'
 
 const nulls = <V,>(n: number): V[] => Array.from({ length: n }, () => null as V)
+/** A favorites list: these entries, then empty slots up to the count. */
+const favs = (head: unknown[]): unknown[] => [...head, ...nulls<unknown>(FAVORITE_ARTIST_SLOT_COUNT - head.length)]
 const islands = (...picks: Array<[number, string, string]>): IslandSlot[] => {
   const v = nulls<IslandSlot>(ISLAND_SLOT_COUNT)
   for (const [i, artist, album] of picks) v[i] = { artist, album }
@@ -19,22 +21,24 @@ const islands = (...picks: Array<[number, string, string]>): IslandSlot[] => {
 }
 
 describe('validateIslandSlots', () => {
-  it('accepts exactly 10 slots of picks and nulls', () => {
-    const r = validateIslandSlots(islands([0, 'Radiohead', 'OK Computer'], [9, 'Björk', 'Homogenic']))
+  it('accepts exactly 20 slots of picks and nulls', () => {
+    const r = validateIslandSlots(islands([0, 'Radiohead', 'OK Computer'], [9, 'Björk', 'Homogenic'], [19, 'Can', 'Tago Mago']))
     assert.equal(r.ok, true)
-    if (r.ok) { assert.equal(r.values.length, 10); assert.deepEqual(r.values[0], { artist: 'Radiohead', album: 'OK Computer' }) }
+    if (r.ok) { assert.equal(r.values.length, 20); assert.deepEqual(r.values[0], { artist: 'Radiohead', album: 'OK Computer' }); assert.deepEqual(r.values[19], { artist: 'Can', album: 'Tago Mago' }) }
   })
 
   it('refuses the wrong length and non-arrays', () => {
-    assert.match((validateIslandSlots(nulls(9)) as { error: string }).error, /exactly 10 entries \(got 9\)/)
-    assert.match((validateIslandSlots(nulls(11)) as { error: string }).error, /got 11/)
+    assert.match((validateIslandSlots(nulls(9)) as { error: string }).error, /exactly 20 entries \(got 9\)/)
+    assert.match((validateIslandSlots(nulls(21)) as { error: string }).error, /got 21/)
+    // The old length is not something this app sends from a full edit.
+    assert.match((validateIslandSlots(nulls(10)) as { error: string }).error, /got 10/)
     assert.equal(validateIslandSlots({ slots: [] }).ok, false)
     assert.equal(validateIslandSlots(null).ok, false)
   })
 
   it('refuses empty / whitespace / missing artist or album', () => {
     for (const bad of [{ artist: '', album: 'X' }, { artist: 'A', album: '' }, { artist: '   ', album: 'X' }, { album: 'X' }, { artist: 'A' }, 'OK Computer', 7]) {
-      const v = nulls<unknown>(10); v[3] = bad
+      const v = nulls<unknown>(ISLAND_SLOT_COUNT); v[3] = bad
       const r = validateIslandSlots(v)
       assert.equal(r.ok, false, JSON.stringify(bad))
       if (!r.ok) assert.match(r.error, /slot 4/)
@@ -52,7 +56,7 @@ describe('validateIslandSlots', () => {
   })
 
   it('strips extra fields — only {artist, album} goes on the wire', () => {
-    const v = nulls<unknown>(10); v[0] = { artist: 'A', album: 'B', trackIds: [1, 2], key: 'x' }
+    const v = nulls<unknown>(ISLAND_SLOT_COUNT); v[0] = { artist: 'A', album: 'B', trackIds: [1, 2], key: 'x' }
     const r = validateIslandSlots(v)
     assert.equal(r.ok, true)
     if (r.ok) assert.deepEqual(r.values[0], { artist: 'A', album: 'B' })
@@ -60,17 +64,17 @@ describe('validateIslandSlots', () => {
 })
 
 describe('validateFavoriteArtists', () => {
-  it('accepts exactly 5 of names and nulls', () => {
-    assert.equal(validateFavoriteArtists(['Radiohead', null, 'Björk', null, null]).ok, true)
+  it('accepts exactly 10 of names and nulls', () => {
+    assert.equal(validateFavoriteArtists(favs(['Radiohead', null, 'Björk', null, null])).ok, true)
   })
   it('refuses wrong length, empty strings, non-strings', () => {
-    assert.equal(validateFavoriteArtists(['a', 'b', 'c', 'd']).ok, false)
-    assert.equal(validateFavoriteArtists(['a', '', null, null, null]).ok, false)
-    assert.equal(validateFavoriteArtists(['a', '  ', null, null, null]).ok, false)
-    assert.equal(validateFavoriteArtists(['a', 3, null, null, null]).ok, false)
+    assert.equal(validateFavoriteArtists(['a', 'b', 'c', 'd', 'e']).ok, false)
+    assert.equal(validateFavoriteArtists(favs(['a', '', null, null, null])).ok, false)
+    assert.equal(validateFavoriteArtists(favs(['a', '  ', null, null, null])).ok, false)
+    assert.equal(validateFavoriteArtists(favs(['a', 3, null, null, null])).ok, false)
   })
   it('refuses an artist twice by nameKey', () => {
-    const r = validateFavoriteArtists(['Sigur Rós', null, 'sigur ros', null, null])
+    const r = validateFavoriteArtists(favs(['Sigur Rós', null, 'sigur ros', null, null]))
     assert.equal(r.ok, false)
     if (!r.ok) assert.match(r.error, /slots 1 and 3/)
   })
@@ -82,14 +86,14 @@ describe('parsePicksDoc (tolerant read of what homemini serves)', () => {
       version: 1, slots: islands([0, 'A', 'B']), updatedAt: '2026-10-18T12:00:00.000Z', updatedBy: 'phone',
     })
     assert.ok(doc)
-    assert.equal(doc!.values.length, 10)
+    assert.equal(doc!.values.length, 20)
     assert.deepEqual(doc!.values[0], { artist: 'A', album: 'B' })
     assert.equal(doc!.updatedBy, 'phone')
     assert.equal(doc!.updatedAt, '2026-10-18T12:00:00.000Z')
   })
   it('forces the slot count: pads short, drops the overflow', () => {
-    assert.equal(parsePicksDoc(ISLAND_ALBUMS_SPEC, { slots: [{ artist: 'A', album: 'B' }] })!.values.length, 10)
-    assert.equal(parsePicksDoc(FAVORITE_ARTISTS_SPEC, { artists: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] })!.values.length, 5)
+    assert.equal(parsePicksDoc(ISLAND_ALBUMS_SPEC, { slots: [{ artist: 'A', album: 'B' }] })!.values.length, 20)
+    assert.equal(parsePicksDoc(FAVORITE_ARTISTS_SPEC, { artists: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'] })!.values.length, 10)
   })
   it('a malformed entry is an empty slot; a duplicate keeps its FIRST slot', () => {
     const doc = parsePicksDoc(ISLAND_ALBUMS_SPEC, { slots: [{ artist: 'A', album: 'B' }, { artist: '' }, 'junk', { artist: 'a', album: 'b' }] })!
@@ -107,7 +111,7 @@ describe('parsePicksDoc (tolerant read of what homemini serves)', () => {
     assert.equal(parsePicksDoc(ISLAND_ALBUMS_SPEC, '[]'), null)
   })
   it('toWireDoc round-trips', () => {
-    const doc = { ...emptyPicksDoc(FAVORITE_ARTISTS_SPEC), values: ['X', null, null, null, null] as FavoriteSlot[] }
+    const doc = { ...emptyPicksDoc(FAVORITE_ARTISTS_SPEC), values: ['X', null, null, null, null, null, null, 'Y', null, null] as FavoriteSlot[] }
     const wire = toWireDoc(FAVORITE_ARTISTS_SPEC, doc)
     assert.deepEqual(Object.keys(wire).sort(), ['artists', 'updatedAt', 'updatedBy', 'version'])
     assert.deepEqual(parsePicksDoc(FAVORITE_ARTISTS_SPEC, wire), doc)
@@ -137,7 +141,7 @@ describe('slot editing', () => {
     assert.equal(after.filter(Boolean).length, 1)
   })
   it('placeInSlot ignores an out-of-range slot', () => {
-    assert.deepEqual(placeInSlot(islands(), 10, ok, k), islands())
+    assert.deepEqual(placeInSlot(islands(), 20, ok, k), islands())
     assert.deepEqual(placeInSlot(islands(), -1, ok, k), islands())
   })
   it('clearSlot empties one slot', () => {
@@ -153,7 +157,8 @@ describe('slot editing', () => {
     assert.equal(intoEmpty[1], null)
     assert.deepEqual(intoEmpty[2], { artist: 'C', album: 'D' })
     assert.deepEqual(moveSlot(v, 0, -1), v)
-    assert.deepEqual(moveSlot(islands([9, 'A', 'B']), 9, 1), islands([9, 'A', 'B']))
+    assert.deepEqual(moveSlot(islands([19, 'A', 'B']), 19, 1), islands([19, 'A', 'B']))
+    assert.deepEqual(moveSlot(islands([9, 'A', 'B']), 9, 1), islands([10, 'A', 'B']), 'rank 10 moves on into rank 11')
   })
   it('favorites: placeInSlot dedupes by nameKey', () => {
     const v: FavoriteSlot[] = ['Björk', null, null, null, null]
@@ -173,8 +178,8 @@ describe('slot editing', () => {
     assert.equal(isPicksKind('recommendations'), false)
   })
   it('slot counts are the contract', () => {
-    assert.equal(ISLAND_SLOT_COUNT, 10)
-    assert.equal(FAVORITE_ARTIST_SLOT_COUNT, 5)
+    assert.equal(ISLAND_SLOT_COUNT, 20)
+    assert.equal(FAVORITE_ARTIST_SLOT_COUNT, 10)
   })
 })
 
@@ -186,14 +191,14 @@ describe('identity — the backend\'s fold (curatedSlots.ts keyOrRaw)', () => {
   it('a name nameKey folds to "" keeps its raw (trimmed, lowercased) form — "!!!" and "???" are two artists', () => {
     assert.equal(identityKey('!!!'), '!!!')
     assert.notEqual(favoriteArtistKey('!!!'), favoriteArtistKey('???'))
-    assert.equal(validateFavoriteArtists(['!!!', '???', null, null, null]).ok, true)
-    assert.equal(validateFavoriteArtists(['!!!', ' !!! ', null, null, null]).ok, false)
+    assert.equal(validateFavoriteArtists(favs(['!!!', '???', null, null, null])).ok, true)
+    assert.equal(validateFavoriteArtists(favs(['!!!', ' !!! ', null, null, null])).ok, false)
   })
   it('entries are stored trimmed (as the backend stores them)', () => {
     const r = validateIslandSlots(islands([0, '  Radiohead ', ' OK Computer  ']))
     assert.equal(r.ok, true)
     if (r.ok) assert.deepEqual(r.values[0], { artist: 'Radiohead', album: 'OK Computer' })
-    const f = validateFavoriteArtists([' Björk ', null, null, null, null])
+    const f = validateFavoriteArtists(favs([' Björk ', null, null, null, null]))
     if (f.ok) assert.equal(f.values[0], 'Björk')
   })
 })
@@ -217,5 +222,39 @@ describe('primaryArtistOf — the backend\'s album identity (library.ts primaryA
   it('blank → Unknown Artist; whitespace trimmed', () => {
     assert.equal(primaryArtistOf({ artist: '' }), 'Unknown Artist')
     assert.equal(primaryArtistOf({ albumArtist: '  ', artist: '  Radiohead ' }), 'Radiohead')
+  })
+})
+
+describe('the lists grew: 20 island albums, 10 favorite artists (2026-11-26)', () => {
+  it('the counts, and the lengths from before', () => {
+    assert.equal(ISLAND_SLOT_COUNT, 20)
+    assert.equal(FAVORITE_ARTIST_SLOT_COUNT, 10)
+    assert.equal(ISLAND_ALBUMS_SPEC.count, 20)
+    assert.equal(ISLAND_ALBUMS_SPEC.legacyCount, 10)
+    assert.equal(FAVORITE_ARTISTS_SPEC.count, 10)
+    assert.equal(FAVORITE_ARTISTS_SPEC.legacyCount, 5)
+  })
+  it('a document from before reads as its entries, then empty slots — and says it is short', () => {
+    const ten = Array.from({ length: 10 }, (_, i) => ({ artist: `A${i}`, album: `B${i}` }))
+    const old = { version: 1, slots: ten, updatedAt: '2026-11-01T00:00:00.000Z', updatedBy: 'phone' }
+    const doc = parsePicksDoc(ISLAND_ALBUMS_SPEC, old)!
+    assert.deepEqual(doc.values.slice(0, 10), ten)
+    assert.deepEqual(doc.values.slice(10), nulls(10))
+    assert.equal(isShortPicksDoc(ISLAND_ALBUMS_SPEC, old), true)
+    assert.equal(isShortPicksDoc(ISLAND_ALBUMS_SPEC, toWireDoc(ISLAND_ALBUMS_SPEC, doc)), false)
+    assert.equal(isShortPicksDoc(ISLAND_ALBUMS_SPEC, null), false)
+    assert.equal(isShortPicksDoc(FAVORITE_ARTISTS_SPEC, { artists: ['a', 'b', 'c', 'd', 'e'] }), true)
+    assert.deepEqual(parsePicksDoc(FAVORITE_ARTISTS_SPEC, { artists: ['a', 'b', null, 'd', 'e'] })!.values, ['a', 'b', null, 'd', 'e', null, null, null, null, null])
+  })
+  it('a duplicate across the old and the new slots is refused', () => {
+    const r = validateIslandSlots(islands([3, 'Can', 'Tago Mago'], [16, 'CAN', 'tago mago']))
+    assert.equal(r.ok, false)
+    if (!r.ok) assert.match(r.error, /slots 4 and 17/)
+  })
+  it('the words follow the number', () => {
+    assert.equal(countWord(ISLAND_SLOT_COUNT), 'twenty')
+    assert.equal(countWord(FAVORITE_ARTIST_SLOT_COUNT), 'ten')
+    assert.equal(countWord(5), 'five')
+    assert.equal(countWord(7), '7')
   })
 })

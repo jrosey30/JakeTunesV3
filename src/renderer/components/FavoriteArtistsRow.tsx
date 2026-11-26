@@ -1,5 +1,6 @@
 /**
- * FAVORITE ARTISTS (2026-10-18) — Jake's 5 ranked artists, top of the
+ * FAVORITE ARTISTS (2026-10-18) — Jake's ranked artists (ten since
+ * 2026-11-26, in rows of five), top of the
  * Artists page, synced both ways with the phone through homemini
  * (renderer/syncedPicks.ts). Same photo circles as the grid below
  * (artist-photo.ts portraits via artist-image://, initials disc when there is
@@ -15,7 +16,7 @@ import { canonicalArtist } from '../utils/artistAlias'
 import { setNotice } from '../activity'
 import { useFavoriteArtists, saveFavoriteArtists, picksStatusLine, picksEditable } from '../syncedPicks'
 import {
-  clearSlot, favoriteArtistKey, moveSlot, placeInSlot, FAVORITE_ARTIST_SLOT_COUNT,
+  clearSlot, countWord, favoriteArtistKey, moveSlot, placeInSlot, FAVORITE_ARTIST_SLOT_COUNT,
   type FavoriteSlot,
 } from '../../common/synced-picks'
 import '../styles/synced-picks.css'
@@ -34,8 +35,9 @@ interface Props {
 
 const plural = (n: number, w: string): string => `${n.toLocaleString()} ${w}${n === 1 ? '' : 's'}`
 
-async function commit(next: FavoriteSlot[]): Promise<void> {
-  const r = await saveFavoriteArtists(next)
+/** `from` is the state `next` was built from (see IslandAlbumsShelf commit). */
+async function commit(next: FavoriteSlot[], from: { tailKnown?: boolean }): Promise<void> {
+  const r = await saveFavoriteArtists(next, from.tailKnown === true)
   // A refused save (homemini's 400 sentence, or "not synced yet") — say it.
   if (!r.ok) setNotice(r.error, { kind: 'error' })
 }
@@ -66,7 +68,7 @@ export default function FavoriteArtistsRow({ artists, onOpenArtist }: Props): JS
   const cardFor = (name: string): FavoriteCandidate | undefined =>
     byKey.get(favoriteArtistKey(canonicalArtist(name))) ?? byKey.get(favoriteArtistKey(name))
 
-  // Portraits for the five names (single-flight + 30-day cache live in main).
+  // Portraits for the names (single-flight + 30-day cache live in main).
   useEffect(() => {
     let live = true
     for (const v of values) {
@@ -93,10 +95,10 @@ export default function FavoriteArtistsRow({ artists, onOpenArtist }: Props): JS
     if (!values[slot]) return [{ label: 'Choose Artist…', disabled: !editable, onClick: () => setPicking(slot) }]
     return [
       { label: 'Replace…', disabled: !editable, onClick: () => setPicking(slot) },
-      { label: 'Remove', disabled: !editable, onClick: () => { void commit(clearSlot(values, slot)) } },
+      { label: 'Remove', disabled: !editable, onClick: () => { void commit(clearSlot(values, slot), picks) } },
       { separator: true },
-      { label: 'Move Left', disabled: !editable || slot === 0, onClick: () => { void commit(moveSlot(values, slot, -1)) } },
-      { label: 'Move Right', disabled: !editable || slot === FAVORITE_ARTIST_SLOT_COUNT - 1, onClick: () => { void commit(moveSlot(values, slot, 1)) } },
+      { label: 'Move Left', disabled: !editable || slot === 0, onClick: () => { void commit(moveSlot(values, slot, -1), picks) } },
+      { label: 'Move Right', disabled: !editable || slot === FAVORITE_ARTIST_SLOT_COUNT - 1, onClick: () => { void commit(moveSlot(values, slot, 1), picks) } },
     ]
   }
 
@@ -128,7 +130,7 @@ export default function FavoriteArtistsRow({ artists, onOpenArtist }: Props): JS
   return (
     <section className="ag-shelf fav" aria-label="Favorite artists">
       <div className="fav-head">
-        <h2 className="ag-h2">Favorite artists <small>top 5 · synced with your phone</small></h2>
+        <h2 className="ag-h2">Favorite artists <small>top {FAVORITE_ARTIST_SLOT_COUNT} · synced with your phone</small></h2>
         {status && <span className={`picks-status picks-status--${status.tone}`}>{status.text}</span>}
       </div>
       <div className="fav-row">
@@ -181,7 +183,7 @@ export default function FavoriteArtistsRow({ artists, onOpenArtist }: Props): JS
       {picking !== null && (
         <PicksPicker
           title={`Favorite artist #${picking + 1}`}
-          sub="Pick from the artists in your library. Your phone gets the same five."
+          sub={`Pick from the artists in your library. Your phone gets the same ${countWord(FAVORITE_ARTIST_SLOT_COUNT)}.`}
           placeholder="Search artists"
           items={pickerItems}
           emptyText="No artists in the library yet."
@@ -191,7 +193,7 @@ export default function FavoriteArtistsRow({ artists, onOpenArtist }: Props): JS
             const a = candidates.get(key)
             const slot = picking
             setPicking(null)
-            if (a) void commit(placeInSlot(values, slot, a.name, favoriteArtistKey))
+            if (a) void commit(placeInSlot(values, slot, a.name, favoriteArtistKey), picks)
           }}
         />
       )}

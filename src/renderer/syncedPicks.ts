@@ -1,4 +1,4 @@
-// Synced picks — renderer store (2026-10-18). TOP 10 ISLAND ALBUMS + 5
+// Synced picks — renderer store (2026-10-18). TOP 20 ISLAND ALBUMS + 10
 // FAVORITE ARTISTS, shared with the phone through homemini.
 //
 // Same module-store idiom as liveSets.ts: module state + a
@@ -98,14 +98,20 @@ export async function refreshSyncedPicks(kind: PicksKind): Promise<void> {
 
 /** Draw the edit now, then hand it to main (which queues + PUTs). Resolves
  *  with the error text when main refuses it (invalid document). */
-async function save<V>(kind: PicksKind, values: V[]): Promise<{ ok: true } | { ok: false; error: string }> {
+async function save<V>(kind: PicksKind, values: V[], tailKnown: boolean): Promise<{ ok: true } | { ok: false; error: string }> {
   const seq = ++editSeq[kind]
   const cur = kind === 'island-albums' ? snap.island : snap.favorites
-  put({ ...cur, values, pending: true, updatedBy: 'desktop', updatedAt: new Date().toISOString(), rejected: undefined } as AnyPicksState)
+  // tailKnown is the edit's own: a view that drew the new slots empty stays
+  // one until main answers, so an edit made on top of it is kept the same way.
+  put({ ...cur, values, tailKnown, pending: true, updatedBy: 'desktop', updatedAt: new Date().toISOString(), rejected: undefined } as AnyPicksState)
   savesInFlight[kind]++
   let reply: PicksReply | undefined
   try {
-    reply = await window.electronAPI.syncedPicksSave?.(kind, values)
+    // What this edit was made from: a view showing every slot, or one whose
+    // new slots were still unread (main keeps those as homemini has them).
+    // It comes from the caller with the values, never from the store now: a
+    // right-click menu is built once and can be clicked after a refresh.
+    reply = await window.electronAPI.syncedPicksSave?.(kind, values, { tailKnown })
   } catch (err) {
     reply = { ok: false, error: err instanceof Error ? err.message : String(err) }
   } finally {
@@ -117,8 +123,8 @@ async function save<V>(kind: PicksKind, values: V[]): Promise<{ ok: true } | { o
   return reply.ok ? { ok: true } : { ok: false, error: reply.error }
 }
 
-export const saveIslandSlots = (values: IslandSlot[]) => save('island-albums', values)
-export const saveFavoriteArtists = (values: FavoriteSlot[]) => save('favorite-artists', values)
+export const saveIslandSlots = (values: IslandSlot[], tailKnown: boolean) => save('island-albums', values, tailKnown)
+export const saveFavoriteArtists = (values: FavoriteSlot[], tailKnown: boolean) => save('favorite-artists', values, tailKnown)
 
 // ── Live while on screen ─────────────────────────────────────────────────
 const liveCount: Record<PicksKind, number> = { 'island-albums': 0, 'favorite-artists': 0 }
@@ -158,7 +164,7 @@ export function useSyncedPicksLive(kind: PicksKind): void {
 
 /** Editable only once homemini's document has been seen (a good reply now or
  *  a cache from an earlier one), or on top of an edit already queued. Before
- *  that, ten empty slots mean "don't know" — a pick from there would replace
+ *  that, empty slots mean "don't know" — a pick from there would replace
  *  every pick the phone has. Main refuses the same save (synced-picks-client). */
 export function picksEditable(s: AnyPicksState): boolean {
   if (s.pending) return true

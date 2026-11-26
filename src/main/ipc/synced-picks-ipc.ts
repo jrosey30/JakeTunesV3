@@ -1,5 +1,5 @@
 /**
- * Synced picks IPC (2026-10-18) — TOP 10 ISLAND ALBUMS + 5 FAVORITE ARTISTS,
+ * Synced picks IPC (2026-10-18) — TOP 20 ISLAND ALBUMS + 10 FAVORITE ARTISTS,
  * shared with the phone through homemini (the only writer). The client and
  * its cache/outbox live in ../synced-picks-client.ts; the contract in
  * ../../common/synced-picks.ts.
@@ -63,9 +63,11 @@ export function registerSyncedPicksIpc(ipc: IpcRegistrar): void {
     return { ok: true, state: await clientFor(kind).sync() }
   }, { refuse: REFUSED_SENDER })
 
-  ipc.handle('synced-picks:save', async (_e, kind: unknown, values: unknown) => {
+  ipc.handle('synced-picks:save', async (_e, kind: unknown, values: unknown, from: unknown) => {
     if (!isPicksKind(kind)) return badKind
-    return clientFor(kind).save(values)
+    // `from.tailKnown`: did the shelf the edit was made on show every slot?
+    const tailKnown = from && typeof from === 'object' ? (from as { tailKnown?: unknown }).tailKnown : undefined
+    return clientFor(kind).save(values, typeof tailKnown === 'boolean' ? { tailKnown } : undefined)
   }, { refuse: REFUSED_SENDER })
 
   // Outbox replay for edits made while homemini was away.

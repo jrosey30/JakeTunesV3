@@ -13,7 +13,7 @@
  *              drifting slowly (still under reduced motion), under a
  *              rgba(12,22,36,0.42) veil; the art dissolves into the page's
  *              canvas at the bottom.
- *   islands    the synced TOP 10 ISLAND ALBUMS (renderer/syncedPicks.ts) as a
+ *   islands    the synced TOP 20 ISLAND ALBUMS (renderer/syncedPicks.ts) as a
  *              classic glossy Cover Flow (common/cover-flow.ts) — click a side
  *              cover to bring it forward, ←/→ when focused, the mouse's side
  *              wheel or the trackpad's two-finger side swipe over it
@@ -41,7 +41,7 @@ import { armDiscOpen, discHandoffSupported, endReturningCase, peekReturningCase,
 import { albumArtUrl, artRevision } from '../artRevision'
 import { useHomeSpotlight } from '../homeSpotlight'
 import { useIslandAlbums } from '../syncedPicks'
-import { islandAlbumKey } from '../../common/synced-picks'
+import { countWord, islandAlbumKey, ISLAND_SLOT_COUNT } from '../../common/synced-picks'
 import { coverFlowPoses, stepCover, coverFlowKeyDelta, clampCoverIndex, COVER_FLOW_DEFAULTS } from '../../common/cover-flow'
 import { COVER_WHEEL_DEFAULTS } from '../../common/cover-flow-wheel'
 import { useCoverFlowWheel } from '../hooks/useCoverFlowWheel'
@@ -146,7 +146,7 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
     return lookupArtwork(artworkMap, artIndex, artist, name)
   }, [artworkMap, artIndex])
 
-  // Island picks in rank order; the rank is the slot (No. 1 … No. 10).
+  // Island picks in rank order; the rank is the slot (No. 1 … No. 20).
   const flow = useMemo(() => island.values
     .map((pick, slot) => {
       if (!pick) return null
@@ -338,7 +338,7 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
           <div className="tn-islands">
             <div className="tn-sec-head">
               <h2 className="tn-h2">Island Albums</h2>
-              <span className="tn-sub">Your ten, desert-island ranked · click a cover</span>
+              <span className="tn-sub">{flow.length === ISLAND_SLOT_COUNT ? `Your ${countWord(ISLAND_SLOT_COUNT)}` : `${flow.length} of ${countWord(ISLAND_SLOT_COUNT)}`}, desert-island ranked · click a cover</span>
             </div>
             <div
               ref={stageRef}

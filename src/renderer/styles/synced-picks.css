@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════
-   Synced picks (2026-10-18) — TOP 10 ISLAND ALBUMS (Albums page) and
+   Synced picks (2026-10-18) — TOP 20 ISLAND ALBUMS (Albums page) and
    FAVORITE ARTISTS (Artists page), shared with the phone. V6 tokens
    throughout (type tokens are PX — the app's root is 11px). Orange
    (#FC5501, --brand-orange) only for the rank badges and what acts.
@@ -28,8 +28,9 @@
   line-height: var(--lh-snug);
   color: var(--text-primary);
 }
-/* One row of ten (Letterboxd), capped so a wide window doesn't make posters;
-   two rows of five — the phone's layout — when the pane is narrow. */
+/* Rows of ten (Letterboxd; two rows since the list became twenty), capped so
+   a wide window doesn't make posters; rows of five — the phone's layout —
+   when the pane is narrow. */
 .isl-grid {
   display: grid;
   grid-template-columns: repeat(10, minmax(0, 128px));
@@ -109,6 +110,7 @@
 .fav-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 var(--space-5); }
 .fav-row {
   display: grid;
+  /* Five to a row: ten favourites are two rows, as on the phone. */
   grid-template-columns: repeat(5, minmax(0, 150px));
   gap: 18px;   /* = .ag-row */
   padding-bottom: var(--space-5);

@@ -1,6 +1,6 @@
 /**
- * Synced picks client (2026-10-18) — the desktop half of Jake's TOP 10 ISLAND
- * ALBUMS and 5 FAVORITE ARTISTS, shared with the phone through homemini.
+ * Synced picks client (2026-10-18) — the desktop half of Jake's TOP 20 ISLAND
+ * ALBUMS and 10 FAVORITE ARTISTS, shared with the phone through homemini.
  *
  * The backend is the ONLY writer (src/common/synced-picks.ts has the wire
  * contract). This client, one per document:
@@ -20,8 +20,25 @@
  * SYNCED_PICKS_BACKEND_FILES + assertNoSyncedPicksPush lock that.
  *
  * What the renderer draws = the queued edit if there is one, else the cache.
- * No cache yet (never synced) = read-only: an edit from ten "unknown" slots
+ * No cache yet (never synced) = read-only: an edit from "unknown" slots
  * would wipe the phone's picks on its way in.
+ *
+ * Tail unknown (2026-11-26, the lists grew from 10 / 5 to 20 / 10). A cache or
+ * a queued edit written by the app from before holds the old number of
+ * entries: the slots after them are not empty, they are unknown. Until
+ * homemini's whole list has been read:
+ *   - the old cache's ETag is not sent (a 304 would hide the new slots);
+ *   - an edit made then is queued with `keepTail`: an empty slot past the old
+ *     length means "leave what homemini has", never "clear it". An edit the
+ *     older app queued (old length) is read the same way.
+ * A keepTail edit with nothing in those slots is sent at the old length:
+ * homemini keeps the slots after a save of that length. One that does fill
+ * some of them reads homemini's list first and sends the whole list with
+ * every slot it left empty there as homemini has it.
+ * Whether an edit is keepTail is decided by what the shelf was SHOWING when
+ * Jake made it (`tailKnown` on the state it was built from), never by the
+ * cache at save time: the cache fills the moment a GET returns, while the
+ * shelf only learns the list when that pass ends, after its PUT.
  *
  * Replay (the recommendations outbox idiom, Brief 125, applied to a whole-doc
  * last-write-wins document):
@@ -46,7 +63,7 @@ import { join } from 'node:path'
 import { writeJsonAtomic } from './atomic-write.ts'
 import { withCompanionInit } from './hub-companion.ts'
 import {
-  emptyPicksDoc, parsePicksDoc, normalizeValues, sameValues, toWireDoc,
+  emptyPicksDoc, isShortPicksDoc, parsePicksDoc, normalizeValues, sameValues, toWireDoc,
   type PicksDoc, type PicksSpec, type PicksState,
 } from '../common/synced-picks.ts'
 
@@ -83,8 +100,12 @@ export interface SyncedPicksClientOptions<V> {
 
 export interface QueuedEdit<V> {
   id: string
+  /** Always the list's full length (what the shelf draws). */
   values: V[]
   queuedAt: string
+  /** The slots past the old length were unknown when this edit was made: an
+   *  empty one there keeps what homemini has (see the header). */
+  keepTail?: boolean
 }
 
 interface CacheFile { doc: Record<string, unknown>; syncedAt: number; etag?: string | null }
@@ -97,8 +118,11 @@ export interface SyncedPicksClient<V> {
   read(): Promise<PicksState<V>>
   /** One network pass: GET, then replay (or drop) the queued edit. Coalesced. */
   sync(opts?: { direct?: boolean }): Promise<PicksState<V>>
-  /** Validate, queue, render-ready immediately, then PUT. */
-  save(values: unknown): Promise<SaveResult<V>>
+  /** Validate, queue, render-ready immediately, then PUT. `from.tailKnown` is
+   *  the `tailKnown` of the state the edit was built from, and the app always
+   *  sends it. Left out (tests, a caller with no view), the last state this
+   *  client read is used: a guess, since a read is not proof a view drew it. */
+  save(values: unknown, from?: { tailKnown?: boolean }): Promise<SaveResult<V>>
   hasPending(): Promise<boolean>
   /** Called whenever the drawable state changes (after a save or a sync). */
   onChange(cb: (state: PicksState<V>) => void): () => void
@@ -125,17 +149,23 @@ export function createSyncedPicksClient<V>(opts: SyncedPicksClientOptions<V>): S
   let wasUnreachable = false
   const listeners = new Set<(s: PicksState<V>) => void>()
   let lastEmitted = ''
+  /** `tailKnown` of the last state handed out (read()). */
+  let shownTailKnown = false
 
   // ── files ──────────────────────────────────────────────────────────────
   async function readJson(path: string): Promise<unknown> {
     try { return JSON.parse(await readFile(path, 'utf-8')) as unknown } catch { return null /* missing or torn — treated as absent */ }
   }
 
-  async function readCache(): Promise<{ doc: PicksDoc<V>; syncedAt: number; etag: string | null } | null> {
+  /** `short` = written before the list grew: `doc.values` is padded with empty
+   *  slots that are really unknown, and its ETag is withheld so the next GET
+   *  brings the whole list. */
+  async function readCache(): Promise<{ doc: PicksDoc<V>; syncedAt: number; etag: string | null; short: boolean } | null> {
     const raw = await readJson(cachePath) as Partial<CacheFile> | null
     const doc = raw && typeof raw === 'object' ? parsePicksDoc(spec, raw.doc) : null
     if (!doc) return null
-    return { doc, syncedAt: typeof raw?.syncedAt === 'number' ? raw.syncedAt : 0, etag: typeof raw?.etag === 'string' ? raw.etag : null }
+    const short = isShortPicksDoc(spec, raw?.doc)
+    return { doc, syncedAt: typeof raw?.syncedAt === 'number' ? raw.syncedAt : 0, etag: !short && typeof raw?.etag === 'string' ? raw.etag : null, short }
   }
 
   /** Store a good document (+ the ETag it was served with). Skips the write
@@ -152,11 +182,35 @@ export function createSyncedPicksClient<V>(opts: SyncedPicksClientOptions<V>): S
   async function readOutbox(): Promise<QueuedEdit<V> | null> {
     const raw = await readJson(outboxPath) as Partial<QueuedEdit<V>> | null
     if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !Array.isArray(raw.values)) return null
+    // keepTail: flagged by this app, or an edit of the old length queued by
+    // the app from before the list grew.
+    const keepTail = spec.legacyCount < spec.count && (raw.keepTail === true || raw.values.length === spec.legacyCount)
     return {
       id: raw.id,
       values: normalizeValues(spec, raw.values),
       queuedAt: typeof raw.queuedAt === 'string' ? raw.queuedAt : new Date(0).toISOString(),
+      ...(keepTail ? { keepTail: true } : {}),
     }
+  }
+
+  const tailEmpty = (values: V[]): boolean => values.slice(spec.legacyCount).every((v) => v === null)
+
+  /** A keepTail edit over a known list: the edit, with each slot it leaves
+   *  empty past the old length taken from `known` (homemini's list, or the
+   *  cache's copy of it). One pick, one slot: a known pick the edit already
+   *  holds somewhere is not brought in again — the same rule homemini applies
+   *  to a save of the old length (backend mergeTopOnly). */
+  function overKnownTail(edit: QueuedEdit<V>, known: V[] | undefined): V[] {
+    if (!edit.keepTail || !known) return edit.values
+    const keyOf = spec.keyOf as (v: NonNullable<V>) => string
+    const held = new Set(edit.values.filter((v) => v !== null).map((v) => keyOf(v as NonNullable<V>)))
+    return edit.values.map((v, i) => {
+      if (i < spec.legacyCount || v !== null) return v
+      const theirs = known[i] ?? null
+      if (theirs === null || held.has(keyOf(theirs as NonNullable<V>))) return null as V
+      held.add(keyOf(theirs as NonNullable<V>))
+      return theirs
+    })
   }
 
   // Every outbox read-modify-write runs through one chain, so a save landing
@@ -181,9 +235,11 @@ export function createSyncedPicksClient<V>(opts: SyncedPicksClientOptions<V>): S
   async function read(): Promise<PicksState<V>> {
     const [cache, pending] = await Promise.all([readCache(), readOutbox()])
     const doc = cache?.doc ?? emptyPicksDoc(spec)
+    shownTailKnown = spec.legacyCount >= spec.count || (!!cache && !cache.short)
     return {
       kind: spec.kind,
-      values: pending ? pending.values : doc.values,
+      tailKnown: shownTailKnown,
+      values: pending ? overKnownTail(pending, cache?.doc.values) : doc.values,
       updatedAt: pending ? pending.queuedAt : doc.updatedAt,
       updatedBy: pending ? 'desktop' : doc.updatedBy,
       pending: !!pending,
@@ -241,12 +297,27 @@ export function createSyncedPicksClient<V>(opts: SyncedPicksClientOptions<V>): S
 
   /** landed = homemini stored it; rejected = 400, dropped; queued = try again later. */
   async function putEdit(edit: QueuedEdit<V>): Promise<'landed' | 'rejected' | 'queued'> {
+    // What goes on the wire. keepTail with nothing past the old length: that
+    // many entries, and homemini keeps the rest. keepTail with a pick there:
+    // homemini's list is read first, so the slots this edit never knew keep
+    // what they hold. Otherwise the whole list.
+    let sending: V[] = edit.values
+    if (edit.keepTail) {
+      if (tailEmpty(edit.values)) {
+        sending = edit.values.slice(0, spec.legacyCount)
+      } else {
+        const remote = await getRemote()
+        if (!remote) return 'queued'                 // can't read it now — the edit waits
+        sending = overKnownTail(edit, remote.values)
+      }
+    }
+    const sentWhole = sending.length === spec.count
     let res: FetchReply
     try {
       res = await fetchImpl(url, withCompanionInit({
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [spec.field]: edit.values, updatedBy: 'desktop' }),
+        body: JSON.stringify({ [spec.field]: sending, updatedBy: 'desktop' }),
         signal: AbortSignal.timeout(putTimeoutMs),
       }) as Record<string, unknown>)
     } catch (err) {
@@ -261,7 +332,11 @@ export function createSyncedPicksClient<V>(opts: SyncedPicksClientOptions<V>): S
       // with no readable doc still landed — cache what we sent; the next GET
       // corrects the timestamps.
       const stored = parsePicksDoc(spec, body)
-      await writeCache(stored ?? { version: 1 as const, values: edit.values, updatedAt: null, updatedBy: 'desktop' as const }, stored ? etagOf(res) : null)
+      if (stored) {
+        await writeCache(stored, etagOf(res))
+      } else if (sentWhole) {
+        await writeCache({ version: 1 as const, values: sending, updatedAt: null, updatedBy: 'desktop' as const }, null)
+      }                                              // old-length save with no doc back: the cache stays; the next GET brings the list
       await settleOutbox(edit.id)
       return 'landed'
     }
@@ -324,11 +399,13 @@ export function createSyncedPicksClient<V>(opts: SyncedPicksClientOptions<V>): S
     return run
   }
 
-  async function save(values: unknown): Promise<SaveResult<V>> {
+  async function save(values: unknown, from?: { tailKnown?: boolean }): Promise<SaveResult<V>> {
+    // Taken before anything below reads state again.
+    const madeKnowingTail = typeof from?.tailKnown === 'boolean' ? from.tailKnown : shownTailKnown
     const v = spec.validate(values)
     if (!v.ok) return { ok: false, error: v.error, state: await read() }
     // Never edit blind. Until homemini's document has been seen once (a cache
-    // file, or an edit already queued on top of one), the desktop's ten empty
+    // file, or an edit already queued on top of one), the desktop's empty
     // slots are "don't know", not "empty" — a pick PUT from there would wipe
     // every pick the phone has. First run on a new Mac, or the endpoint not
     // deployed yet: read-only until the first good GET.
@@ -344,7 +421,14 @@ export function createSyncedPicksClient<V>(opts: SyncedPicksClientOptions<V>): S
     if (!pending && cache && sameValues(v.values as Array<V | null>, cache.doc.values as Array<V | null>, spec.keyOf as (x: V) => string)) {
       return { ok: true, state: await read() }
     }
-    const edit: QueuedEdit<V> = { id: randomUUID(), values: v.values, queuedAt: new Date(now()).toISOString() }
+    // Tail unknown (see the header): the shelf this edit was made on drew the
+    // slots past the old length empty because they had not been read, so an
+    // empty one in the edit is "leave it". Made on a shelf showing the whole
+    // list (a queued keepTail edit draws over the cached tail), it is the
+    // whole list as Jake left it. The cache is also required to be whole: a
+    // claim of a known tail over a short cache is not believed.
+    const tailUnknown = spec.legacyCount < spec.count && !(madeKnowingTail && cache && !cache.short)
+    const edit: QueuedEdit<V> = { id: randomUUID(), values: v.values, queuedAt: new Date(now()).toISOString(), ...(tailUnknown ? { keepTail: true } : {}) }
     await withIo(() => writeJsonAtomic(outboxPath, edit))
     rejected = undefined
     await emitIfChanged()                          // the edit draws now, before the network

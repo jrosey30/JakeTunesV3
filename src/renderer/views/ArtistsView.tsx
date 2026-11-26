@@ -33,7 +33,7 @@ import { artistMenuEntries, artistRunningOrder } from '../utils/libraryMenus'
 import { groupTracksByArtist } from '../utils/artistTracks'
 import EmptyState from '../components/EmptyState'
 import ArtistGroupingModal from '../components/ArtistGroupingModal'
-// 2026-10-18 — 5 FAVORITE ARTISTS, synced with the phone through homemini.
+// 2026-10-18 — 10 FAVORITE ARTISTS, synced with the phone through homemini.
 import FavoriteArtistsRow, { type FavoriteCandidate } from '../components/FavoriteArtistsRow'
 import { Track } from '../types'
 import { artistIdentityKey, canonicalArtist, subscribeAliases, getAliasVersion } from '../utils/artistAlias'
