@@ -1029,7 +1029,9 @@ async function runActivitySyncHolding(
           track.path = row.destPath
           if (row.destPath !== rawColon) cardOnlyIds.add(id)
           const cardAbs = join(IPOD_MOUNT, tsaRelFromColon(row.destPath, pathSep))
-          plan.push({ i, id, title, srcToCopy: cardAbs, dstToCopy: cardAbs, knownSourceSize: row.size, masterSize: row.sourceSize })
+          // Kept as the right format: its landed record goes with it, or the seal drops the record
+          // and the next sync can't tell the card copy is right and leaves the song off.
+          plan.push({ i, id, title, srcToCopy: cardAbs, dstToCopy: cardAbs, knownSourceSize: row.size, masterSize: row.sourceSize, ...(cardIsWanted ? { landed: rec } : {}) })
           continue
         }
         convertFailedWhy.set(id, out.why)

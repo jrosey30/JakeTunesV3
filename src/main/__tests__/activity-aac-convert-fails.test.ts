@@ -234,7 +234,7 @@ describe('the real activity engine: one song whose AAC conversion fails', () => 
     }
   })
 
-  it('an AAC copy on the card (by the landed record) whose new copy fails for good: keeps the AAC it has', async () => {
+  it('an AAC copy on the card (by the landed record) whose new copy fails for good: keeps the AAC it has, sync after sync', async () => {
     const r = await rig()
     try {
       assert.equal((await r.sync()).ok, true)
@@ -242,11 +242,15 @@ describe('the real activity engine: one song whose AAC conversion fails', () => 
       const bad = r.tracks.find((t) => t.id === BAD)!
       await writeFile(join(r.lib, String(bad.path).replace(/:/g, '/')), Buffer.alloc(MASTER_BYTES + 5, 9))
       r.failWith((src) => (src.endsWith(`M${BAD}.m4a`) ? new AacConvertFailedError(src, new Error('Invalid data found when processing input')) : null))
-      const res = await r.sync()
-      assert.equal(res.ok, true, res.error)
-      assert.deepEqual(res.keptOldCopies, [`Song ${BAD}`])
-      assert.deepEqual(await r.cardFiles(), before, 'the AAC copy it already had stays, nothing else moves')
-      assert.ok((await r.catalogTitles()).includes(`Song ${BAD}`))
+      // Every sync after the failure, not just the first: the landed record has to survive each seal.
+      for (let round = 1; round <= 3; round++) {
+        const res = await r.sync()
+        assert.equal(res.ok, true, `round ${round}: ${res.error}`)
+        assert.deepEqual(res.keptOldCopies, [`Song ${BAD}`], `round ${round}: kept`)
+        assert.equal((res.leftOff ?? []).length, 0, `round ${round}: not left off`)
+        assert.deepEqual(await r.cardFiles(), before, `round ${round}: the AAC copy it already had stays, nothing else moves`)
+        assert.ok((await r.catalogTitles()).includes(`Song ${BAD}`), `round ${round}: still in the iPod list`)
+      }
     } finally {
       await rm(r.root, { recursive: true, force: true })
     }
