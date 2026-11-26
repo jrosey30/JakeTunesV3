@@ -76,6 +76,7 @@ const RULES: Rule[] = [
   { test: /couldn.t put the new copies on the ipod/i, stage: 'copy', happened: 'Couldn’t put the new copies on the iPod.', next: 'Every song is as it was. Sync again; it picks up where it stopped.' },
   { test: /isn.t room on the ipod to put the new copy/i, stage: 'copy', happened: 'Not enough room on the iPod to replace songs beside their old copies.', next: 'Nothing was deleted. Free some space on the iPod, then sync again.' },
   { test: /couldn.t clear this ipod.s record of converted songs on this mac/i, stage: 'prepare', happened: 'Couldn’t update this iPod’s record on this Mac.', next: 'Nothing on the iPod was changed. Quit and reopen JakeTunes, then sync again.' },
+  { test: /the ipod has no song list file to write to/i, stage: 'prepare', happened: 'The iPod has no song list file.', next: 'Nothing on the iPod was changed. Set it up in Finder, then sync again.' },
   { test: /could not back up the ipod.s song list on this mac/i, stage: 'prepare', happened: 'Couldn’t back up the iPod’s song list on this Mac.', next: 'Nothing on the iPod was changed. Check the Mac’s free space, then sync again.' },
   { test: /have damaged audio and there are not enough replacements/i, stage: 'prepare', happened: 'Some songs are damaged.', next: 'Download them again, then sync.' },
   { test: /could not build an ipod-safe alac|flac→alac failed/i, stage: 'prepare', happened: 'A song couldn’t be converted for the iPod.', next: ITS_SONGS },
