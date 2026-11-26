@@ -1017,7 +1017,12 @@ async function runActivitySyncHolding(
       if (i >= reserveFrom) { console.warn(`activity-sync: reserve "${title}" skipped (${out.why})`); continue }
       if (out.kind === 'convert-failed') {
         const row = await sealedRowFor(id)
-        if (row) {
+        // Kept only when the failure was the Mac's (the next sync tries again), or when the landed
+        // record shows the card's copy is already this format and bitrate. A permanent failure
+        // over a lossless card copy would keep the master on an AAC iPod for good (re-review of #519).
+        const cardIsWanted = !!row && !!rec && rec.codec === wantCodec && rec.destPath === row.destPath
+          && rec.size === row.size && (wantCodec === 'alac-safe' || rec.kbps === convertOptions?.targetKbps)
+        if (row && (out.why === CONVERT_FAILED_THIS_TIME || cardIsWanted)) {
           // On the card already: its copy stays as it is, by the sealed row (planSwap keeps it).
           console.warn(`activity-sync: "${title}" keeps its copy on the iPod (${out.why})`)
           keptOnCard.set(id, row)

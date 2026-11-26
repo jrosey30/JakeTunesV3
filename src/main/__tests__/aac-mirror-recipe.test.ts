@@ -133,7 +133,7 @@ describe('the refusal', () => {
   it('both engines skip and name a refused song instead of copying the master', async () => {
     const sync = await readFile(new URL('../sync-engine/index.ts', import.meta.url), 'utf-8')
     const act = await readFile(new URL('../ipod-activity-engine.ts', import.meta.url), 'utf-8')
-    assert.match(sync, /if \(isAacEncoderMissing\(err\) \|\| isAacConvertFailed\(err\)\) \{[\s\S]{0,1500}copyErrors\+\+[\s\S]{0,200}continue/)
+    assert.match(sync, /if \(isAacEncoderMissing\(err\) \|\| isAacConvertFailed\(err\)\) \{[\s\S]{0,2500}copyErrors\+\+[\s\S]{0,200}continue/)
     assert.match(act, /if \(isAacEncoderMissing\(err\)\) \{[\s\S]{0,300}kind: 'no-encoder', why: slow \? AAC_ENCODER_SLOW : NO_AAC_ENCODER/)
     assert.match(sync, /notConverted\.push\(/)
     assert.match(sync, /\.\.\.\(notConverted\.length > 0 \? \{ notConverted \} : \{\}\)/)
@@ -176,7 +176,7 @@ describe('one song whose conversion fails (Brief 266)', () => {
   })
   it('the full-library sync leaves it off and names it, like a refused one', async () => {
     const sync = await readFile(new URL('../sync-engine/index.ts', import.meta.url), 'utf-8')
-    assert.match(sync, /if \(isAacEncoderMissing\(err\) \|\| isAacConvertFailed\(err\)\) \{[\s\S]{0,1500}notConverted\.push\([\s\S]{0,200}copyErrors\+\+[\s\S]{0,200}continue/)
+    assert.match(sync, /if \(isAacEncoderMissing\(err\) \|\| isAacConvertFailed\(err\)\) \{[\s\S]{0,2500}notConverted\.push\([\s\S]{0,200}copyErrors\+\+[\s\S]{0,200}continue/)
   })
 })
 

@@ -9,7 +9,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fullSyncLeftOffLine } from '../../common/ipod-one-sync-plan.ts'
-import { keptCardCopy } from '../ipod-card-kept-copy.ts'
+import { keepCardCopyFor, keptCardCopy } from '../ipod-card-kept-copy.ts'
+import { AacConvertFailedError, AacEncoderMissingError } from '../aac-mirror-recipe.ts'
 
 const song = (id: number, title: string) => ({ id, title, artist: 'Band' })
 
@@ -67,8 +68,10 @@ describe('the full-library sync: a song already on the card whose new copy can\'
       await writeFile(at, Buffer.alloc(10, 1))
       assert.deepEqual(await keptCardCopy(at, '/lib/A.m4a'), { abs: at, size: 10 })
       const flacDest = join(root, 'B.flac')
+      await writeFile(flacDest, Buffer.alloc(30, 1))
+      assert.equal(await keptCardCopy(flacDest, '/lib/B.flac'), null, 'a leftover .flac is never kept')
       await writeFile(join(root, 'B.m4a'), Buffer.alloc(7, 1))
-      assert.deepEqual(await keptCardCopy(flacDest, '/lib/B.flac'), { abs: join(root, 'B.m4a'), size: 7 })
+      assert.deepEqual(await keptCardCopy(flacDest, '/lib/B.flac'), { abs: join(root, 'B.m4a'), size: 7 }, 'the .m4a first')
       await writeFile(join(root, 'C.m4a'), Buffer.alloc(0))
       assert.equal(await keptCardCopy(join(root, 'C.m4a'), '/lib/C.m4a'), null, 'an empty file is not a copy')
     } finally {
@@ -76,12 +79,21 @@ describe('the full-library sync: a song already on the card whose new copy can\'
     }
   })
 
+  it('only a failure that was the Mac\'s keeps the card copy; a permanent one leaves the song off', () => {
+    const killed = Object.assign(new Error('Command failed: ffmpeg'), { killed: true, signal: 'SIGTERM' })
+    assert.equal(keepCardCopyFor(new AacConvertFailedError('/a.flac', killed)), true)
+    assert.equal(keepCardCopyFor(new AacEncoderMissingError('/a.flac', 'unknown')), true)
+    assert.equal(keepCardCopyFor(new AacConvertFailedError('/a.flac', new Error('Invalid data found when processing input'))), false)
+    assert.equal(keepCardCopyFor(new AacEncoderMissingError('/a.flac', 'missing')), false)
+    assert.equal(keepCardCopyFor(new Error('anything else')), false)
+  })
+
   it('the copy step keeps it (its file, its row) instead of listing it as not converted', async () => {
     const src = await readFile(new URL('../sync-engine/index.ts', import.meta.url), 'utf-8')
     const at = src.indexOf('if (isAacEncoderMissing(err) || isAacConvertFailed(err)) {')
     assert.ok(at > 0)
     const branch = src.slice(at, src.indexOf('notConverted.push(', at))
-    assert.match(branch, /const onCard = await keptCardCopy\(ipod, local\)\s*\n\s*if \(onCard\) \{/)
+    assert.match(branch, /const onCard = keepCardCopyFor\(err\) \? await keptCardCopy\(ipod, local\) : null\s*\n\s*if \(onCard\) \{/)
     assert.match(branch, /writtenById\.set\(trackId, \{ srcPath: onCard\.abs, dstPath: onCard\.abs, expectedSize: onCard\.size \}\)/)
     assert.match(branch, /notUpdated\.push\(/)
     assert.match(branch, /continue\s*\n\s*\}/)
@@ -93,7 +105,7 @@ describe('the full-library sync: a song already on the card whose new copy can\'
     const at = src.indexOf('let dstForVerify = join(IPOD_MOUNT, relPath)')
     assert.ok(at > 0)
     const body = src.slice(at, at + 1200)
-    assert.match(body, /\} catch \(err\) \{[\s\S]{0,300}const onCard = await keptCardCopy\(dstForVerify, libraryFile\)\s*\n\s*if \(!onCard\) throw err\s*\n\s*srcForVerify = onCard\.abs\s*\n\s*dstForVerify = onCard\.abs/)
+    assert.match(body, /\} catch \(err\) \{[\s\S]{0,300}const onCard = keepCardCopyFor\(err\) \? await keptCardCopy\(dstForVerify, libraryFile\) : null\s*\n\s*if \(!onCard\) throw err\s*\n\s*srcForVerify = onCard\.abs\s*\n\s*dstForVerify = onCard\.abs/)
     assert.match(body, /dstPath: dstForVerify,/)
   })
 })

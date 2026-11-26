@@ -43,7 +43,7 @@ import {
 } from '../ipod-reconcile.ts'
 import { confirmWriteOnCard, flushCardCaches, remountVerifyEntries, retireIpodFirmwareScratch } from '../ipod-sync-card.ts'
 import { isAacConvertFailed, isAacEncoderMissing } from '../aac-mirror-recipe.ts'
-import { keptCardCopy } from '../ipod-card-kept-copy.ts'
+import { keepCardCopyFor, keptCardCopy } from '../ipod-card-kept-copy.ts'
 import { deleteLandedRecord } from '../ipod-landed-record.ts'
 import { keepListedOnCard, readCardListing } from '../ipod-replace-waves.ts'
 import { applyFileStamps, createFileStampCache, fileToStamp } from '../ipod-file-stamps.ts'
@@ -1236,7 +1236,9 @@ export function createSyncEngine(host: SyncEngineHost) {
             // Already on the card (an earlier sync's copy): it keeps that file and its song-list
             // row, and is said as not updated. Dropped here, the verify and the orphan cleanup
             // used to delete it (Brief 266).
-            const onCard = await keptCardCopy(ipod, local)
+            // Only for a failure that was the Mac's: a permanent one over a lossless card copy would
+            // keep the master on an AAC iPod for good (re-review of #519).
+            const onCard = keepCardCopyFor(err) ? await keptCardCopy(ipod, local) : null
             if (onCard) {
               console.warn(`sync-to-ipod: "${title}" keeps its copy on the iPod (its new copy couldn't be made)`)
               writtenById.set(trackId, { srcPath: onCard.abs, dstPath: onCard.abs, expectedSize: onCard.size })
@@ -1505,7 +1507,7 @@ export function createSyncEngine(host: SyncEngineHost) {
             } catch (err) {
               // No new copy: the card's own copy is what's checked, so a song already on the
               // card isn't dropped from the song list and then deleted as an orphan (Brief 266).
-              const onCard = await keptCardCopy(dstForVerify, libraryFile)
+              const onCard = keepCardCopyFor(err) ? await keptCardCopy(dstForVerify, libraryFile) : null
               if (!onCard) throw err
               srcForVerify = onCard.abs
               dstForVerify = onCard.abs

@@ -49,7 +49,7 @@ interface Rig {
   root: string; lib: string; card: string; state: string
   tracks: Array<Record<string, unknown>>
   failWith: (fn: (src: string) => Error | null) => void
-  sync: () => ReturnType<typeof runActivitySync>
+  sync: (convert?: boolean) => ReturnType<typeof runActivitySync>
   cardFiles: () => Promise<Array<{ name: string; size: number; mtimeMs: number }>>
   catalogTitles: () => Promise<string[]>
   lastLedger: () => Promise<{ leftOff?: Array<{ id: number; t?: string; why?: string }>; keptOldCopies?: string[] }>
@@ -98,10 +98,10 @@ async function rig(): Promise<Rig> {
   return {
     root, lib, card, state, tracks,
     failWith: (fn) => { failWith = fn },
-    sync: () => runActivitySync(host, {
+    sync: (convert = true) => runActivitySync(host, {
       tracks: tracks.map((t) => ({ ...t })), playlists: [{ name: 'Nano', trackIds: tracks.map((t) => t.id) }],
       requestedTarget: tracks.length, listOnly: true, ipodName: 'Nano',
-      convertOptions: { enabled: true, targetKbps: 256, codec: 'aac' },
+      ...(convert ? { convertOptions: { enabled: true, targetKbps: 256 as const, codec: 'aac' as const } } : {}),
     }),
     cardFiles: async () => {
       const out: Array<{ name: string; size: number; mtimeMs: number }> = []
@@ -202,6 +202,70 @@ describe('the real activity engine: one song whose AAC conversion fails', () => 
       assert.equal(again.ok, true, again.error)
       assert.equal(again.copied, 1)
       assert.equal((await r.catalogTitles()).length, N)
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('a lossless master on the card whose AAC copy fails for good: left off and named, never kept as "kept" (re-review of #519)', async () => {
+    const r = await rig()
+    try {
+      // Conversion off: the ALAC masters land on the card as they are.
+      const first = await r.sync(false)
+      assert.equal(first.ok, true, first.error)
+      assert.equal((await r.cardFiles()).filter(isMaster).length, N, 'the masters are on the card')
+
+      // Conversion on; song 3's file can't be decoded (permanent, not the Mac's).
+      const bad = (): Error => Object.assign(new Error('Invalid data found when processing input'), { code: 1 })
+      r.failWith((src) => (src.endsWith(`M${BAD}.m4a`) ? new AacConvertFailedError(src, bad()) : null))
+      for (let round = 1; round <= 2; round++) {
+        const res = await r.sync()
+        assert.equal(res.ok, true, `round ${round}: ${res.error}`)
+        assert.equal(res.keptOldCopies, undefined, `round ${round}: never "kept"`)
+        assert.deepEqual((res.leftOff ?? []).map((l) => l.id), [BAD], `round ${round}: left off and named`)
+        assert.doesNotMatch(res.leftOff![0].why, /this time/)
+        assert.deepEqual((await r.cardFiles()).filter(isMaster), [], `round ${round}: no lossless master left on the AAC iPod`)
+        const titles = await r.catalogTitles()
+        assert.ok(!titles.includes(`Song ${BAD}`), `round ${round}: not in the iPod list`)
+        assert.equal(titles.length, N - 1)
+      }
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('an AAC copy on the card (by the landed record) whose new copy fails for good: keeps the AAC it has', async () => {
+    const r = await rig()
+    try {
+      assert.equal((await r.sync()).ok, true)
+      const before = await r.cardFiles()
+      const bad = r.tracks.find((t) => t.id === BAD)!
+      await writeFile(join(r.lib, String(bad.path).replace(/:/g, '/')), Buffer.alloc(MASTER_BYTES + 5, 9))
+      r.failWith((src) => (src.endsWith(`M${BAD}.m4a`) ? new AacConvertFailedError(src, new Error('Invalid data found when processing input')) : null))
+      const res = await r.sync()
+      assert.equal(res.ok, true, res.error)
+      assert.deepEqual(res.keptOldCopies, [`Song ${BAD}`])
+      assert.deepEqual(await r.cardFiles(), before, 'the AAC copy it already had stays, nothing else moves')
+      assert.ok((await r.catalogTitles()).includes(`Song ${BAD}`))
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('a lossless master on the card whose AAC copy timed out keeps it this time (the next sync tries again)', async () => {
+    const r = await rig()
+    try {
+      assert.equal((await r.sync(false)).ok, true)
+      r.failWith((src) => (src.endsWith(`M${BAD}.m4a`) ? new AacConvertFailedError(src, ffmpegTimeout()) : null))
+      const res = await r.sync()
+      assert.equal(res.ok, true, res.error)
+      assert.deepEqual(res.keptOldCopies, [`Song ${BAD}`])
+      assert.ok((await r.catalogTitles()).includes(`Song ${BAD}`))
+      r.failWith(() => null)
+      const again = await r.sync()
+      assert.equal(again.ok, true, again.error)
+      assert.equal(again.keptOldCopies, undefined)
+      assert.deepEqual((await r.cardFiles()).filter(isMaster), [], 'converted once the Mac could')
     } finally {
       await rm(r.root, { recursive: true, force: true })
     }
