@@ -1,5 +1,6 @@
 /**
- * FAVORITE ARTISTS (2026-10-18) — Jake's 5 ranked artists, top of the
+ * FAVORITE ARTISTS (2026-10-18) — Jake's ranked artists (ten since
+ * 2026-11-26, in rows of five), top of the
  * Artists page, synced both ways with the phone through homemini
  * (renderer/syncedPicks.ts). Same photo circles as the grid below
  * (artist-photo.ts portraits via artist-image://, initials disc when there is
@@ -15,7 +16,7 @@ import { canonicalArtist } from '../utils/artistAlias'
 import { setNotice } from '../activity'
 import { useFavoriteArtists, saveFavoriteArtists, picksStatusLine, picksEditable } from '../syncedPicks'
 import {
-  clearSlot, favoriteArtistKey, moveSlot, placeInSlot, FAVORITE_ARTIST_SLOT_COUNT,
+  clearSlot, countWord, favoriteArtistKey, moveSlot, placeInSlot, FAVORITE_ARTIST_SLOT_COUNT,
   type FavoriteSlot,
 } from '../../common/synced-picks'
 import '../styles/synced-picks.css'
@@ -66,7 +67,7 @@ export default function FavoriteArtistsRow({ artists, onOpenArtist }: Props): JS
   const cardFor = (name: string): FavoriteCandidate | undefined =>
     byKey.get(favoriteArtistKey(canonicalArtist(name))) ?? byKey.get(favoriteArtistKey(name))
 
-  // Portraits for the five names (single-flight + 30-day cache live in main).
+  // Portraits for the names (single-flight + 30-day cache live in main).
   useEffect(() => {
     let live = true
     for (const v of values) {
@@ -128,7 +129,7 @@ export default function FavoriteArtistsRow({ artists, onOpenArtist }: Props): JS
   return (
     <section className="ag-shelf fav" aria-label="Favorite artists">
       <div className="fav-head">
-        <h2 className="ag-h2">Favorite artists <small>top 5 · synced with your phone</small></h2>
+        <h2 className="ag-h2">Favorite artists <small>top {FAVORITE_ARTIST_SLOT_COUNT} · synced with your phone</small></h2>
         {status && <span className={`picks-status picks-status--${status.tone}`}>{status.text}</span>}
       </div>
       <div className="fav-row">
@@ -181,7 +182,7 @@ export default function FavoriteArtistsRow({ artists, onOpenArtist }: Props): JS
       {picking !== null && (
         <PicksPicker
           title={`Favorite artist #${picking + 1}`}
-          sub="Pick from the artists in your library. Your phone gets the same five."
+          sub={`Pick from the artists in your library. Your phone gets the same ${countWord(FAVORITE_ARTIST_SLOT_COUNT)}.`}
           placeholder="Search artists"
           items={pickerItems}
           emptyText="No artists in the library yet."

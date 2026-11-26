@@ -1,6 +1,6 @@
 /**
- * Synced picks (2026-10-18) — Jake's TOP 10 ISLAND ALBUMS and his 5 FAVORITE
- * ARTISTS, one document each, shared by the desktop and the phone. Jake: "when
+ * Synced picks (2026-10-18) — Jake's TOP 20 ISLAND ALBUMS and his 10 FAVORITE
+ * ARTISTS (10 and 5 until 2026-11-26), one document each, shared by the desktop and the phone. Jake: "when
  * i update one, the other changes. and vice versa."
  *
  * The homemini backend is the ONLY writer (single-writer contract, same as
@@ -8,10 +8,17 @@
  * cached copy + a queued edit locally (src/main/synced-picks-client.ts). Last
  * write wins on the whole document.
  *
- *   GET /api/island-albums    → { version: 1, slots: [{artist, album} | null] ×10, updatedAt, updatedBy }
- *   PUT /api/island-albums    ← { slots: [...10], updatedBy: 'desktop' }   (400 + message if invalid)
- *   GET /api/favorite-artists → { version: 1, artists: [string | null] ×5, updatedAt, updatedBy }
- *   PUT /api/favorite-artists ← { artists: [...5], updatedBy: 'desktop' }
+ *   GET /api/island-albums    → { version: 1, slots: [{artist, album} | null] ×20, updatedAt, updatedBy }
+ *   PUT /api/island-albums    ← { slots: [...20], updatedBy: 'desktop' }   (400 + message if invalid)
+ *   GET /api/favorite-artists → { version: 1, artists: [string | null] ×10, updatedAt, updatedBy }
+ *   PUT /api/favorite-artists ← { artists: [...10], updatedBy: 'desktop' }
+ *
+ * The lists grew on 2026-11-26 (Jake: "expand island albums to 20 and top
+ * artists to 10"). homemini reads a PUT of exactly the OLD length (10 / 5,
+ * `legacyCount`) as the top of the list and keeps the slots after it, so an
+ * app from before can't empty slots it has never seen. This app sends the old
+ * length in one case only: while it does not yet know those slots itself
+ * (synced-picks-client.ts, "tail unknown").
  *
  * Pure — no electron, no fs. Validation, tolerant parsing and slot editing
  * live here so main, preload and renderer share one definition.
@@ -27,8 +34,11 @@
  */
 import { nameKey } from './fold-text.ts'
 
-export const ISLAND_SLOT_COUNT = 10
-export const FAVORITE_ARTIST_SLOT_COUNT = 5
+export const ISLAND_SLOT_COUNT = 20
+export const FAVORITE_ARTIST_SLOT_COUNT = 10
+/** The lists' lengths before 2026-11-26. */
+export const ISLAND_LEGACY_SLOT_COUNT = 10
+export const FAVORITE_ARTIST_LEGACY_SLOT_COUNT = 5
 
 export type PicksKind = 'island-albums' | 'favorite-artists'
 export type PicksAuthor = 'phone' | 'desktop'
@@ -80,13 +90,15 @@ export interface PicksSpec<V> {
   /** Wire field name for the values array. */
   field: 'slots' | 'artists'
   count: number
+  /** The list's length before it grew (see the header). */
+  legacyCount: number
   validate: (raw: unknown) => Validation<V>
   /** Tolerant per-entry read (bad entry → null). */
   entry: (raw: unknown) => V | null
   /** Identity key of a filled slot (dedupe). */
   keyOf: (v: NonNullable<V>) => string
   /** Read-only until SOMEONE has written the document (updatedAt set). Island
-   *  albums: the phone's one-time migration PUTs Jake's ten legacy picks only
+   *  albums: the phone's one-time migration PUTs Jake's legacy picks only
    *  if the server has never been written — a desktop edit first would make
    *  "server wins" and strand them in the phone's backup. Favorites are new on
    *  both devices, so either may write first. */
@@ -184,6 +196,7 @@ export const ISLAND_ALBUMS_SPEC: PicksSpec<IslandSlot> = {
   path: '/api/island-albums',
   field: 'slots',
   count: ISLAND_SLOT_COUNT,
+  legacyCount: ISLAND_LEGACY_SLOT_COUNT,
   validate: validateIslandSlots,
   entry: (raw) => {
     const o = raw as Partial<IslandAlbum> | null
@@ -198,6 +211,7 @@ export const FAVORITE_ARTISTS_SPEC: PicksSpec<FavoriteSlot> = {
   path: '/api/favorite-artists',
   field: 'artists',
   count: FAVORITE_ARTIST_SLOT_COUNT,
+  legacyCount: FAVORITE_ARTIST_LEGACY_SLOT_COUNT,
   validate: validateFavoriteArtists,
   entry: (raw) => (isText(raw) ? raw.trim() : null),
   keyOf: favoriteArtistKey,
@@ -243,6 +257,21 @@ export function normalizeValues<V>(spec: PicksSpec<V>, arr: unknown[]): V[] {
     out.push(v)
   }
   return out
+}
+
+/** Does a stored/served document carry fewer entries than the list now has?
+ *  (A cache written before the list grew: the slots past it are unknown, not
+ *  empty.) false for anything that isn't a document. */
+export function isShortPicksDoc<V>(spec: PicksSpec<V>, raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object') return false
+  const arr = (raw as Record<string, unknown>)[spec.field]
+  return Array.isArray(arr) && arr.length < spec.count
+}
+
+/** Count words for the lists' own sentences ("Your twenty", "the same ten"). */
+const COUNT_WORDS: Record<number, string> = { 5: 'five', 10: 'ten', 20: 'twenty' }
+export function countWord(n: number): string {
+  return COUNT_WORDS[n] ?? String(n)
 }
 
 export function emptyPicksDoc<V>(spec: PicksSpec<V>): PicksDoc<V> {

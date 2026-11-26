@@ -1,4 +1,4 @@
-// TOP 10 ISLAND ALBUMS picker eligibility (renderer/utils/islandEligible.ts):
+// TOP 20 ISLAND ALBUMS picker eligibility (renderer/utils/islandEligible.ts):
 // complete albums only, judged by the desktop completeness doctrine
 // (verifyLiveSetCompleteness) plus the phone's 3-track floor.
 import { describe, it } from 'node:test'

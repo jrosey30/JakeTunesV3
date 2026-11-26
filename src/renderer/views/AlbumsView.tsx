@@ -25,7 +25,7 @@ import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded } from '..
 import { verifyLiveSetCompleteness } from '../utils/liveSetCompleteness'
 import '../styles/albums.css'
 import { albumMenuEntries } from '../utils/libraryMenus'
-// 2026-10-18 — TOP 10 ISLAND ALBUMS, synced with the phone through homemini.
+// 2026-10-18 — TOP 20 ISLAND ALBUMS, synced with the phone through homemini.
 import IslandAlbumsShelf from '../components/IslandAlbumsShelf'
 import { useSyncedPicksLive } from '../syncedPicks'
 

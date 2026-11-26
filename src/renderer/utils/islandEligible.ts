@@ -2,7 +2,7 @@ import type { Track } from '../types'
 import { verifyLiveSetCompleteness } from './liveSetCompleteness.ts'
 import { sortAlbumTracks } from './albumTrackOrder.ts'
 
-/// TOP 10 ISLAND ALBUMS eligibility (2026-10-18) — complete albums only.
+/// TOP 20 ISLAND ALBUMS eligibility (2026-10-18) — complete albums only.
 ///
 /// The desktop's ONE completeness doctrine decides (verifyLiveSetCompleteness,
 /// the gate behind Live Mode and Play Album — no second definition). The island

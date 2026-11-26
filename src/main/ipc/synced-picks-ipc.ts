@@ -1,5 +1,5 @@
 /**
- * Synced picks IPC (2026-10-18) — TOP 10 ISLAND ALBUMS + 5 FAVORITE ARTISTS,
+ * Synced picks IPC (2026-10-18) — TOP 20 ISLAND ALBUMS + 10 FAVORITE ARTISTS,
  * shared with the phone through homemini (the only writer). The client and
  * its cache/outbox live in ../synced-picks-client.ts; the contract in
  * ../../common/synced-picks.ts.

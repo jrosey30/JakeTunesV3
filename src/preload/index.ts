@@ -1243,7 +1243,7 @@ const electronAPI = {
     }
     return ipcRenderer.invoke('artist-profile:set-member-photo', artist, member, path)
   },
-  // 2026-10-18 — synced picks (TOP 10 ISLAND ALBUMS + 5 FAVORITE ARTISTS),
+  // 2026-10-18 — synced picks (TOP 20 ISLAND ALBUMS + 10 FAVORITE ARTISTS),
   // shared with the phone through homemini. kind = 'island-albums' |
   // 'favorite-artists'. get = cache only; refresh = GET + replay a queued
   // edit; save = queue + PUT. Main pushes 'synced-picks-updated' (the new

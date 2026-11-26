@@ -1,9 +1,9 @@
 /**
- * TOP 10 ISLAND ALBUMS (2026-10-18) — the phone's Letterboxd-style shelf
+ * TOP 20 ISLAND ALBUMS (2026-10-18; ten until 2026-11-26) — the phone's Letterboxd-style shelf
  * (JakeTunesMobile IslandAlbumsSection.swift), now on the desktop Albums
  * page and synced both ways through homemini (renderer/syncedPicks.ts).
  *
- * Ten ranked slots. A filled slot opens the album and its hover ▶ plays it
+ * ISLAND_SLOT_COUNT ranked slots, ten to a row. A filled slot opens the album and its hover ▶ plays it
  * (V7); right-click → the album menu, then Replace… / Remove / Move Left /
  * Move Right. An empty slot opens the picker, which only
  * offers COMPLETE albums (utils/islandEligible.ts — the desktop completeness
@@ -169,9 +169,9 @@ export default function IslandAlbumsShelf({ albums, findArtHash, lookupArt, requ
   const status = picksStatusLine(picks)
 
   return (
-    <section className="isl" aria-label="Top 10 Island Albums">
+    <section className="isl" aria-label={`Top ${ISLAND_SLOT_COUNT} Island Albums`}>
       <div className="isl-head">
-        <h2 className="isl-h2">Top 10 Island Albums</h2>
+        <h2 className="isl-h2">Top {ISLAND_SLOT_COUNT} Island Albums</h2>
         {status && <span className={`picks-status picks-status--${status.tone}`}>{status.text}</span>}
       </div>
       <div className="isl-grid">

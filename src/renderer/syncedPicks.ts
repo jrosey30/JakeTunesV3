@@ -1,4 +1,4 @@
-// Synced picks — renderer store (2026-10-18). TOP 10 ISLAND ALBUMS + 5
+// Synced picks — renderer store (2026-10-18). TOP 20 ISLAND ALBUMS + 10
 // FAVORITE ARTISTS, shared with the phone through homemini.
 //
 // Same module-store idiom as liveSets.ts: module state + a
@@ -158,7 +158,7 @@ export function useSyncedPicksLive(kind: PicksKind): void {
 
 /** Editable only once homemini's document has been seen (a good reply now or
  *  a cache from an earlier one), or on top of an edit already queued. Before
- *  that, ten empty slots mean "don't know" — a pick from there would replace
+ *  that, empty slots mean "don't know" — a pick from there would replace
  *  every pick the phone has. Main refuses the same save (synced-picks-client). */
 export function picksEditable(s: AnyPicksState): boolean {
   if (s.pending) return true
