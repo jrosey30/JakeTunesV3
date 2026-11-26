@@ -14,6 +14,10 @@
  *   C2: as C, and copying the originals back fails too: the journal stays open (staged).
  *   F: the song list can't be read while a wave is left staged: "can't tell", the journal is
  *      kept and the sync stops; it is never taken as "changed elsewhere".
+ *   I (Brief 266): no room for a replacement, and the song list can't be read at that moment:
+ *      the stop deletes nothing (it used to take every song off the card).
+ *   J (Brief 266): a new extension, and the wave's song list lands but fails its proof: the
+ *      old .m4a files are never deleted before a commit names their replacements.
  */
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -38,6 +42,13 @@ fsp.unlink = (p: string) => { if (unlinkHook) unlinkHook(String(p)); return real
 const realCopyFile = fsp.copyFile
 let copyHook: null | ((a: string, b: string) => void) = null
 fsp.copyFile = async (a: string, b: string, mode?: number) => { if (copyHook) copyHook(String(a), String(b)); return realCopyFile(a, b, mode) }
+const realReadFile = fsp.readFile
+/** The next n reads of a song list file (iTunesDB) fail with EIO: a card that answers badly for a moment. */
+let failDbReads = 0
+fsp.readFile = async (p: unknown, ...a: unknown[]) => {
+  if (failDbReads > 0 && String(p).endsWith('iTunesDB')) { failDbReads--; throw Object.assign(new Error('EIO (test)'), { code: 'EIO' }) }
+  return realReadFile(p, ...a)
+}
 syncBuiltinESMExports()
 
 const REPO = join(import.meta.dirname, '..', '..', '..')
@@ -123,7 +134,7 @@ function harness(name: string) {
       probeHomeminiTrack: async () => ({ ok: false, error: 'n/a' }),
       stageTrack: async () => ({ ok: false, error: 'n/a', reason: 'other' } as never),
       freeBytes: async () => 500 * 1024 ** 3,
-      remountVolume: async (m: string) => { if (s.remountHook) s.remountHook(); return { ok: true, mountPoint: m } },
+      remountVolume: async (m: string) => { if (s.remountHook) s.remountHook(); if (s.remountFail && s.remountFail()) return { ok: false, error: 'test: remount failed' } as never; return { ok: true, mountPoint: m } },
       cardFreeBytes: () => s.freeFn(),
       cardCapacityBytes: async () => 8_000_000,
     }
@@ -147,6 +158,9 @@ describe('REVIEW A: a new extension (AAC -> MP3) and a later wave that can\'t go
     assert.equal(h.wavesSeen, 1, 'one wave committed before the stop')
     const missing = await h.catalogMissing()
     assert.deepEqual(missing, [], 'catalog names files that are not on the card')
+    // Brief 266: wave 1 released its originals, so the stop never says "Nothing was deleted".
+    assert.match(String(r.error), /isn't room/)
+    assert.doesNotMatch(String(r.error), /Nothing was deleted/)
   })
 })
 
@@ -388,5 +402,48 @@ describe('H: the song list file stays missing with the songs still on the iPod: 
     const r2 = await h.sync()
     assert.equal(r2.ok, true, r2.error)
     assert.deepEqual(await h.catalogMissing(), [])
+  })
+})
+
+describe('I (Brief 266): no room for a replacement, and the song list can\'t be read at that moment', () => {
+  const h = harness('b266-i-')
+  before(() => h.before()); after(() => { failDbReads = 0; return h.after() })
+  it('first sync', async () => { const r = await h.sync(); assert.equal(r.ok, true, r.error) })
+  it('the stop deletes no song, and the next sync finds the card whole', async () => {
+    h.codec = 'mp3'; h.mirrorBytes = 300_000; await h.dropLanded()
+    h.freeFn = async () => { failDbReads = 1; return 1000 }
+    const onCard = await h.cardFiles()
+    const r = await h.sync()
+    failDbReads = 0
+    assert.equal(r.ok, false)
+    assert.match(String(r.error), /isn't room/)
+    assert.deepEqual(await h.cardFiles(), onCard, 'every song still on the iPod')
+    assert.deepEqual(await h.catalogMissing(), [])
+  })
+})
+
+describe('J (Brief 266): a new extension, and the wave\'s song list lands on the card but its proof fails (remount)', () => {
+  const h = harness('b266-j-')
+  before(() => h.before()); after(() => h.after())
+  it('first sync', async () => { const r = await h.sync(); assert.equal(r.ok, true, r.error) })
+  it('the wave\'s old .m4a files are still on the card after the stop, and the next sync never wipes', async () => {
+    h.codec = 'mp3'; h.mirrorBytes = 300_000; await h.dropLanded()
+    const r3 = await h.roomFor(3, 300_000)
+    h.freeFn = async () => r3
+    const onCard = await h.cardFiles()
+    h.events.length = 0; h.wavesSeen = 0
+    h.remountFail = () => h.wavesSeen >= 1
+    const r = await h.sync()
+    h.remountFail = null
+    assert.equal(r.ok, false)
+    assert.equal(h.wavesSeen, 1, 'the stop came in the first wave')
+    const after = await h.cardFiles()
+    const gone = [...onCard.keys()].filter((k) => !after.has(k))
+    assert.deepEqual(gone, [], 'an original was deleted before its replacement was committed')
+    h.events.length = 0
+    const r2 = await h.sync()
+    assert.equal(h.events.some((t: string) => /^Wiping/.test(t)), false, 'the next sync wiped the iPod')
+    assert.deepEqual(await h.catalogMissing(), [])
+    assert.equal(r2.ok, true, r2.error)
   })
 })

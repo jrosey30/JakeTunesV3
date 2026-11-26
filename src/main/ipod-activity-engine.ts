@@ -1474,7 +1474,12 @@ async function runActivitySyncHolding(
       }
     }
     console.error(`activity-sync: swap stopped — took ${removed} file(s) copied this run back off; the card's catalog names ${cataloguedAbs.size} song(s), all on it${restored ? ' (the last sync\'s seal is back)' : ''}. ${why.error}`)
-    const error = [why.error || 'Sync stopped.', swapKeptNote(cataloguedAbs.size, restored)].join(' ')
+    // "Nothing was deleted" (the no-room refusal's words) only when this run took no file off the
+    // card: none here, and no wave released an original before the stop (Brief 266).
+    const said = removed > 0 || replacedIds.size > 0
+      ? (why.error || '').replace(/\s*Nothing was deleted\./g, '')
+      : why.error
+    const error = [said || 'Sync stopped.', swapKeptNote(cataloguedAbs.size, restored)].join(' ')
     return { ...why, error, mode, swap: swapCounts() }
   }
   const stopAfterTouch = (why: ActivitySyncResult): Promise<ActivitySyncResult> =>
@@ -1954,11 +1959,20 @@ async function runActivitySyncHolding(
       }
       return { abs: e.srcToCopy, cleanup: async () => {} }
     }
-    /** The files the song list on the card names now: a stop keeps every one of them. */
+    /**
+     * The files a stop keeps: every one the song list on the card names now, and every one the
+     * last committed song list names (`current`). Brief 266: this used to be the card's list
+     * alone, so one failed read or parse of it gave an empty set and swapStop deleted every song
+     * on the card; and after a wave whose new list landed but failed its proof, the old files
+     * of a song changing extension (.m4a to .mp3) were named by neither and were deleted before
+     * any commit. A list that can't be read keeps `current`'s files, never nothing.
+     */
     const listedOnCard = async (): Promise<Set<string>> => {
+      const keep = new Set<string>([...current.values()].map((r) => absOf(r.destPath)))
       const db = await readFile(join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')).catch(() => null)
       const listed = db ? catalogSizesByPath(db) : null
-      return new Set([...(listed?.keys() ?? [])].map((c) => absOf(c)))
+      for (const c of listed?.keys() ?? []) keep.add(absOf(c))
+      return keep
     }
     const setOpen = async (open: WavesJournal['open']): Promise<void> => {
       const next: WavesJournal = { ...journal!, open }
