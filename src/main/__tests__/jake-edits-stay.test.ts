@@ -211,8 +211,18 @@ describe('the override merge keeps his other fields when he corrects a title', (
   })
   test('Get Info: the write that corrects the title is itself the evidence', () => {
     const o: Record<string, unknown> = { '9': { fp: 'dirty work|steely dan|188000', fields: { genre: 'Yacht Rock' } } }
-    mergeOverrideField(o, 9, 'title', 'Dirty Work (Live)', 'dirty work (live)|steely dan|188000')
+    mergeOverrideField(o, 9, 'title', 'Dirty Work (Live)', 'dirty work (live)|steely dan|188000', {}, { writtenByJake: true })
     assert.deepEqual(o['9'], { fp: 'dirty work (live)|steely dan|188000', fields: { genre: 'Yacht Rock', title: 'Dirty Work (Live)' } })
+  })
+  test('Cynthia trimming "Aja " to "Aja" after id 512 moved from Peg: a robot is not its own evidence, fresh', () => {
+    const o: Record<string, unknown> = { '512': { fp: 'peg|steely dan|237000', fields: { genre: 'Yacht Rock', year: '1977', trackNumber: '3', rating: '100' } } }
+    mergeOverrideField(o, 512, 'title', 'Aja', 'aja |steely dan|237500')   // the sweep's write: writtenByJake left false
+    assert.deepEqual(o['512'], { fp: 'aja |steely dan|237500', fields: { title: 'Aja' } }, 'none of Peg\'s fields on Aja')
+  })
+  test('his title at the same id, but a song of another length: another song, fresh (the 2 s check)', () => {
+    const o: Record<string, unknown> = { '512': { fp: 'peg|steely dan|237000', fields: { genre: 'Yacht Rock' } } }
+    mergeOverrideField(o, 512, 'bpm', '96', 'aja|steely dan|480000', { title: ['Aja'] })
+    assert.deepEqual(o['512'], { fp: 'aja|steely dan|480000', fields: { bpm: '96' } })
   })
   test('Peg → Aja: same artist, within 2 s, only the title changed, no value of Jake\'s: another song, fresh', () => {
     const o: Record<string, unknown> = { '512': { fp: 'peg|steely dan|237000', fields: { year: '1977', genre: 'Yacht Rock' } } }
@@ -241,6 +251,9 @@ describe('the override merge keeps his other fields when he corrects a title', (
     const journal = recordUserEdit(emptyUserEdits(0), 7, 'title', 'Dirty Work', 5_000)
     const names = createJakeNames(createJakeEdits({ readJournal: async () => journal, readPhone: async () => ({ '7': { fields: { artist: 'Steely Dan' } } }) }))
     assert.deepEqual(await names(7), { title: ['Dirty Work'], artist: ['Steely Dan'] })
+    const timed = createJakeNames(createJakeEdits({ readJournal: async () => recordUserEdit(emptyUserEdits(0), 7, 'title', 'Dirty Work', 5_000, { dur: 188_000 }), readPhone: async () => null }))
+    assert.deepEqual(await timed(7, 'dirty work|steely dan|188500'), { title: ['Dirty Work'], artist: [] }, 'his edit of this song (within 2 s)')
+    assert.deepEqual(await timed(7, 'dirty work|steely dan|400000'), { title: [], artist: [] }, 'his edit was of a song of another length: not evidence here')
     const broken = createJakeNames(createJakeEdits({ readJournal: async () => { throw new Error('torn') }, readPhone: async () => null }))
     assert.deepEqual(await broken(7), { title: [], artist: [] }, 'unreadable: no evidence, so a changed fingerprint starts fresh')
   })
@@ -276,9 +289,13 @@ describe('wiring (the behaviour is above; these pin that the app uses it)', () =
     assert.match(index, /heldForJake: cynthiaHeldForJake,/)
     assert.match(index, /createHeldForJake\(createJakeEdits\(\{ readJournal: \(\) => readJournalStrict\(app\.getPath\('userData'\)\), readPhone: \(\) => mobileMetadataOverridesCache\.get\(\) \}\)\)/)
     const fn = index.slice(index.indexOf('async function persistOverrideFields('), index.indexOf('async function persistOverrideFields(') + 900)
-    assert.match(fn, /const jake = await jakeNamesFor\(trackId\)/)
+    assert.match(fn, /const jake = await jakeNamesFor\(trackId, fingerprint\)/)
     assert.match(fn, /for \(const \[field, value\] of Object\.entries\(fields\)\) mergeOverrideField\(overrides, trackId, field, value, fingerprint, jake\)/)
-    assert.match(index, /await writeOverridesSerialized\(\(overrides\) => mergeOverrideField\(overrides, trackId, field, value, fingerprint, jake\)\)/, 'Get Info, Cynthia and the hub absorb pass his names too')
+    assert.match(index, /await writeOverridesSerialized\(\(overrides\) => mergeOverrideField\(overrides, trackId, field, value, fingerprint, jake, \{ writtenByJake \}\)\)/, 'Get Info, Cynthia and the hub absorb pass his names too')
+    assert.match(index, /async function applyMetadataOverrideInternal\(trackId: number, field: string, value: string, fingerprint\?: string, writtenByJake = false\)/)
+    assert.equal((index.match(/applyMetadataOverrideInternal\(trackId, field, value, fingerprint, true\)/g) || []).length, 1, 'only Jake\'s save says it is his')
+    const save = index.slice(index.indexOf("ipc.handle('save-metadata-override'"), index.indexOf("ipc.handle('save-metadata-override'") + 4000)
+    assert.ok(save.includes('applyMetadataOverrideInternal(trackId, field, value, fingerprint, true)'), 'and that one is the save-metadata-override handler')
     assert.match(index, /createJakeNames\(createJakeEdits\(\{ readJournal: \(\) => readJournalStrict\(app\.getPath\('userData'\)\), readPhone: \(\) => mobileMetadataOverridesCache\.get\(\), ttlMs: 5_000 \}\)\)/)
     assert.doesNotMatch(fn, /overrides\[key\] = \{ fp: fingerprint \|\| '', fields: \{ \.\.\.fields \} \}/)
   })

@@ -16,7 +16,7 @@
  */
 import type { UserEditsDoc } from '../common/user-edits.ts'
 import { readUserEditsJournalStrict } from './user-edits-sync.ts'
-import { mayWriteField, phoneEdit, type JournalEdit } from '../common/jake-edits-stay.ts'
+import { mayWriteField, phoneEdit, sameLength, type JournalEdit } from '../common/jake-edits-stay.ts'
 
 export const TTL_MS = 30_000
 
@@ -72,10 +72,13 @@ export function createHeldForJake(edits: { lookup: () => Promise<JakeEditLookup>
  * no evidence: a changed fingerprint then starts the entry fresh, as it always did.
  */
 export function createJakeNames(edits: { lookup: () => Promise<JakeEditLookup> }) {
-  return async (trackId: number | string): Promise<{ title: string[]; artist: string[] }> => {
+  /** `fingerprint`: the song the id names now; his records for a song of another length (or another phone entry) don't count. */
+  return async (trackId: number | string, fingerprint?: string): Promise<{ title: string[]; artist: string[] }> => {
     let look: JakeEditLookup
     try { look = await edits.lookup() } catch { return { title: [], artist: [] } }
     const id = Number(trackId)
-    return { title: look(id, 'title', undefined).map((e) => e.v), artist: look(id, 'artist', undefined).map((e) => e.v) }
+    const dur = fingerprint ? Number(fingerprint.slice(fingerprint.lastIndexOf('|') + 1)) || undefined : undefined
+    const names = (field: string): string[] => look(id, field, fingerprint).filter((e) => sameLength(e.dur, dur)).map((e) => e.v)
+    return { title: names('title'), artist: names('artist') }
   }
 }

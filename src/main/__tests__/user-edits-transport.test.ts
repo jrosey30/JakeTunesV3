@@ -156,6 +156,6 @@ describe('in the app', () => {
     const start = idx.indexOf("ipc.handle('load-metadata-overrides'")
     const body = idx.slice(start, idx.indexOf('}, { public: true })', start))
     assert.match(body, /overrides: await userEdits\.overlay\(merged\)/)
-    assert.match(idx, /writeOverridesSerialized\(\(overrides\) => mergeOverrideField\(overrides, trackId, field, value, fingerprint, jake\)\)/)
+    assert.match(idx, /writeOverridesSerialized\(\(overrides\) => mergeOverrideField\(overrides, trackId, field, value, fingerprint, jake, \{ writtenByJake \}\)\)/)
   })
 })

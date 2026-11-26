@@ -24,10 +24,17 @@ function fpParts(fp: string): { title: string; artist: string; dur: number } | n
 
 const norm = (v: unknown): string => String(v ?? '').trim().toLowerCase()
 
-/** His names for this id: the entry's own override, his journal and phone edits (passed in), and this write. */
-function evidenceFor(fields: Record<string, string> | undefined, field: string, value: string, jake: JakeNames): JakeNames {
-  const title = [...(jake.title ?? []), ...(fields?.title !== undefined ? [fields.title] : []), ...(field === 'title' ? [value] : [])]
-  const artist = [...(jake.artist ?? []), ...(fields?.artist !== undefined ? [fields.artist] : []), ...(field === 'artist' ? [value] : [])]
+/**
+ * His names for this id: the entry's own override, his journal and phone edits
+ * (passed in), and this write ONLY when the write is his own (save-metadata-override:
+ * a Get Info correction). A robot's write is never its own evidence: Cynthia
+ * trimming "Aja " to "Aja" after the id moved must not keep Peg's fields
+ * (review of #505).
+ */
+function evidenceFor(fields: Record<string, string> | undefined, field: string, value: string, jake: JakeNames, writtenByJake: boolean): JakeNames {
+  const mine = (f: string): string[] => (writtenByJake && field === f ? [value] : [])
+  const title = [...(jake.title ?? []), ...(fields?.title !== undefined ? [fields.title] : []), ...mine('title')]
+  const artist = [...(jake.artist ?? []), ...(fields?.artist !== undefined ? [fields.artist] : []), ...mine('artist')]
   return { title, artist }
 }
 
@@ -43,7 +50,7 @@ export interface JakeNames { title?: readonly string[]; artist?: readonly string
  *   - the length agrees (within the edit sync's 2 s), AND
  *   - each of title / artist that changed equals a title / artist Jake set
  *     for this id (his override, his journal or his phone edits, or the very
- *     field being written: that write is his correction).
+ *     field being written when Jake is the one writing it: a Get Info correction).
  * Anything else is another song: the entry starts fresh, as it always did.
  */
 export function isAnotherSong(oldFp: string, newFp: string, his: JakeNames = {}): boolean {
@@ -67,13 +74,14 @@ export function isAnotherSong(oldFp: string, newFp: string, his: JakeNames = {})
 export function mergeOverrideField(
   overrides: Record<string, unknown>, trackId: number | string, field: string, value: string, fingerprint?: string,
   jake: JakeNames = {},
+  opts: { writtenByJake?: boolean } = {},
 ): Record<string, unknown> {
   const key = String(trackId)
   const existing = overrides[key] as OvEntry | undefined
   const isV2 = !!existing && typeof existing === 'object' && 'fields' in existing
   const hasNewFp = typeof fingerprint === 'string' && fingerprint !== ''
   const existingFp = isV2 ? (existing!.fp || '') : ''
-  if (isV2 && hasNewFp && existingFp && existingFp !== fingerprint && isAnotherSong(existingFp, fingerprint!, evidenceFor(existing!.fields, field, value, jake))) {
+  if (isV2 && hasNewFp && existingFp && existingFp !== fingerprint && isAnotherSong(existingFp, fingerprint!, evidenceFor(existing!.fields, field, value, jake, opts.writtenByJake === true))) {
     // Explicit fingerprint mismatch — track at this ID has changed
     // identity (re-parse, library shift, etc). Old overrides don't
     // apply anymore; start fresh with just the new field.
