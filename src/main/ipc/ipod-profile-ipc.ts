@@ -6,7 +6,8 @@
  *   ipod-audio-profile:get   { ok, ipod: { name, primary } | null, profile, source }
  *                            source: 'stored' (set here), 'seed' (Jake's table), 'device-page'
  *                            (no profile: the Device page's convert setting applies)
- *   ipod-audio-profile:set   { codec, kbps?, enabled? } or { reset: true } (back to the seed)
+ *   ipod-audio-profile:set   { codec, kbps?, enabled? } or { reset: true } (back to the seed),
+ *                            with expectedId: the iPod the page showed (a mismatch is refused)
  *
  * Stored under the iPod's serial from its set-up record when it has one, else under the id in
  * its ID file, the same keys a sync reads (profileForSync). Refused while a sync runs.
@@ -28,13 +29,13 @@ export interface IpodProfileHost {
 
 type ProfileSource = 'stored' | 'seed' | 'device-page'
 
-async function currentIpod(host: IpodProfileHost): Promise<{ ref: IpodRef; name: string; primary: boolean } | null> {
+async function currentIpod(host: IpodProfileHost): Promise<{ ref: IpodRef; id: string; name: string; primary: boolean } | null> {
   const mount = host.getMount()
   if (!mount) return null
   const marker = await readDeviceMarker(mount)
   if (!marker) return null
   const rec = (await readOnboardingRecords(host.stateDir)).find((r) => r.listId === marker.id && !r.released) ?? null
-  return { ref: { serial: rec?.serial ?? null, deviceId: marker.id, primary: !!marker.primary }, name: marker.name, primary: !!marker.primary }
+  return { ref: { serial: rec?.serial ?? null, deviceId: marker.id, primary: !!marker.primary }, id: marker.id, name: marker.name, primary: !!marker.primary }
 }
 
 /** Where a resolved profile came from, for the page's wording. */
@@ -55,7 +56,7 @@ export function registerIpodProfileIpc(ipc: IpcRegistrar, host: IpodProfileHost)
     if (!read.ok) return { ok: false, error: `Couldn’t read the iPod format settings on this Mac (${read.reason}).` }
     return {
       ok: true,
-      ipod: { name: ipod.name, primary: ipod.primary },
+      ipod: { id: ipod.id, name: ipod.name, primary: ipod.primary },
       profile: resolveIpodAudioProfile(read.store, ipod.ref),
       source: profileSource(read.store, ipod.ref),
     }
@@ -65,6 +66,9 @@ export function registerIpodProfileIpc(ipc: IpcRegistrar, host: IpodProfileHost)
     if (host.syncInFlight()) return { ok: false, error: 'An iPod sync is running. Change the format when it’s done.' }
     const ipod = await currentIpod(host)
     if (!ipod) return { ok: false, error: 'Plug in the iPod first.' }
+    // Saved only for the iPod the page showed: one swapped in while Options was open is refused.
+    const expected = (raw as { expectedId?: unknown } | null)?.expectedId
+    if (typeof expected !== 'string' || expected !== ipod.id) return { ok: false, error: 'A different iPod is plugged in now. Open Options again to set its format.' }
     const key = serialProfileKey(ipod.ref.serial) ?? ipod.ref.deviceId ?? null
     if (!key) return { ok: false, error: 'This iPod hasn’t been set up yet.' }
     const arg = (raw ?? {}) as { reset?: unknown; codec?: unknown; kbps?: unknown; enabled?: unknown }
@@ -85,7 +89,7 @@ export function registerIpodProfileIpc(ipc: IpcRegistrar, host: IpodProfileHost)
     console.log(`[ipod-profile] ${ipod.name}: ${profile ? `${profile.codec}${profile.kbps ? ` ${profile.kbps}k` : ''}${profile.enabled ? '' : ' (off)'}` : 'back to its default'} (${key.startsWith('serial:') ? 'by serial' : 'by its ID file'})`)
     return {
       ok: true,
-      ipod: { name: ipod.name, primary: ipod.primary },
+      ipod: { id: ipod.id, name: ipod.name, primary: ipod.primary },
       profile: resolveIpodAudioProfile(written.store, ipod.ref),
       source: profileSource(written.store, ipod.ref),
     }

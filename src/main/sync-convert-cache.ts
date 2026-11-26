@@ -76,7 +76,7 @@ export function planPrune(files: readonly CacheFile[], capBytes: number, protect
 }
 
 export type PruneResult =
-  | { pruned: false; why: 'no cap set' | 'a sync is running' | 'under the cap' }
+  | { pruned: false; why: 'no cap set' | 'a sync is running' | 'under the cap' | 'protection unknown'; detail?: string }
   | { pruned: true; removed: number; freedBytes: number; leftBytes: number }
 
 /** Prune to the cap. No cap (the default) = nothing is ever deleted. */
@@ -89,8 +89,9 @@ export async function pruneToCap(dir: string, capGb: number | null, opts: { sync
   // nothing is taken (a limit must never cost a re-conversion of a song already on an iPod).
   let protect: ReadonlySet<string>
   try { protect = opts.protect ? await opts.protect() : new Set() } catch (err) {
-    console.warn('[sync-cache] could not tell which copies the iPods use — nothing pruned:', err instanceof Error ? err.message : err)
-    return { pruned: false, why: 'under the cap' }
+    const detail = err instanceof Error ? err.message : String(err)
+    console.warn(`[sync-cache] could not tell which copies the iPods use — nothing pruned: ${detail}`)
+    return { pruned: false, why: 'protection unknown', detail }
   }
   const victims = planPrune(files, cap, protect)
   if (victims.length === 0) return { pruned: false, why: 'under the cap' }
@@ -104,17 +105,26 @@ export async function pruneToCap(dir: string, capGb: number | null, opts: { sync
   return { pruned: true, removed, freedBytes: freed, leftBytes: total - freed }
 }
 
-/** Empty the cache. Refused while a sync runs. */
-export async function clearCache(dir: string, opts: { syncInFlight: () => boolean }): Promise<{ ok: true; removed: number; freedBytes: number } | { ok: false; error: string }> {
+/**
+ * Empty the cache of every copy no song on an iPod was made from (`protect`). Refused while a
+ * sync runs, and refused, taking nothing, when the protected copies can't be worked out.
+ */
+export async function clearCache(dir: string, opts: { syncInFlight: () => boolean; protect?: () => Promise<ReadonlySet<string>> }): Promise<{ ok: true; removed: number; freedBytes: number; kept: number } | { ok: false; error: string }> {
   if (opts.syncInFlight()) return { ok: false, error: 'An iPod sync is running. Clear the cache when it’s done.' }
+  let protect: ReadonlySet<string>
+  try { protect = opts.protect ? await opts.protect() : new Set() } catch (err) {
+    return { ok: false, error: `Couldn’t tell which copies the songs on your iPods use (${err instanceof Error ? err.message : String(err)}), so nothing was emptied.` }
+  }
   let removed = 0
   let freed = 0
+  let kept = 0
   for (const f of await listCache(dir)) {
+    if (protect.has(f.name)) { kept++; continue }
     // A sync that starts part-way through stops the clear: it may be reading these files.
     if (opts.syncInFlight()) return { ok: false, error: `An iPod sync started. ${removed} file(s) were cleared; clear again when it’s done.` }
     try { await rm(f.path, { force: true }); removed++; freed += f.size } catch (err) { console.warn(`[sync-cache] could not remove ${f.name}:`, err instanceof Error ? err.message : err) }
   }
-  return { ok: true, removed, freedBytes: freed }
+  return { ok: true, removed, freedBytes: freed, kept }
 }
 
 /** The cap in GB, or null (off: the default). */
