@@ -31,6 +31,8 @@ interface FakeHub {
   doc: Record<string, unknown> | null
   mode: 'up' | 'down' | 'missing' | 'error'
   reject?: string
+  /** GETs answer; PUTs get a 503 (homemini up but not taking the save). */
+  putBusy?: boolean
   hold?: Promise<void>
   serverNow: number
   calls: Array<{ method: string; url: string; body?: Record<string, unknown>; ifNoneMatch?: string }>
@@ -95,6 +97,7 @@ function fakeFetch(hub: FakeHub, spec: PicksSpec<unknown>): FetchLike {
       if (inm === etag) { hub.notModified = (hub.notModified ?? 0) + 1; return resp(304, null, etag) }
       return resp(200, doc, etag)
     }
+    if (hub.putBusy) return resp(503, { error: 'busy' })
     if (hub.hold) await hub.hold
     if (hub.reject) return resp(400, { error: hub.reject })
     const bad = serverValidate(spec.field, spec.count, body ?? {}, spec.legacyCount)
@@ -471,10 +474,12 @@ describe('after the lists grew: what the older app left behind', () => {
     const r = await client.save(edit)
     assert.equal(r.ok, true)
     assert.equal(r.state.pending, true)
-    const onDisk = JSON.parse(await readFile(join(dir, OUTBOX), 'utf-8')) as { values: unknown[] }
-    assert.equal(onDisk.values.length, 10, 'queued at the old length')
+    const onDisk = JSON.parse(await readFile(join(dir, OUTBOX), 'utf-8')) as { values: unknown[]; keepTail?: boolean }
+    assert.equal(onDisk.keepTail, true, 'queued as "leave the slots I have not seen"')
     hub.mode = 'up'
+    hub.calls.length = 0
     const s = await client.sync()
+    assert.equal((hub.calls.find((c) => c.method === 'PUT')!.body!.slots as unknown[]).length, 10, 'sent at the old length')
     const want = [...ten(), ...tail()]; want[2] = null
     assert.deepEqual(hub.doc!.slots, want)
     assert.deepEqual(s.values, want)
@@ -520,18 +525,99 @@ describe('after the lists grew: what the older app left behind', () => {
     assert.deepEqual(hub.doc!.slots, edit)
   })
 
-  it('filling a new slot before the list was read is sent whole (it is Jake\'s word on those slots)', async () => {
-    const hubDoc = phoneDoc(ten(), at)
+  it('filling a new slot before the list was read keeps homemini\'s other new slots', async () => {
+    // The phone has already filled 11-20; this Mac has only the old cache and
+    // homemini is away. Jake puts a record at rank 13 and moves rank 10 on to 11.
+    const hubDoc = phoneDoc([...ten(), ...tail()], at)
     await oldCache(hubDoc, ten())
-    const { hub, client } = setup({ doc: phoneDoc([...ten(), ...nulls<IslandSlot>(10)], at), mode: 'down' })
-    const edit = [...(await client.read()).values]; edit[12] = { artist: 'New', album: 'Pick' }
-    await client.save(edit)
-    const onDisk = JSON.parse(await readFile(join(dir, OUTBOX), 'utf-8')) as { values: unknown[] }
-    assert.equal(onDisk.values.length, 20)
+    const { hub, client } = setup({ doc: hubDoc, mode: 'down', now: Date.parse('2026-11-26T12:00:00.000Z') })
+    const edit = [...(await client.read()).values]
+    edit[12] = { artist: 'New', album: 'Pick' }
+    edit[10] = edit[9]; edit[9] = null                 // "Move Right" on rank 10
+    const r = await client.save(edit)
+    assert.equal(r.ok, true)
     hub.mode = 'up'
-    hub.serverNow = Date.parse('2026-11-26T09:00:00.000Z')
-    await client.sync({ direct: true })
-    assert.deepEqual((hub.doc!.slots as IslandSlot[])[12], { artist: 'New', album: 'Pick' })
+    hub.serverNow = Date.parse('2026-11-26T12:05:00.000Z')
+    const s = await client.sync()
+    const want = [...ten(), ...tail()]
+    want[12] = { artist: 'New', album: 'Pick' }
+    want[10] = want[9]; want[9] = null
+    assert.deepEqual(hub.doc!.slots, want, 'his two changes, and the other eight the phone picked are still there')
+    assert.deepEqual(s.values, want)
+    assert.equal(s.pending, false)
+  })
+
+  it('…and with homemini answering, in the moment before the first read', async () => {
+    const hubDoc = phoneDoc([...ten(), ...tail()], at)
+    await oldCache(hubDoc, ten())
+    const { hub, client } = setup({ doc: hubDoc, now: Date.parse('2026-11-26T12:00:00.000Z') })
+    const edit = [...(await client.read()).values]
+    edit[19] = { artist: 'New', album: 'Pick' }
+    const r = await client.save(edit)                 // direct: no sync has run yet
+    assert.equal(r.ok, true)
+    const want = [...ten(), ...tail()]; want[19] = { artist: 'New', album: 'Pick' }
+    assert.deepEqual(hub.doc!.slots, want)
+    assert.equal((hub.calls.find((c) => c.method === 'PUT')!.body!.slots as unknown[]).length, 20)
+  })
+
+  it('a pick he puts in a new slot that homemini holds in another new slot is sent once', async () => {
+    const hubDoc = phoneDoc([...ten(), ...tail()], at)
+    await oldCache(hubDoc, ten())
+    const { hub, client } = setup({ doc: hubDoc })
+    const edit = [...(await client.read()).values]
+    edit[19] = { artist: 'ARTIST 12', album: 'album 12' }   // homemini has it at rank 12
+    const r = await client.save(edit)
+    assert.equal(r.ok, true, 'a duplicate would have been a 400')
+    const stored = hub.doc!.slots as IslandSlot[]
+    assert.equal(stored[11], null)
+    assert.deepEqual(stored[19], { artist: 'ARTIST 12', album: 'album 12' })
+    assert.equal(stored.filter((v) => v !== null).length, 19)
+  })
+
+  it('a queued old-length edit, then the list is read but the save fails: clearing a new slot he can now see is a real clear', async () => {
+    const one = nulls<IslandSlot>(10); one[4] = { artist: 'Only', album: 'Tail Pick' }
+    const hubDoc = phoneDoc([...ten(), ...one], at)
+    await oldCache(hubDoc, ten())
+    const { hub, client } = setup({ doc: hubDoc, mode: 'down', now: Date.parse('2026-11-26T12:00:00.000Z') })
+    const a = [...(await client.read()).values]; a[0] = null
+    await client.save(a)                               // queued, keepTail
+    // homemini answers the GET and does not take the PUT: the edit stays queued.
+    hub.mode = 'up'
+    hub.putBusy = true
+    const seen = await client.sync()
+    assert.equal(seen.pending, true)
+    assert.equal(seen.values[0], null)
+    assert.deepEqual(seen.values[14], { artist: 'Only', album: 'Tail Pick' }, 'the shelf now shows rank 15')
+    // He removes it. The whole list is known now, so this save is the whole list.
+    hub.putBusy = false
+    const b = [...seen.values]; b[14] = null
+    const r = await client.save(b)
+    assert.equal(r.ok, true)
+    const stored = hub.doc!.slots as IslandSlot[]
+    assert.equal(stored[14], null, 'it is gone on homemini too')
+    assert.equal(stored[0], null, 'and the first edit went with it')
+    assert.deepEqual(stored.slice(1, 10), ten().slice(1))
+    assert.equal(r.state.pending, false)
+  })
+
+  it('favorite artists: the older app\'s five, its queued edit, and the other five on homemini', async () => {
+    const five = ['Geese', 'Soulwax', null, 'Nirvana', 'TV Girl']
+    const more = ['Can', null, 'Air', null, 'Stereolab']
+    const hubDoc = { version: 1, artists: [...five, ...more], updatedAt: at, updatedBy: 'phone' }
+    await writeFile(join(dir, 'favorite-artists.desktop-cache.json'), JSON.stringify({ doc: { version: 1, artists: five, updatedAt: at, updatedBy: 'phone' }, syncedAt: 1, etag: etagFor(hubDoc) }))
+    await writeFile(join(dir, 'favorite-artists.desktop-outbox.json'), JSON.stringify({ id: 'old', values: ['Soulwax', 'Geese', null, 'Nirvana', 'Air'], queuedAt: '2026-11-26T11:00:00.000Z' }))
+    const hub: FakeHub = { doc: hubDoc, mode: 'up', serverNow: Date.parse('2026-11-26T12:00:00.000Z'), calls: [] }
+    const client = createSyncedPicksClient({
+      spec: FAVORITE_ARTISTS_SPEC, baseUrl: 'http://homemini.test:3000', dir,
+      fetchImpl: fakeFetch(hub, FAVORITE_ARTISTS_SPEC as PicksSpec<unknown>), log: () => {}, warn: () => {},
+    })
+    assert.deepEqual((await client.read()).values, ['Soulwax', 'Geese', null, 'Nirvana', 'Air', null, null, null, null, null])
+    const s = await client.sync()
+    assert.equal(hub.calls[0].ifNoneMatch, undefined)
+    assert.equal((hub.calls.find((c) => c.method === 'PUT')!.body!.artists as unknown[]).length, 5)
+    // "Air" moved into the top, so it left rank 8; the rest of 6-10 is as the phone had it.
+    assert.deepEqual(hub.doc!.artists, ['Soulwax', 'Geese', null, 'Nirvana', 'Air', 'Can', null, null, null, 'Stereolab'])
+    assert.deepEqual(s.values, hub.doc!.artists)
   })
 })
 

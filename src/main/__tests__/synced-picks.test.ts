@@ -64,7 +64,7 @@ describe('validateIslandSlots', () => {
 })
 
 describe('validateFavoriteArtists', () => {
-  it('accepts exactly 5 of names and nulls', () => {
+  it('accepts exactly 10 of names and nulls', () => {
     assert.equal(validateFavoriteArtists(favs(['Radiohead', null, 'Björk', null, null])).ok, true)
   })
   it('refuses wrong length, empty strings, non-strings', () => {
