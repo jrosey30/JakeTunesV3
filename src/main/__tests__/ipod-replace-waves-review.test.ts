@@ -22,6 +22,8 @@
  *      songs leaving go first, so the replacements have room (they used to stall halfway).
  *   L (Brief 266 1e): while that happens, no song that stays has its file deleted or moved
  *      before the song list on the card names its new copy.
+ *   M (Brief 266 1e): a song that stays on the list but is copied again later (its identity
+ *      changed) is not one of the songs leaving: a stop in the waves leaves its file on the card.
  */
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -162,6 +164,7 @@ function harness(name: string) {
     await walk(join(card, 'iPod_Control'))
     return used
   }
+  s.tracks = tracks
   s.paths = () => ({ card, state })
   s.after = () => rm(root, { recursive: true, force: true })
   return s
@@ -536,5 +539,31 @@ describe('L (Brief 266 1e): a song that stays keeps its file until the song list
     assert.deepEqual(bad, [])
     assert.deepEqual(await h.catalogMissing(), [])
     assert.equal((await h.cardFiles()).size, 6)
+  })
+})
+
+describe('M (Brief 266 1e): a song still on the list whose file is re-copied later is not removed before the waves', () => {
+  const h = harness('b266-m-')
+  before(() => h.before()); after(() => h.after())
+  it('first sync', async () => { const r = await h.sync(); assert.equal(r.ok, true, r.error) })
+  it('the waves stop for room: the songs leaving are gone, the re-copied song keeps its file', async () => {
+    const onCard = await h.cardFiles()
+    const seven = [...onCard.keys()].find((k) => /M7\.m4a$/.test(k))!
+    assert.ok(seven)
+    // Song 7 is now a different recording: same id, new identity, so it is copied again later.
+    const t7 = h.tracks.find((t: Record<string, unknown>) => t.id === 7)
+    t7.audioFingerprint = `sha1:${'f'.repeat(16)}|200000`
+    // Room for no replacement even after the three songs leaving are gone.
+    await fillCard(h, 100_000 - 3 * onCardBytes(250_000, 4096))
+    h.only = new Set([1, 2, 3, 4, 5, 6, 7])
+    h.codec = 'mp3'; h.mirrorBytes = 300_000; await h.dropLanded()
+    const r = await h.sync()
+    assert.equal(r.ok, false)
+    assert.match(String(r.error), /isn't room/)
+    assert.doesNotMatch(String(r.error), /Nothing was deleted/)
+    const after = await h.cardFiles()
+    assert.ok(after.has(seven), 'song 7\'s file is still on the card')
+    for (let id = 8; id <= 10; id++) assert.ok(![...after.keys()].some((k) => new RegExp(`M${id}\\.m4a$`).test(k)), `song ${id} left`)
+    assert.deepEqual(await h.catalogMissing(), [])
   })
 })

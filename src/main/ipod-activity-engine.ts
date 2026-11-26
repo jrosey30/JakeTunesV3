@@ -2073,8 +2073,12 @@ async function runActivitySyncHolding(
     // that stay (each one still to be replaced at its original, untouched) is written and proven
     // first; then only the leaving songs' own files go, never one that list names, never a file
     // a staying or replaced song uses. A song list that can't be read back removes nothing here.
-    if (leavingRows.length > 0) {
-      const out = leavingRows.length
+    // Only songs no longer on the list: a song that stays with a new copy made later (a changed
+    // identity, a new path without a fingerprint) keeps its file until the removal step below.
+    const onList = new Set(candidates.map((c) => c.id))
+    const goneRows = leavingRows.filter((r) => !onList.has(r.id))
+    if (goneRows.length > 0) {
+      const out = goneRows.length
       host.sendProgress({ phase: 'copy', current: 0, total: out, mode, title: `Removing ${out.toLocaleString()} song${out === 1 ? '' : 's'} leaving the iPod…` })
       const stayIds = new Set<number>([...keepIds, ...replaceIds].filter((id) => current.has(id)))
       const atOriginal = (on: boolean): void => {
@@ -2101,7 +2105,7 @@ async function runActivitySyncHolding(
       } else {
         const named = new Set([...listed.keys()].map((c) => absOf(c).toLowerCase()))
         const inUse = new Set([...keepAbs, ...pending.flatMap((p) => [p.oldAbs, p.e.dstToCopy])].map((a) => a.toLowerCase()))
-        for (const r of leavingRows) {
+        for (const r of goneRows) {
           const abs = absOf(r.destPath)
           if (named.has(abs.toLowerCase()) || inUse.has(abs.toLowerCase())) continue
           try {
@@ -2112,7 +2116,9 @@ async function runActivitySyncHolding(
           }
           current.delete(r.id)
         }
-        removedEarly = true
+        // Songs still on the list that leave their old file (re-copied later) need the removal
+        // step's own song list; with none, that step only sweeps.
+        removedEarly = goneRows.length === leavingRows.length
         console.log(`activity-sync: took ${leftEarly} song(s) leaving the iPod off before replacing ${pending.length}`)
       }
       cataloguedAbs = await listedOnCard()
