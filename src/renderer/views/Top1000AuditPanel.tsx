@@ -52,8 +52,16 @@ export default function Top1000AuditPanel({ byId, artFor, onClose }: Props): JSX
   const downAt = useRef(0)
   const { dispatch } = useLibrary()
 
+  // The parent passes onClose (and useQuizSnippet's stopSnippet) as values that change on its
+  // redraws. fetchNext must not change with them, or the mount effect below asks for a question
+  // again on every redraw, and each new question restarts the wrong-click guard, so no click lands.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  const stopRef = useRef(stopSnippet)
+  stopRef.current = stopSnippet
+
   const fetchNext = useCallback(async () => {
-    stopSnippet()
+    stopRef.current()
     lastHeard.current = null
     const r = await window.electronAPI.top1000AuditNext?.().catch((err: unknown) => {
       console.warn('[top1000-audit] next failed:', err)
@@ -62,12 +70,13 @@ export default function Top1000AuditPanel({ byId, artFor, onClose }: Props): JSX
     if (!r) { setPhase({ kind: 'error', message: 'This build can’t reach the blind check.' }); return }
     if (!r.ok) { setPhase({ kind: 'error', message: r.error }); return }
     const s = r.value
-    if (s.kind === 'off') { onClose(); return }
+    if (s.kind === 'off') { onCloseRef.current(); return }
     if (s.progress) setProgress(s.progress)
     if (s.kind === 'done') setPhase({ kind: 'done' })
     else if (s.kind === 'resting') setPhase({ kind: 'resting' })
-    else setPhase({ kind: 'ask', q: s.question })
-  }, [stopSnippet, onClose])
+    // The same question again keeps its phase, so the guard isn't restarted under a click.
+    else setPhase((prev) => (prev.kind === 'ask' && prev.q.qid === s.question.qid ? prev : { kind: 'ask', q: s.question }))
+  }, [])
 
   useEffect(() => { void fetchNext() }, [fetchNext])
 
