@@ -1299,7 +1299,7 @@ declare global {
       // homemini; see src/common/synced-picks.ts + renderer/syncedPicks.ts.
       syncedPicksGet?: (kind: import('../common/synced-picks').PicksKind) => Promise<import('../common/synced-picks').PicksReply>
       syncedPicksRefresh?: (kind: import('../common/synced-picks').PicksKind) => Promise<import('../common/synced-picks').PicksReply>
-      syncedPicksSave?: (kind: import('../common/synced-picks').PicksKind, values: unknown[]) => Promise<import('../common/synced-picks').PicksReply>
+      syncedPicksSave?: (kind: import('../common/synced-picks').PicksKind, values: unknown[], from?: { tailKnown: boolean }) => Promise<import('../common/synced-picks').PicksReply>
       onSyncedPicksUpdated?: (callback: (state: import('../common/synced-picks').AnyPicksState) => void) => () => void
       // 2026-10-18 — launch page "G" spotlight; see src/common/home-spotlight-doc.ts.
       homeSpotlightGet?: () => Promise<{ ok: boolean; state?: import('../common/home-spotlight-doc').HomeSpotlightState }>

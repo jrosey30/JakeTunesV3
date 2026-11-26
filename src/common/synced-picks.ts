@@ -70,6 +70,10 @@ export interface PicksState<V> {
   reachable: boolean | null
   /** ms epoch of the last good GET/PUT reply; null = never (shelf is drawing the cache or nothing). */
   syncedAt: number | null
+  /** `values` shows every slot as homemini has it (true), or the slots past
+   *  the old length are still unread and drawn empty (false / absent). An edit
+   *  says which of the two it was made from (synced-picks-client save). */
+  tailKnown?: boolean
   /** The backend refused the last edit (400) — its message. Cleared by the next accepted edit. */
   rejected?: string
 }

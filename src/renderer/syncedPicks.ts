@@ -105,7 +105,9 @@ async function save<V>(kind: PicksKind, values: V[]): Promise<{ ok: true } | { o
   savesInFlight[kind]++
   let reply: PicksReply | undefined
   try {
-    reply = await window.electronAPI.syncedPicksSave?.(kind, values)
+    // What this edit was made from: a shelf showing every slot, or one whose
+    // new slots were still unread (main keeps those as homemini has them).
+    reply = await window.electronAPI.syncedPicksSave?.(kind, values, { tailKnown: cur.tailKnown === true })
   } catch (err) {
     reply = { ok: false, error: err instanceof Error ? err.message : String(err) }
   } finally {

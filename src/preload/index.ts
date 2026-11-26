@@ -1250,7 +1250,7 @@ const electronAPI = {
   // state) whenever what the shelf should draw changes.
   syncedPicksGet: (kind: string): Promise<unknown> => ipcRenderer.invoke('synced-picks:get', kind),
   syncedPicksRefresh: (kind: string): Promise<unknown> => ipcRenderer.invoke('synced-picks:refresh', kind),
-  syncedPicksSave: (kind: string, values: unknown[]): Promise<unknown> => ipcRenderer.invoke('synced-picks:save', kind, values),
+  syncedPicksSave: (kind: string, values: unknown[], from?: { tailKnown: boolean }): Promise<unknown> => ipcRenderer.invoke('synced-picks:save', kind, values, from),
   onSyncedPicksUpdated: (callback: (state: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state)
     ipcRenderer.on('synced-picks-updated', handler)

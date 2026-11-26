@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto'
 import { createSyncedPicksClient, assertNoSyncedPicksPush, SYNCED_PICKS_BACKEND_FILES, type FetchLike } from '../synced-picks-client.ts'
 import { mobileWritable, desktopOwned } from '../sidecar-contracts.ts'
 import { nameKey } from '../../common/fold-text.ts'
+import { waitFor } from './wait-for.ts'
 import {
   ISLAND_ALBUMS_SPEC, FAVORITE_ARTISTS_SPEC,
   type IslandSlot, type PicksState, type PicksSpec,
@@ -598,6 +599,85 @@ describe('after the lists grew: what the older app left behind', () => {
     assert.equal(stored[0], null, 'and the first edit went with it')
     assert.deepEqual(stored.slice(1, 10), ten().slice(1))
     assert.equal(r.state.pending, false)
+  })
+
+  // The cache fills the moment a GET returns; the shelf learns the list only
+  // when that pass ends, after its PUT. An edit made in between was made on
+  // the old view.
+  it('a second edit while the first save\'s PUT is still out (homemini answering) keeps the phone\'s new slots', async () => {
+    const hubDoc = phoneDoc([...ten(), ...tail()], at)
+    await oldCache(hubDoc, ten())
+    const { hub, client } = setup({ doc: hubDoc, now: Date.parse('2026-11-26T12:00:00.000Z') })
+    const shelf = (await client.read()).values
+    assert.equal((await client.read()).tailKnown, false)
+    let release!: () => void
+    hub.hold = new Promise<void>((r) => { release = r })
+    const first = [...shelf]; first[12] = { artist: 'New', album: 'Pick' }
+    const p1 = client.save(first, { tailKnown: false })           // GETs (cache now whole), PUT held
+    await waitFor(() => hub.calls.some((c) => c.method === 'PUT'), 'the PUT to go out')
+    // He clears rank 3 on the shelf as it still draws: his pick at 13, nothing else past 10.
+    const second = [...first]; second[2] = null
+    const p2 = client.save(second, { tailKnown: false })
+    release(); hub.hold = undefined
+    await Promise.all([p1, p2])
+    await client.sync()
+    const want = [...ten(), ...tail()]; want[12] = { artist: 'New', album: 'Pick' }; want[2] = null
+    assert.deepEqual(hub.doc!.slots, want, 'the phone\'s other nine are still there')
+    assert.equal((await client.read()).tailKnown, true)
+    assert.deepEqual((await client.read()).values, want)
+  })
+
+  it('the same with no word from the shelf: the last state handed out decides, not the cache', async () => {
+    const hubDoc = phoneDoc([...ten(), ...tail()], at)
+    await oldCache(hubDoc, ten())
+    const { hub, client } = setup({ doc: hubDoc, now: Date.parse('2026-11-26T12:00:00.000Z') })
+    const shelf = (await client.read()).values
+    let release!: () => void
+    hub.hold = new Promise<void>((r) => { release = r })
+    const first = [...shelf]; first[12] = { artist: 'New', album: 'Pick' }
+    const p1 = client.save(first)
+    await waitFor(() => hub.calls.some((c) => c.method === 'PUT'), 'the PUT to go out')
+    const second = [...first]; second[2] = null
+    const p2 = client.save(second)
+    release(); hub.hold = undefined
+    await Promise.all([p1, p2])
+    await client.sync()
+    const want = [...ten(), ...tail()]; want[12] = { artist: 'New', album: 'Pick' }; want[2] = null
+    assert.deepEqual(hub.doc!.slots, want)
+  })
+
+  it('a queued edit replaying (GET done, PUT still out) and a second edit from the stale shelf', async () => {
+    const hubDoc = phoneDoc([...ten(), ...tail()], at)
+    await oldCache(hubDoc, ten())
+    const { hub, client } = setup({ doc: hubDoc, mode: 'down', now: Date.parse('2026-11-26T12:00:00.000Z') })
+    const shelf = (await client.read()).values
+    const first = [...shelf]; first[0] = null
+    await client.save(first, { tailKnown: false })                // queued, homemini away
+    hub.mode = 'up'
+    hub.calls.length = 0                                          // the attempt made while it was away is in there
+    let release!: () => void
+    hub.hold = new Promise<void>((r) => { release = r })
+    const replay = client.sync()                                  // GET (cache now whole), PUT held
+    await waitFor(() => hub.calls.some((c) => c.method === 'PUT'), 'the PUT to go out')
+    const second = [...first]; second[4] = null                   // from the shelf as it still draws
+    const p2 = client.save(second, { tailKnown: false })
+    assert.equal(hub.calls.filter((c) => c.method === 'GET').length, 1, 'the list had been read (the cache is whole) when he made it')
+    release(); hub.hold = undefined
+    await Promise.all([replay, p2])
+    await client.sync()
+    const want = [...ten(), ...tail()]; want[0] = null; want[4] = null
+    assert.deepEqual(hub.doc!.slots, want)
+  })
+
+  it('a shelf that says it knew every slot is not believed over a short cache', async () => {
+    const hubDoc = phoneDoc([...ten(), ...tail()], at)
+    await oldCache(hubDoc, ten())
+    const { hub, client } = setup({ doc: hubDoc, mode: 'down', now: Date.parse('2026-11-26T12:00:00.000Z') })
+    const edit = [...(await client.read()).values]; edit[1] = null
+    await client.save(edit, { tailKnown: true })
+    hub.mode = 'up'
+    await client.sync()
+    assert.deepEqual((hub.doc!.slots as IslandSlot[]).slice(10), tail())
   })
 
   it('favorite artists: the older app\'s five, its queued edit, and the other five on homemini', async () => {
