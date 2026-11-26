@@ -149,8 +149,13 @@ export interface JournalItem { id: number; dstColon: string; oldColon: string }
 export function absOnCard(mount: string, colon: string): string {
   return join(mount, ...colon.replace(/^:/, '').split(':'))
 }
+/** A song list that stays unreadable this many syncs in a row: the journal goes and the sync is a full copy. */
+export const UNREADABLE_STOPS_BEFORE_FULL = 3
+
 export interface WavesJournal {
   version: 1
+  /** Syncs in a row that stopped because the card's song list couldn't be read. */
+  unreadableStops?: number
   rows: JournalRow[]
   committed: { md5: string; bytes: number; backupDir: string | null }
   /** The song list being written to the card right now (not yet proven), if any. */
@@ -185,7 +190,7 @@ export function md5Of(buf: Buffer): string {
   return createHash('md5').update(buf).digest('hex')
 }
 
-export interface RecoveryReport { restored: string[]; released: string[]; removed: string[]; dbRestored: boolean; kept: string[]; stale: boolean; unreadable: boolean }
+export interface RecoveryReport { restored: string[]; released: string[]; removed: string[]; dbRestored: boolean; kept: string[]; stale: boolean; unreadable: boolean; noSongList: boolean }
 
 /**
  * Settle what a run left, from the journal. First, which song list is on the card:
@@ -203,12 +208,22 @@ export interface RecoveryReport { restored: string[]; released: string[]; remove
  * Staged copies (`.jtnew`) of the wave go either way. Anything that can't be done is left as
  * found and reported; nothing is deleted on a guess. ok:false = the card can't be trusted.
  */
+/** Song files under iPod_Control/Music/F## (hidden files aside); -1 when the folder can't be read. */
+async function musicFileCount(mount: string): Promise<number> {
+  const root = join(mount, 'iPod_Control', 'Music')
+  const dirs = await readdir(root).catch(() => null)
+  if (!dirs) return -1
+  let n = 0
+  for (const d of dirs) for (const f of await readdir(join(root, d)).catch(() => [] as string[])) if (!f.startsWith('.')) n++
+  return n
+}
+
 export async function recoverFromJournal(
   mount: string,
   j: WavesJournal,
   restoreDb: (backupDir: string) => Promise<void>,
 ): Promise<{ ok: boolean; report: RecoveryReport }> {
-  const rep: RecoveryReport = { restored: [], released: [], removed: [], dbRestored: false, kept: [], stale: false, unreadable: false }
+  const rep: RecoveryReport = { restored: [], released: [], removed: [], dbRestored: false, kept: [], stale: false, unreadable: false, noSongList: false }
   const tryDo = async (label: string, f: () => Promise<void>): Promise<boolean> => {
     try { await f(); return true } catch (err) {
       console.warn(`[ipod-waves] ${label} left as found:`, err instanceof Error ? err.message : err)
@@ -216,11 +231,19 @@ export async function recoverFromJournal(
       return false
     }
   }
-  const db = await readFile(join(mount, 'iPod_Control', 'iTunes', 'iTunesDB')).catch(() => null)
-  // A song list that can't be read (missing, a mount hiccup) is "can't tell", never "changed
-  // elsewhere": nothing is touched and the journal is kept for a sync that can read it.
+  let readErr: NodeJS.ErrnoException | null = null
+  const db = await readFile(join(mount, 'iPod_Control', 'iTunes', 'iTunesDB')).catch((err: NodeJS.ErrnoException) => { readErr = err; return null })
+  // No song list and no songs (restored, or set up fresh elsewhere): the journal can never
+  // describe it again. `noSongList`: nothing is touched; the
+  // caller drops the journal and the sync is an ordinary full copy, said plainly.
+  // A song list that is there but can't be read (a mount hiccup) is "can't tell", never "changed
+  // elsewhere": nothing is touched and the journal is kept for a sync that can read it
+  // (`unreadable`; the caller gives up on it after UNREADABLE_STOPS_BEFORE_FULL in a row).
   if (!db) {
-    rep.unreadable = true
+    const code = (readErr as NodeJS.ErrnoException | null)?.code
+    // A restore empties Music too; a song list missing beside songs still there is a hiccup.
+    if (code === 'ENOENT' && (await musicFileCount(mount)) === 0) rep.noSongList = true
+    else rep.unreadable = true
     return { ok: false, report: rep }
   }
   const onCard = md5Of(db)

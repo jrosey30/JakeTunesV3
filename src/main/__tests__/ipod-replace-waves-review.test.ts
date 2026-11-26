@@ -302,3 +302,91 @@ describe('F: the song list can\'t be read for a moment while a wave is left stag
     assert.equal(r2.mode, 'swap', String(r2.fullReason))
   })
 })
+
+/** Leaves a wave staged and the journal open: the sync dies right after its first wave. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function stopMidWave(h: any): Promise<void> {
+  h.mirrorBytes = 300_000; await h.dropLanded()
+  const r3 = await h.roomFor(3, 300_000)
+  h.freeFn = async () => r3
+  h.wavesSeen = 0
+  h.remountHook = () => { if (h.wavesSeen >= 1) { h.remountHook = null; throw new Error('process died (test)') } }
+  await assert.rejects(h.sync(), /process died/)
+  h.freeFn = async () => null
+}
+
+describe('G: a wave left staged, then the iPod restored with no song list file at all: the journal goes, nothing is wiped, and it syncs once Finder sets it up', () => {
+  const h = harness('rv499-g-')
+  before(() => h.before()); after(() => h.after())
+  it('first sync', async () => { const r = await h.sync(); assert.equal(r.ok, true, r.error) })
+  it('never stuck, never an empty iPod from the sync', async () => {
+    await stopMidWave(h)
+    const { card, state } = h.paths()
+    assert.equal((await readWavesJournal(state))?.open?.state, 'staged')
+    const music = join(card, 'iPod_Control', 'Music')
+    for (const f of await readdir(music)) await rm(join(music, f), { recursive: true, force: true })
+    const db = join(card, 'iPod_Control', 'iTunes', 'iTunesDB')
+    await rm(db)
+    const out = await recoverFromJournal(card, (await readWavesJournal(state))!, async () => {})
+    assert.equal(out.report.noSongList, true)
+    assert.equal(out.report.unreadable, false)
+    const r = await h.sync()
+    assert.equal(r.ok, false)
+    assert.match(String(r.error), /no song list file to write to/)
+    assert.equal(await readWavesJournal(state), null, 'the journal is gone: the next sync isn\'t held by it')
+    assert.equal((await h.cardFiles()).size, 0, 'nothing was put on, nothing written')
+    await writeFile(db, emptyTemplate())   // Finder set it up
+    const r2 = await h.sync()
+    assert.equal(r2.ok, true, r2.error)
+    assert.equal(r2.mode, 'full')
+    assert.deepEqual(await h.catalogMissing(), [])
+  })
+})
+
+describe('G2: a wave left staged, then the iPod restored in Finder (an empty song list, no songs): the journal goes and the sync is a full copy', () => {
+  const h = harness('rv499-g2-')
+  before(() => h.before()); after(() => h.after())
+  it('first sync', async () => { const r = await h.sync(); assert.equal(r.ok, true, r.error) })
+  it('a plain full copy', async () => {
+    await stopMidWave(h)
+    const { card, state } = h.paths()
+    const music = join(card, 'iPod_Control', 'Music')
+    for (const f of await readdir(music)) await rm(join(music, f), { recursive: true, force: true })
+    await writeFile(join(card, 'iPod_Control', 'iTunes', 'iTunesDB'), emptyTemplate())
+    const r = await h.sync()
+    assert.equal(r.ok, true, r.error)
+    assert.equal(r.mode, 'full')
+    assert.equal(await readWavesJournal(state), null)
+    assert.deepEqual(await h.catalogMissing(), [])
+  })
+})
+
+describe('H: the song list file stays missing with the songs still on the iPod: two stops, then the journal goes, and the songs are never wiped for want of a song list', () => {
+  const h = harness('rv499-h-')
+  before(() => h.before()); after(() => h.after())
+  it('first sync', async () => { const r = await h.sync(); assert.equal(r.ok, true, r.error) })
+  it('stops twice keeping the journal; the third drops it and still touches nothing; back to normal once the file is back', async () => {
+    await stopMidWave(h)
+    const { card, state } = h.paths()
+    const db = join(card, 'iPod_Control', 'iTunes', 'iTunesDB')
+    const { rename: mv } = await import('node:fs/promises')
+    await mv(db, db + '.away')
+    const onCard = await h.cardFiles()
+    assert.ok(onCard.size > 0)
+    for (const n of [1, 2]) {
+      const r = await h.sync()
+      assert.equal(r.ok, false)
+      assert.match(String(r.error), /Couldn’t read the song list on the iPod/)
+      assert.equal((await readWavesJournal(state))?.unreadableStops, n)
+    }
+    const r = await h.sync()
+    assert.equal(r.ok, false)
+    assert.match(String(r.error), /no song list file to write to/)
+    assert.equal(await readWavesJournal(state), null, 'the journal is gone after 3 stops')
+    assert.deepEqual(await h.cardFiles(), onCard, 'every song still on the iPod')
+    await mv(db + '.away', db)
+    const r2 = await h.sync()
+    assert.equal(r2.ok, true, r2.error)
+    assert.deepEqual(await h.catalogMissing(), [])
+  })
+})

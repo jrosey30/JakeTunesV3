@@ -25,7 +25,7 @@
 import { cardTooSmall } from './ipod-card-fit.ts'
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
-import { appendFile, copyFile, mkdir, readFile, rename, stat, statfs, lstat, unlink, writeFile } from 'fs/promises'
+import { appendFile, copyFile, mkdir, readFile, rename, stat, statfs, lstat, open, unlink, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { findIpodMount, isIpodMount, listMountPoints, PYTHON_CMD, PYTHON_INSTALL_HINT, remountVolume as platformRemountVolume } from './platform.ts'
 import {
@@ -95,7 +95,7 @@ import {
   type SwapProof,
 } from './ipod-swap-sync.ts'
 import {
-  NEW_TAG, ORIG_TAG, catalogSizesByPath, deleteWavesJournal, nextWave, noRoomForReplacement, ownerOfSide, proveCardFromJournal,
+  NEW_TAG, ORIG_TAG, UNREADABLE_STOPS_BEFORE_FULL, catalogSizesByPath, deleteWavesJournal, nextWave, noRoomForReplacement, ownerOfSide, proveCardFromJournal,
   readWavesJournal, recoverFromJournal, sideName, waveReserveBytes, writeWavesJournal, type JournalRow, type WaveItem, type WavesJournal,
 } from './ipod-replace-waves.ts'
 import { startRoundTripGeneration } from './sync-engine/roundtrip.ts'
@@ -284,6 +284,18 @@ function fail(partial: Omit<ActivitySyncResult, 'ok'> & { error: string }): Acti
   // to clear the repo-wide type gate. NOT a behaviour change — and do not
   // reorder a default AFTER the spread; that WOULD be one.
   return { ok: false, ...partial }
+}
+
+/** The card has an iTunesDB to write on top of: a file that starts as one ('mhbd'). */
+export async function cardHasSongListFile(mount: string): Promise<boolean> {
+  try {
+    const fh = await open(join(mount, 'iPod_Control', 'iTunes', 'iTunesDB'), 'r')
+    try {
+      const head = Buffer.alloc(4)
+      const { bytesRead } = await fh.read(head, 0, 4, 0)
+      return bytesRead === 4 && head.toString('latin1') === 'mhbd'
+    } finally { await fh.close() }
+  } catch { return false }
 }
 
 async function spawnJson(cmd: string, args: string[], stdin: string): Promise<{ code: number; stdout: string; stderr: string; err?: Error }> {
@@ -1054,25 +1066,45 @@ async function runActivitySyncHolding(
   // committed song list, from its Mac backup, if the card holds a newer unproven one).
   const priorJournal = await readWavesJournal(host.stateDir)
   let journalUsable = !!priorJournal
+  /** A plain reason the full copy below happens instead of the proof's own (the journal's way out). */
+  let fullReasonOverride: string | null = null
   if (priorJournal) {
     const fixed = await recoverFromJournal(IPOD_MOUNT, priorJournal, async (dir) => { await restoreItunesDbBackup(dir, IPOD_MOUNT) })
     const r = fixed.report
     console.log(`activity-sync: a stopped replacement was settled from its journal — ${r.restored.length} original(s) back, ${r.released.length} released, ${r.removed.length} unfinished copy(ies) removed${r.dbRestored ? ', the last committed song list put back' : ''}${r.kept.length ? `, ${r.kept.length} left as found` : ''}`)
-    if (r.unreadable) {
-      // Can't tell what the card holds: the journal stays, nothing is touched, and the sync stops.
-      await host.writeJournal(null)
-      return fail({ copied: 0, target, error: 'Couldn’t read the song list on the iPod, so this sync couldn’t finish the songs a stopped sync was replacing. Nothing on the iPod was changed. Unplug the iPod, plug it back in, then sync again.' })
-    }
-    if (r.stale) {
+    if (r.noSongList) {
+      // No song list on the iPod at all (restored, or set up fresh elsewhere): the journal can't
+      // describe it again. It goes, and this sync is an ordinary full copy, said so in the result.
+      console.warn('activity-sync: the iPod has no song list (it looks freshly restored) — the stopped replacement\'s journal dropped; a full copy')
+      await deleteWavesJournal(host.stateDir)
+      journalUsable = false
+      fullReasonOverride = 'the iPod has no song list (it looks freshly restored)'
+    } else if (r.unreadable) {
+      const stops = (priorJournal.unreadableStops ?? 0) + 1
+      if (stops >= UNREADABLE_STOPS_BEFORE_FULL) {
+        // The song list hasn't been readable for several syncs in a row: give up on the journal.
+        console.warn(`activity-sync: the iPod's song list couldn't be read ${stops} syncs in a row — the stopped replacement's journal dropped; a full copy`)
+        await deleteWavesJournal(host.stateDir)
+        journalUsable = false
+        fullReasonOverride = `the iPod’s song list couldn’t be read ${stops} syncs in a row`
+      } else {
+        // Can't tell what the card holds: the journal stays (counting this stop), nothing is
+        // touched, and the sync stops.
+        await writeWavesJournal(host.stateDir, { ...priorJournal, unreadableStops: stops }).catch((err) => console.warn('activity-sync: waves journal update failed:', err instanceof Error ? err.message : err))
+        await host.writeJournal(null)
+        return fail({ copied: 0, target, error: 'Couldn’t read the song list on the iPod, so this sync couldn’t finish the songs a stopped sync was replacing. Nothing on the iPod was changed. Unplug the iPod, plug it back in, then sync again.' })
+      }
+    } else if (r.stale) {
       // The card was changed elsewhere since this Mac's run stopped: the journal no longer
       // describes it. Nothing on the card was touched; the journal goes.
       console.warn('activity-sync: the iPod\'s song list is neither the one the stopped replacement committed nor the one it was writing — left as it is, the journal dropped')
       await deleteWavesJournal(host.stateDir)
       journalUsable = false
     } else if (!fixed.ok) journalUsable = false
-    else if (priorJournal.open || priorJournal.inflight) {
+    else if (priorJournal.open || priorJournal.inflight || priorJournal.unreadableStops) {
       priorJournal.inflight = null
       priorJournal.open = null
+      priorJournal.unreadableStops = 0
       await writeWavesJournal(host.stateDir, priorJournal).catch((err) => { journalUsable = false; console.warn('activity-sync: waves journal update failed:', err instanceof Error ? err.message : err) })
     }
   }
@@ -1098,7 +1130,7 @@ async function runActivitySyncHolding(
   let fullReason: string | null = null
   const stayRows = new Map<number, SwapManifestRow>()
   if (!proof.ok) {
-    fullReason = proof.why
+    fullReason = fullReasonOverride ?? proof.why
   } else {
     const candidate = planSwap(candidates, proof.rows)
     // A replaced song isn't counted as changing the card: it goes on in waves beside its
@@ -2087,6 +2119,13 @@ async function runActivitySyncHolding(
   }
 
   // ── 3. Remove (swap) or wipe (full) ──
+  // The song list is written on top of the one on the card (db_reader.py --template). With none
+  // there, or one that isn't a song list, the write would fail AFTER the wipe and leave the iPod
+  // empty: so nothing is touched and the sync stops (Brief 265 Part 6, the journal's way out).
+  if (!(await cardHasSongListFile(IPOD_MOUNT))) {
+    await host.writeJournal(null)
+    return fail({ copied: 0, target, error: 'The iPod has no song list file to write to, so nothing on it was changed. Set the iPod up in Finder (restore it there if Finder asks), then sync again.' })
+  }
   // The catalog is backed up on this Mac before the first file leaves the card
   // (Brief 265 Part 3): no backup, nothing removed, nothing wiped.
   if (!swap || swap.leave.length > 0) {
