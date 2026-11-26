@@ -84,7 +84,7 @@ describe('clear', () => {
     assert.equal((await clearCache(dir, busy)).ok, false)
     assert.equal((await readdir(dir)).length, 2)
     const r = await clearCache(dir, idle)
-    assert.deepEqual(r, { ok: true, removed: 2, freedBytes: 20 })
+    assert.deepEqual(r, { ok: true, removed: 2, freedBytes: 20, kept: 0 })
     assert.deepEqual(await readdir(dir), [])
   })
 })

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { readFile, mkdtemp, truncate } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CACHE_CAPS, EMPTY_COST, FORMAT_CHOICES, LIMIT_COST, changeFor, choiceOf } from '../../renderer/ipodFormatChoice.ts'
+import { CACHE_CAPS, EMPTY_COST, FORMAT_CHOICES, LIMIT_COST, changeFor, choiceOf, choicesFor, songsCount } from '../../renderer/ipodFormatChoice.ts'
 import { planPrune, pruneToCap } from '../sync-convert-cache.ts'
 import { mirrorNamesFor, protectedMirrorNames } from '../sync-convert-cache-protect.ts'
 import { aacMirrorCacheName, ipodAlacMirrorCacheName } from '../aac-mirror-recipe.ts'
@@ -31,16 +31,26 @@ describe('the format choice', () => {
       assert.equal(choiceOf(store.x), c.value)
     }
   })
+  it('a stored bitrate the list doesn\'t have is shown as it is, never as another', () => {
+    const odd = { codec: 'aac' as const, kbps: 224, enabled: true }
+    assert.equal(choiceOf(odd), 'aac-224')
+    assert.ok(choicesFor(odd).some((c) => c.value === 'aac-224'), 'the odd bitrate is in the list')
+    assert.ok(!choicesFor(null).some((c) => c.value === 'aac-224'))
+  })
+  it('the count says songs', () => {
+    assert.equal(songsCount(1), '1 song')
+    assert.equal(songsCount(1234), '1,234 songs')
+  })
   it('the cache size limit is off by default: nothing is emptied until Jake picks a size', () => {
     assert.equal(CACHE_CAPS[0].value, null)
     assert.match(CACHE_CAPS[0].label, /No limit/)
   })
   it('emptying and a limit say plainly what they cost', () => {
     assert.match(EMPTY_COST, /converted again/)
-    assert.match(EMPTY_COST, /full copy converts every song/)
-    assert.match(EMPTY_COST, /hours/)
+    assert.match(EMPTY_COST, /copies of the songs on your iPods stay/)
     assert.match(EMPTY_COST, /stutters/)
-    assert.match(LIMIT_COST, /never takes the copies the songs on your iPods were made from/)
+    assert.doesNotMatch(EMPTY_COST + LIMIT_COST, /full copy/)
+    assert.match(LIMIT_COST, /never takes the copies of the songs on your iPods/)
   })
 })
 

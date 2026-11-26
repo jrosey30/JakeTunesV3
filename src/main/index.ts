@@ -5272,13 +5272,17 @@ const syncEngine = createSyncEngine({
   devicePlaylists: (input) => createDevicePlaylists({ baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), warn: (m) => console.warn(m) }).forSync(input),
 })
 // The convert cache's upkeep: leftover partials swept, a size cap (off until Jake sets one), clear (Brief 265 Part 5).
+/** MUSIC_DIR has been resolved (whenReady): the convert cache's protected copies depend on it. */
+let musicDirResolved = false
 startSyncConvertCache(ipc, {
   userData: app.getPath('userData'),
   syncInFlight: () => syncEngine.isSyncInFlight(),
-  // A size limit never takes a copy a song on an iPod was made from (sync-convert-cache-protect.ts).
+  // A limit or Empty never takes a copy a song on an iPod was made from (sync-convert-cache-protect.ts).
+  // Until the library folder is resolved the names can't match: unknown, so nothing is taken.
+  ready: () => musicDirResolved,
   protectedNames: async () => protectedMirrorNames({
     stateDir: STATE_DIR,
-    libraryRoot: MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''),
+    libraryRoot: musicDirResolved ? MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '') : null,
     tracks: (((await libraryCache.get()) as CachedLibrary).tracks || []) as ReadonlyArray<{ id?: unknown; path?: unknown }>,
   }),
 })
@@ -9505,6 +9509,7 @@ app.whenReady().then(async () => {
   // the time any handler runs. resolveMusicDir falls back to the default
   // if nothing matches — it never throws.
   MUSIC_DIR = await resolveMusicDir()
+  musicDirResolved = true
 
   // Renovation P1C1: hand the import pipeline its world. Suppliers for the
   // mutable roots; everything Electron-flavoured stays on this side.

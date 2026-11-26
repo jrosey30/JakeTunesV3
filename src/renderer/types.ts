@@ -102,11 +102,11 @@ export interface Track {
 /** Brief 265: the format of the iPod plugged in (main/ipc/ipod-profile-ipc.ts). */
 export interface IpodAudioProfileView { codec: 'alac' | 'aac' | 'mp3'; kbps?: number; enabled: boolean }
 export type IpodAudioProfileAnswer =
-  | { ok: true; ipod: { name: string; primary: boolean } | null; profile: IpodAudioProfileView | null; source: 'stored' | 'seed' | 'device-page' }
+  | { ok: true; ipod: { id: string; name: string; primary: boolean } | null; profile: IpodAudioProfileView | null; source: 'stored' | 'seed' | 'device-page' }
   | { ok: false; error: string }
 /** Brief 265 Part 5: the iPod convert cache (main/ipc/sync-cache-ipc.ts). */
 export type ConvertCacheAnswer =
-  | { ok: true; files: number; bytes: number; partials: number; capGb: number | null }
+  | { ok: true; files: number; bytes: number; partials: number; capGb: number | null; note?: string }
   | { ok: false; error: string }
 
 export interface Playlist {
@@ -1111,10 +1111,10 @@ declare global {
       previewPlaceWeather?: (place: string) => Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }>
       loadUiState: () => Promise<{ ok: boolean; state: Record<string, unknown> | null }>
       getIpodAudioProfile?: () => Promise<IpodAudioProfileAnswer>
-      setIpodAudioProfile?: (change: { codec: 'alac' | 'aac' | 'mp3'; kbps?: number; enabled?: boolean } | { reset: true }) => Promise<IpodAudioProfileAnswer>
+      setIpodAudioProfile?: (change: ({ codec: 'alac' | 'aac' | 'mp3'; kbps?: number; enabled?: boolean } | { reset: true }) & { expectedId: string }) => Promise<IpodAudioProfileAnswer>
       getConvertCacheStatus?: () => Promise<ConvertCacheAnswer>
       setConvertCacheCap?: (capGb: number | null) => Promise<ConvertCacheAnswer>
-      clearConvertCache?: () => Promise<{ ok: true; removed: number; freedBytes: number } | { ok: false; error: string }>
+      clearConvertCache?: () => Promise<{ ok: true; removed: number; freedBytes: number; kept: number } | { ok: false; error: string }>
       saveUiState: (state: Record<string, unknown>) => Promise<{ ok: boolean }>
       // Spotify connect + Discover Weekly
       spotifyStatus: () => Promise<{ ok: boolean; hasClientId: boolean; connected: boolean; connectedAt?: string; lastPullAt?: string; redirectUri: string }>

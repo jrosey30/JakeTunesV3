@@ -4,7 +4,7 @@
  */
 import type { IpodAudioProfileView } from './types'
 
-export type FormatChoice = 'off' | 'alac' | `aac-${128 | 192 | 256 | 320}` | `mp3-${128 | 192 | 256 | 320}`
+export type FormatChoice = 'off' | 'alac' | `aac-${number}` | `mp3-${number}`
 
 export const FORMAT_CHOICES: ReadonlyArray<{ value: FormatChoice; label: string }> = [
   { value: 'alac', label: 'Lossless (ALAC), as in the library' },
@@ -19,12 +19,19 @@ export const FORMAT_CHOICES: ReadonlyArray<{ value: FormatChoice; label: string 
   { value: 'off', label: 'The convert setting below' },
 ]
 
-/** The choice a stored or default profile shows as. No profile, or one switched off, is 'off'. */
+/** The choice a stored or default profile shows as, exactly (an unusual bitrate is shown as it is). No profile, or one switched off, is 'off'. */
 export function choiceOf(p: IpodAudioProfileView | null): FormatChoice {
   if (!p || !p.enabled) return 'off'
   if (p.codec === 'alac') return 'alac'
-  const k = [128, 192, 256, 320].includes(Number(p.kbps)) ? Number(p.kbps) : 256
-  return `${p.codec}-${k}` as FormatChoice
+  return `${p.codec}-${Number(p.kbps) || 0}` as FormatChoice
+}
+
+/** The list to show: the standard choices, plus the stored one when it isn't among them. */
+export function choicesFor(p: IpodAudioProfileView | null): ReadonlyArray<{ value: FormatChoice; label: string }> {
+  const now = choiceOf(p)
+  if (FORMAT_CHOICES.some((c) => c.value === now)) return FORMAT_CHOICES
+  const [codec, k] = now.split('-')
+  return [...FORMAT_CHOICES, { value: now, label: `${codec.toUpperCase()} ${Number(k) ? `${k} kbps` : '(no bitrate)'}, as set before` }]
 }
 
 /** What the page sends to save a choice. 'off' keeps the format but switches it off. */
@@ -38,6 +45,11 @@ export function changeFor(choice: FormatChoice, current: IpodAudioProfileView | 
   return { codec, kbps: Number(kbps), enabled: true }
 }
 
+/** "1,234 songs" */
+export function songsCount(n: number): string {
+  return `${n.toLocaleString('en-US')} ${n === 1 ? 'song' : 'songs'}`
+}
+
 /** "12.3 GB" */
 export function gb(bytes: number): string {
   return `${(Math.max(0, bytes) / 1e9).toFixed(bytes >= 10e9 ? 0 : 1)} GB`
@@ -47,8 +59,8 @@ export function gb(bytes: number): string {
  * What emptying the cache, or a limit, costs, said plainly (Jake, 2026-11-20: an emptied cache
  * made the punkPod convert 1,190 songs again and the music popped).
  */
-export const EMPTY_COST = 'Songs already on your iPods stay on them. But every song a sync has to copy is converted again first, and a full copy converts every song. On a big iPod that can take hours, and music on this Mac stutters while it runs.'
-export const LIMIT_COST = 'A limit never takes the copies the songs on your iPods were made from. A song not on an iPod is converted again the next time it has to be copied, which slows music on this Mac while it runs.'
+export const EMPTY_COST = 'The copies of the songs on your iPods stay. The rest go: each of those songs is converted again the next time a sync has to copy it, and music on this Mac stutters while that runs.'
+export const LIMIT_COST = 'A limit never takes the copies of the songs on your iPods. Other songs are converted again the next time a sync has to copy them, and music on this Mac stutters while that runs.'
 
 export const CACHE_CAPS: ReadonlyArray<{ value: number | null; label: string }> = [
   { value: null, label: 'No limit (never emptied by itself)' },

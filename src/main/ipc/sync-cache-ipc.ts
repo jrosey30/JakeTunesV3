@@ -14,13 +14,16 @@ import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import {
   CACHE_SETTINGS_FILE, SYNC_CONVERT_CACHE_SUBDIR, cacheStatus, clearCache, pruneToCap, readCapGb, sweepPartials, writeCapGb,
+  type PruneResult,
 } from '../sync-convert-cache.ts'
 
 export interface SyncCacheHost {
   userData: string
   syncInFlight: () => boolean
-  /** The cache names a size limit may never take: the copies the songs on the iPods were made from. */
+  /** The cache names a limit or Empty may never take: the copies the songs on the iPods were made from. Throws when unknown. */
   protectedNames?: () => Promise<ReadonlySet<string>>
+  /** false until the protected copies can be worked out (the library folder known). */
+  ready?: () => boolean
 }
 
 const PRUNE_EVERY_MS = 10 * 60 * 1000
@@ -30,9 +33,17 @@ export function startSyncConvertCache(ipc: IpcRegistrar, host: SyncCacheHost): {
   const settings = join(host.userData, CACHE_SETTINGS_FILE)
   const inFlight = host.syncInFlight
 
-  const prune = async (why: string): Promise<void> => {
-    const r = await pruneToCap(dir, await readCapGb(settings), { syncInFlight: inFlight, protect: host.protectedNames })
+  // Until the host is ready (the library folder known), the protected copies can't be worked out:
+  // nothing is pruned or emptied (the protect function throws too; this says why sooner).
+  const protect = async (): Promise<ReadonlySet<string>> => {
+    if (host.ready && !host.ready()) throw new Error('the library folder isn’t known yet')
+    return host.protectedNames ? host.protectedNames() : new Set()
+  }
+  const prune = async (why: string): Promise<PruneResult> => {
+    const r = await pruneToCap(dir, await readCapGb(settings), { syncInFlight: inFlight, protect })
+    if (!r.pruned && r.why === 'protection unknown') console.warn(`[sync-cache] ${why}: nothing pruned — the copies the iPods use couldn't be worked out (${r.detail})`)
     if (r.pruned) console.log(`[sync-cache] ${why}: pruned ${r.removed} least-recently-used file(s), ${(r.freedBytes / 1e9).toFixed(2)} GB freed, ${(r.leftBytes / 1e9).toFixed(2)} GB left`)
+    return r
   }
 
   void sweepPartials(dir, { syncInFlight: inFlight }).then((gone) => {
@@ -48,12 +59,15 @@ export function startSyncConvertCache(ipc: IpcRegistrar, host: SyncCacheHost): {
     const capGb = v === null || v === undefined ? null : Number(v)
     if (capGb !== null && !(Number.isFinite(capGb) && capGb >= 1 && capGb <= 4000)) return { ok: false, error: 'Pick a size between 1 and 4000 GB, or turn the limit off.' }
     await writeCapGb(settings, capGb)
-    await prune('cap set')
-    return { ok: true, ...(await cacheStatus(dir, settings)) }
+    const r = await prune('cap set')
+    const note = !r.pruned && r.why === 'protection unknown'
+      ? `Nothing was emptied: couldn’t tell which copies the songs on your iPods use (${r.detail}).`
+      : undefined
+    return { ok: true, ...(await cacheStatus(dir, settings)), ...(note ? { note } : {}) }
   }, { refuse: REFUSED_SENDER })
   ipc.handle('sync-convert-cache:clear', async () => {
-    const r = await clearCache(dir, { syncInFlight: inFlight })
-    if (r.ok) console.log(`[sync-cache] cleared by request: ${r.removed} file(s), ${(r.freedBytes / 1e9).toFixed(2)} GB`)
+    const r = await clearCache(dir, { syncInFlight: inFlight, protect })
+    if (r.ok) console.log(`[sync-cache] emptied by request: ${r.removed} file(s), ${(r.freedBytes / 1e9).toFixed(2)} GB; ${r.kept} kept (songs on the iPods)`)
     return r
   }, { refuse: REFUSED_SENDER })
 
