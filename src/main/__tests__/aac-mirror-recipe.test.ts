@@ -10,10 +10,10 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { readFile } from 'node:fs/promises'
 import {
-  AAC_MIRROR_TOKEN, AacEncoderMissingError, aacMirrorCacheName, afconvertAacArgs,
-  afconvertListsAacInM4af, createAfconvertCheck, isAacEncoderMissing, pcmDecodeArgs, probeAfconvert,
+  AAC_MIRROR_TOKEN, AacConvertFailedError, AacEncoderMissingError, aacMirrorCacheName, afconvertAacArgs,
+  afconvertListsAacInM4af, createAfconvertCheck, isAacConvertFailed, isAacEncoderMissing, isTransientFailure, pcmDecodeArgs, probeAfconvert,
 } from '../aac-mirror-recipe.ts'
-import { NO_AAC_ENCODER } from '../ipod-activity-engine.ts'
+import { AAC_ENCODER_SLOW, NO_AAC_ENCODER } from '../ipod-activity-engine.ts'
 
 const HELP = `Audio file and data formats:
     '3gpp' = 3GP Audio (.3gp, .3gpp)
@@ -46,24 +46,43 @@ describe('the afconvert check', () => {
     assert.equal(afconvertListsAacInM4af(''), false)
     assert.equal(afconvertListsAacInM4af(HELP), true)
   })
-  it('a yes is kept; a timeout is asked again after 30 s and then succeeds', async () => {
+  it('a yes is kept; two timeouts in a row are asked again after 30 s and then succeed', async () => {
     let t = 0
     let calls = 0
+    const timeout = async (): Promise<never> => { throw Object.assign(new Error('timeout'), { killed: true, signal: 'SIGTERM' }) }
     const answers: Array<() => Promise<{ stdout: string; stderr: string }>> = [
-      async () => { throw Object.assign(new Error('timeout'), { killed: true, signal: 'SIGTERM' }) },
+      timeout,
+      timeout,
       async () => ({ stdout: HELP, stderr: '' }),
     ]
     const check = createAfconvertCheck(() => answers[Math.min(calls++, answers.length - 1)](), () => t)
     assert.equal(await check(), 'unknown')
+    assert.equal(calls, 2, 'a timeout is asked once more at once')
     t += 10_000
     assert.equal(await check(), 'unknown', 'within 30 s the last answer stands')
-    assert.equal(calls, 1)
+    assert.equal(calls, 2)
     t += 25_000
     assert.equal(await check(), 'yes', 'asked again after 30 s')
-    assert.equal(calls, 2)
+    assert.equal(calls, 3)
     t += 10 * 60_000
     assert.equal(await check(), 'yes')
-    assert.equal(calls, 2, 'a yes is never asked again')
+    assert.equal(calls, 3, 'a yes is never asked again')
+  })
+  it('one timeout under load is retried at once, never taken as missing (Brief 266)', async () => {
+    let calls = 0
+    const check = createAfconvertCheck(async () => {
+      calls++
+      if (calls === 1) throw Object.assign(new Error('timeout'), { killed: true, signal: 'SIGTERM' })
+      return { stdout: HELP, stderr: '' }
+    }, () => 0)
+    assert.equal(await check(), 'yes')
+    assert.equal(calls, 2)
+  })
+  it('a no is not retried at once (only a timeout is)', async () => {
+    let calls = 0
+    const check = createAfconvertCheck(async () => { calls++; return { stdout: '', stderr: 'nothing' } }, () => 0)
+    assert.equal(await check(), 'no')
+    assert.equal(calls, 1)
   })
   it('a no is asked again too (afconvert can come back)', async () => {
     let t = 0
@@ -114,8 +133,8 @@ describe('the refusal', () => {
   it('both engines skip and name a refused song instead of copying the master', async () => {
     const sync = await readFile(new URL('../sync-engine/index.ts', import.meta.url), 'utf-8')
     const act = await readFile(new URL('../ipod-activity-engine.ts', import.meta.url), 'utf-8')
-    assert.match(sync, /if \(isAacEncoderMissing\(err\)\) \{[\s\S]{0,300}copyErrors\+\+[\s\S]{0,200}continue/)
-    assert.match(act, /if \(isAacEncoderMissing\(err\)\) \{[\s\S]{0,200}kind: 'no-encoder', why: NO_AAC_ENCODER/)
+    assert.match(sync, /if \(isAacEncoderMissing\(err\) \|\| isAacConvertFailed\(err\)\) \{[\s\S]{0,2500}copyErrors\+\+[\s\S]{0,200}continue/)
+    assert.match(act, /if \(isAacEncoderMissing\(err\)\) \{[\s\S]{0,300}kind: 'no-encoder', why: slow \? AAC_ENCODER_SLOW : NO_AAC_ENCODER/)
     assert.match(sync, /notConverted\.push\(/)
     assert.match(sync, /\.\.\.\(notConverted\.length > 0 \? \{ notConverted \} : \{\}\)/)
   })
@@ -126,8 +145,38 @@ describe('the refusal', () => {
     const stopAt = act.indexOf("if (out.kind === 'no-encoder') {")
     const reserveAt = act.indexOf('skipUnconvertible(title, String(track.artist')
     assert.ok(stopAt > 0 && reserveAt > stopAt, 'the no-encoder stop comes before the damaged-file reserve path')
-    assert.match(act.slice(stopAt, stopAt + 300), /return fail\(\{ copied: 0, target, error: `\$\{NO_AAC_ENCODER\}/)
-    assert.match(act, /if \(out\.kind === 'no-encoder'\) lateWhy\.set\(e\.id, NO_AAC_ENCODER\)/)
+    assert.match(act.slice(stopAt, stopAt + 300), /return fail\(\{ copied: 0, target, error: `\$\{out\.why\}/)
+    assert.match(act, /if \(out\.kind === 'no-encoder' \|\| out\.kind === 'convert-failed'\) lateWhy\.set\(e\.id, out\.why\)/)
+  })
+
+  it('a check that timed out is said as a timeout, never "isn\'t available" (Brief 266)', async () => {
+    assert.equal(new AacEncoderMissingError('/a.m4a', 'unknown').why, 'unknown')
+    assert.equal(new AacEncoderMissingError('/a.m4a').why, 'missing')
+    assert.equal(AAC_ENCODER_SLOW, "Apple's AAC encoder didn't answer in time")
+    const act = await readFile(new URL('../ipod-activity-engine.ts', import.meta.url), 'utf-8')
+    assert.match(act, /\.why === 'unknown'\s*\n\s*return \{ ok: false, kind: 'no-encoder', why: slow \? AAC_ENCODER_SLOW : NO_AAC_ENCODER \}/)
+  })
+})
+
+describe('one song whose conversion fails (Brief 266)', () => {
+  it('is its own error, told apart from a missing encoder', () => {
+    const e = new AacConvertFailedError('/Music/F01/Breeze.flac', new Error('ffmpeg exited 1'))
+    assert.equal(isAacConvertFailed(e), true)
+    assert.equal(isAacEncoderMissing(e), false)
+    assert.equal(isAacConvertFailed(new AacEncoderMissingError('/a.m4a')), false)
+    assert.match(e.message, /Breeze\.flac/)
+    assert.match(e.message, /ffmpeg exited 1/)
+  })
+  it('buildAacMirror throws it from the transcode, never a null that means "copy the master"', async () => {
+    const src = await readFile(new URL('../index.ts', import.meta.url), 'utf-8')
+    const body = src.slice(src.indexOf('async function buildAacMirror('), src.indexOf('async function buildMp3Mirror('))
+    const transcode = body.slice(body.indexOf("await bgExec('ffmpeg', pcmDecodeArgs("))
+    assert.match(transcode, /\} catch \(err\) \{[\s\S]{0,400}throw new AacConvertFailedError\(srcPath, err\)/)
+    assert.doesNotMatch(transcode.slice(0, transcode.indexOf('} finally {')), /return null/)
+  })
+  it('the full-library sync leaves it off and names it, like a refused one', async () => {
+    const sync = await readFile(new URL('../sync-engine/index.ts', import.meta.url), 'utf-8')
+    assert.match(sync, /if \(isAacEncoderMissing\(err\) \|\| isAacConvertFailed\(err\)\) \{[\s\S]{0,2500}notConverted\.push\([\s\S]{0,200}copyErrors\+\+[\s\S]{0,200}continue/)
   })
 })
 
@@ -158,5 +207,18 @@ describe('the recipe (pinned)', () => {
   it('afconvert encodes AAC-LC, m4af, true CBR, max quality', () => {
     assert.deepEqual(afconvertAacArgs('x.wav', 'y.m4a', 256),
       ['x.wav', '-o', 'y.m4a', '-d', 'aac', '-f', 'm4af', '-b', '256000', '-q', '127', '-s', '0'])
+  })
+})
+
+describe('a failure that was the Mac\'s, not the file\'s (review of #519)', () => {
+  it('a killed or timed-out encoder, a full disk: transient', () => {
+    assert.equal(isTransientFailure(Object.assign(new Error('Command failed: ffmpeg'), { killed: true, signal: 'SIGTERM' })), true)
+    assert.equal(isTransientFailure(Object.assign(new Error('write'), { code: 'ENOSPC' })), true)
+    assert.equal(isTransientFailure(new Error('operation timed out')), true)
+    assert.equal(new AacConvertFailedError('/a.flac', Object.assign(new Error('x'), { killed: true })).transient, true)
+  })
+  it('a decoder that says the file is bad: not transient', () => {
+    assert.equal(isTransientFailure(Object.assign(new Error('Invalid data found when processing input'), { code: 1 })), false)
+    assert.equal(new AacConvertFailedError('/a.flac', new Error('afconvert exited 1')).transient, false)
   })
 })

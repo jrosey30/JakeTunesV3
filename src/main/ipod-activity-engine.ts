@@ -64,11 +64,17 @@ import {
   remountVerifyEntries,
   retireIpodFirmwareScratch,
 } from './ipod-sync-card.ts'
-import { isAacEncoderMissing } from './aac-mirror-recipe.ts'
+import { isAacConvertTransient, isAacEncoderMissing } from './aac-mirror-recipe.ts'
 import { NOT_CONVERTED_AGAIN, deleteLandedRecord, landedVerdict, readLandedRecord, recipeFor, writeLandedRecord, type LandedCodec, type LandedEntry } from './ipod-landed-record.ts'
 
 /** The plain reason a song wasn't converted when afconvert can't be used (Brief 265). */
 export const NO_AAC_ENCODER = "Apple's AAC encoder isn't available on this Mac"
+/** The check timed out on a busy Mac, twice: the encoder may be there, so never "isn't available" (Brief 266). */
+export const AAC_ENCODER_SLOW = "Apple's AAC encoder didn't answer in time"
+/** One song's AAC conversion failed on its own file (Brief 266). */
+export const CONVERT_FAILED = "its audio couldn't be converted for the iPod"
+/** It failed for the Mac's reasons (timed out, out of space): never called damaged (Brief 266). */
+export const CONVERT_FAILED_THIS_TIME = "its new copy couldn't be made this time; the next sync tries again"
 import { applyFileStamps, createFileStampCache, fileToStamp } from './ipod-file-stamps.ts'
 import { backupItunesDb, backupRefusal, restoreItunesDbBackup } from './ipod-db-backup.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
@@ -149,6 +155,7 @@ export interface ActivitySyncHost {
   sendProgress: (p: { phase: string; current: number; total: number; title: string; mode?: 'swap' | 'full'; summary?: string }) => void
   isCancelled: () => boolean
   isStreamedTrackFile: (abs: string) => Promise<boolean>
+  /** null = nothing to convert (copy as it is); a failed conversion throws (Brief 266). */
   buildAacMirror: (src: string, kbps: number, codec?: 'aac' | 'mp3') => Promise<string | null>
   buildIpodSafeAlacMirror: (src: string) => Promise<string | null>
   readIpodDatabase: () => Promise<{ tracks: Array<Record<string, unknown>>; playlists?: unknown[] }>
@@ -254,6 +261,8 @@ export interface ActivitySyncResult {
   /** List-only sets: what was asked for, and each song left off with why. */
   requested?: number
   leftOff?: LeftOffSong[]
+  /** Songs whose new copy couldn't be made that kept their copy on the iPod, by title (Brief 266). */
+  keptOldCopies?: string[]
   /** 'swap': only the songs that changed moved (2026-11-07). 'full': wiped and
    *  copied the whole set; fullReason says why in plain words. */
   mode?: 'swap' | 'full'
@@ -753,6 +762,7 @@ async function runActivitySyncHolding(
     | { ok: false; kind: 'stage'; msg: string }
     | { ok: false; kind: 'unconvertible'; why: string }
     | { ok: false; kind: 'no-encoder'; why: string }
+    | { ok: false; kind: 'convert-failed'; why: string }
   // The card's copy of one song: the master as it is, or a mirror (AAC with
   // the convert toggle, ALAC for FLAC / over the Mini's ceiling). A song not on
   // this Mac that needs a mirror is staged from homemini first, one file, and
@@ -813,9 +823,14 @@ async function runActivitySyncHolding(
           // master in its place (aac-mirror-recipe.ts, Brief 265).
           if (isAacEncoderMissing(err)) {
             console.error(`activity-sync: ${err instanceof Error ? err.message : String(err)}`)
-            return { ok: false, kind: 'no-encoder', why: NO_AAC_ENCODER }
+            const slow = (err as { why?: unknown }).why === 'unknown'
+            return { ok: false, kind: 'no-encoder', why: slow ? AAC_ENCODER_SLOW : NO_AAC_ENCODER }
           }
-          console.warn(`activity-sync: AAC mirror failed for ${title}, copying original:`, err)
+          // This song's conversion failed (AacConvertFailedError): never copied as its lossless
+          // master. A song already on the card keeps its copy there; a new one is left off and
+          // named (§1 decides, Brief 266).
+          console.error(`activity-sync: AAC mirror failed for ${title}:`, err)
+          return { ok: false, kind: 'convert-failed', why: isAacConvertTransient(err) ? CONVERT_FAILED_THIS_TIME : CONVERT_FAILED }
         }
         // Gen 1 plays MP3 only: a song that isn't one and couldn't be made one stays off,
         // never copied as a file that iPod can't play.
@@ -878,10 +893,26 @@ async function runActivitySyncHolding(
   // unplayable row and replaced from reserve — one bad file must not stop a
   // 1000-song sync (2026-10-17: "Breeze" stopped one; 44 such files exist).
   const unconvertible: Array<{ id: number; title: string; artist: string }> = []
+  /** A failed AAC conversion's own reason for the left-off list (Brief 266): a timeout is never "damaged file". */
+  const convertFailedWhy = new Map<number, string>()
   const skipUnconvertible = (title: string, artist: string, id: number, why: string): void => {
     unconvertible.push({ id, title, artist })
     console.warn(`activity-sync: "${title}" (id ${id}) cannot be converted for the iPod (${why}) — skipped, a reserve takes its place`)
-    host.sendProgress({ phase: 'preflight', current: 0, total: target, title: `Skipped (damaged file): ${title}` })
+    host.sendProgress({ phase: 'preflight', current: 0, total: target, title: convertFailedWhy.get(id) === CONVERT_FAILED_THIS_TIME ? `Skipped for now: ${title}` : `Skipped (damaged file): ${title}` })
+  }
+  /**
+   * Songs whose new AAC copy couldn't be made but which the last sealed sync put on the card
+   * (Brief 266): they keep that copy and their row, exactly as they are, instead of being
+   * dropped and then removed from the card by the swap. Asked of the card once, read-only.
+   */
+  const keptOnCard = new Map<number, SwapManifestRow>()
+  let sealedRows: Map<number, SwapManifestRow> | null = null
+  const sealedRowFor = async (id: number): Promise<SwapManifestRow | undefined> => {
+    if (!sealedRows) {
+      const p = proveCardForSwap(priorManifestRaw, priorSealRaw, await readCardState(IPOD_MOUNT))
+      sealedRows = p.ok ? p.rows : new Map()
+    }
+    return sealedRows.get(id)
   }
   // #47 (fill-to-N): tracks[target..] are copy-time replacements. They are
   // resolved here like everything else, but never kept from a previous
@@ -975,7 +1006,7 @@ async function runActivitySyncHolding(
       // card is touched, instead of filling reserves with songs that hit the same wall.
       if (out.kind === 'no-encoder') {
         await host.writeJournal(null)
-        return fail({ copied: 0, target, error: `${NO_AAC_ENCODER}, so this iPod's songs couldn't be converted. Nothing on the iPod was changed.` })
+        return fail({ copied: 0, target, error: `${out.why}, so this iPod's songs couldn't be converted. Nothing on the iPod was changed.` })
       }
       if (out.kind === 'stage') {
         console.error(`activity-sync: ${out.msg}`)
@@ -984,6 +1015,27 @@ async function runActivitySyncHolding(
         return fail({ copied: 0, error: out.msg, target })
       }
       if (i >= reserveFrom) { console.warn(`activity-sync: reserve "${title}" skipped (${out.why})`); continue }
+      if (out.kind === 'convert-failed') {
+        const row = await sealedRowFor(id)
+        // Kept only when the failure was the Mac's (the next sync tries again), or when the landed
+        // record shows the card's copy is already this format and bitrate. A permanent failure
+        // over a lossless card copy would keep the master on an AAC iPod for good (re-review of #519).
+        const cardIsWanted = !!row && !!rec && rec.codec === wantCodec && rec.destPath === row.destPath
+          && rec.size === row.size && (wantCodec === 'alac-safe' || rec.kbps === convertOptions?.targetKbps)
+        if (row && (out.why === CONVERT_FAILED_THIS_TIME || cardIsWanted)) {
+          // On the card already: its copy stays as it is, by the sealed row (planSwap keeps it).
+          console.warn(`activity-sync: "${title}" keeps its copy on the iPod (${out.why})`)
+          keptOnCard.set(id, row)
+          track.path = row.destPath
+          if (row.destPath !== rawColon) cardOnlyIds.add(id)
+          const cardAbs = join(IPOD_MOUNT, tsaRelFromColon(row.destPath, pathSep))
+          // Kept as the right format: its landed record goes with it, or the seal drops the record
+          // and the next sync can't tell the card copy is right and leaves the song off.
+          plan.push({ i, id, title, srcToCopy: cardAbs, dstToCopy: cardAbs, knownSourceSize: row.size, masterSize: row.sourceSize, ...(cardIsWanted ? { landed: rec } : {}) })
+          continue
+        }
+        convertFailedWhy.set(id, out.why)
+      }
       skipUnconvertible(title, String(track.artist || ''), id, out.why)
       continue
     }
@@ -1005,7 +1057,7 @@ async function runActivitySyncHolding(
     if (listOnly) {
       // Its own list: the damaged songs are left off, the set lands fewer.
       const gone = new Set(unconvertible.map((u) => u.id))
-      for (const u of unconvertible) leftOff.push(leftOffSong(u, "its audio couldn't be converted for the iPod (damaged file)"))
+      for (const u of unconvertible) leftOff.push(leftOffSong(u, convertFailedWhy.get(u.id) ?? "its audio couldn't be converted for the iPod (damaged file)"))
       tracks = tracks.filter((t) => !gone.has(Number(t.id)))
       tsaBoarded = tsaBoarded.filter((p) => !gone.has(p.id))
       target = plan.length
@@ -1045,7 +1097,8 @@ async function runActivitySyncHolding(
     candidates.push({
       id: e.id,
       destPath: relOf(e.dstToCopy),
-      identity: identityById.get(e.id) || '',
+      // A song kept on the card after a failed conversion is the sealed row exactly (Brief 266).
+      identity: keptOnCard.get(e.id)?.identity ?? identityById.get(e.id) ?? '',
       copySize: e.knownSourceSize ?? (await stat(e.srcToCopy).catch(() => null))?.size ?? 0,
       sourceSize: e.masterSize || 0,
     })
@@ -1270,6 +1323,16 @@ async function runActivitySyncHolding(
   // plan says must move after all (a full copy, or it changed): fetched and
   // converted now, still before the card changes. A song that stays never is.
   const lateWhy = new Map<number, string>()
+  // A song kept on the card after a failed conversion that can't stay after all (a full copy,
+  // or the card isn't what the sealed record says): left off and named, like any song whose
+  // new copy couldn't be made. One that stays is said in the result as kept (Brief 266).
+  for (const [id] of keptOnCard) {
+    const e = plan.find((x) => x.id === id)
+    if (keepIds.has(id)) { if (e) keptOldCopies.push(e.title); continue }
+    console.warn(`activity-sync: "${e?.title ?? id}" can't keep its copy on the iPod (${swap ? 'it changed' : 'a full copy'}); left off`)
+    fetchFailedIds.add(id)
+    lateWhy.set(id, CONVERT_FAILED_THIS_TIME)
+  }
   const convertLate = plan.filter((e) => e.later && !keepIds.has(e.id) && !fetchFailedIds.has(e.id))
   for (let k = 0; k < convertLate.length; k++) {
     const e = convertLate[k]
@@ -1300,7 +1363,7 @@ async function runActivitySyncHolding(
     console.error(`activity-sync: "${e.title}" (id ${e.id}) must move and couldn't be prepared (${why}); the card is untouched`)
     fetchFailedIds.add(e.id)
     if (out.kind === 'unconvertible') lateWhy.set(e.id, out.why === NOT_CONVERTED_AGAIN ? NOT_CONVERTED_AGAIN : "its audio couldn't be converted for the iPod (damaged file)")
-    if (out.kind === 'no-encoder') lateWhy.set(e.id, NO_AAC_ENCODER)
+    if (out.kind === 'no-encoder' || out.kind === 'convert-failed') lateWhy.set(e.id, out.why)
   }
   if (swap) {
     const toFetch = plan.filter((e) => e.restage && e.i < reserveFrom && !keepIds.has(e.id) && !fetchFailedIds.has(e.id))
@@ -2894,6 +2957,7 @@ async function runActivitySyncHolding(
       ...(unconvertible.length > 0 ? { unconvertible: unconvertible.map((u) => u.id) } : {}),
       ...(listOnly ? { requested } : {}),
       ...(leftOff.length > 0 ? { leftOff: leftOff.map((l) => ({ id: l.id, t: l.title, a: l.artist, why: l.why })) } : {}),
+      ...(keptOldCopies.length > 0 ? { keptOldCopies } : {}),
       ...(artwork ? { artwork } : {}),
     }) + '\n', 'utf-8')
   } catch (err) {
@@ -2917,6 +2981,7 @@ async function runActivitySyncHolding(
     ...(unconvertible.length > 0 ? { unconvertible } : {}),
     ...(listOnly ? { requested } : {}),
     ...(leftOff.length > 0 ? { leftOff } : {}),
+    ...(keptOldCopies.length > 0 ? { keptOldCopies } : {}),
     ...(artwork ? { artwork } : {}),
     mode,
     ...(counts ? { swap: counts } : { fullReason: fullReason || undefined }),

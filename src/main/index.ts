@@ -57,7 +57,7 @@ import { startSyncConvertCache } from './ipc/sync-cache-ipc.ts'
 import { registerIpodProfileIpc } from './ipc/ipod-profile-ipc.ts'
 import { touchUsed } from './sync-convert-cache.ts'
 import { protectedMirrorNames } from './sync-convert-cache-protect.ts'
-import { AacEncoderMissingError, aacMirrorCacheName, ipodAlacMirrorCacheName, mp3MirrorCacheName, afconvertAacArgs, createAfconvertCheck, pcmDecodeArgs } from './aac-mirror-recipe.ts'
+import { AacConvertFailedError, AacEncoderMissingError, aacMirrorCacheName, ipodAlacMirrorCacheName, mp3MirrorCacheName, afconvertAacArgs, createAfconvertCheck, pcmDecodeArgs } from './aac-mirror-recipe.ts'
 import { startSelfCare } from './self-care.ts'; import { analysisCandidates, pruneBrake } from './self-care-core.ts'; import { removeAppTempFiles } from './self-care-files.ts'
 import { createHeldForJake, createJakeEdits, createJakeNames, readJournalStrict } from './jake-edits-guard.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
@@ -3367,7 +3367,9 @@ async function buildAacMirror(srcPath: string, targetKbps: number, format: 'aac'
   } catch (err) {
     try { await unlink(tmp) } catch { /* already gone */ }
     console.warn(`[sync-convert] transcode failed for ${srcPath}:`, err)
-    return null
+    // Thrown, not null: null means "copy it as it is", which put the lossless master on an
+    // AAC iPod (Brief 266). The callers leave the song off and name it.
+    throw new AacConvertFailedError(srcPath, err)
   } finally {
     try { await unlink(pcm) } catch { /* already gone */ }
   }

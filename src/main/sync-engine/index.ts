@@ -42,7 +42,8 @@ import {
   exceedsIpodPlayableCeiling, ipodPlayableDestPath, needsIpodAlacTranscode, sampleRateForItunesDb,
 } from '../ipod-reconcile.ts'
 import { confirmWriteOnCard, flushCardCaches, remountVerifyEntries, retireIpodFirmwareScratch } from '../ipod-sync-card.ts'
-import { isAacEncoderMissing } from '../aac-mirror-recipe.ts'
+import { isAacConvertFailed, isAacEncoderMissing } from '../aac-mirror-recipe.ts'
+import { keepCardCopyFor, keptCardCopy } from '../ipod-card-kept-copy.ts'
 import { deleteLandedRecord } from '../ipod-landed-record.ts'
 import { keepListedOnCard, readCardListing } from '../ipod-replace-waves.ts'
 import { applyFileStamps, createFileStampCache, fileToStamp } from '../ipod-file-stamps.ts'
@@ -974,6 +975,8 @@ export function createSyncEngine(host: SyncEngineHost) {
     const notConverted: Array<{ id: number; title: string; artist: string }> = []
     // Songs already on the card in another form, left as they are (Brief 265: no in-place replacement here).
     const notReplaced: Array<{ id: number; title: string; artist: string }> = []
+    // Songs whose new copy couldn't be made that kept their earlier copy on the card (Brief 266).
+    const notUpdated: Array<{ id: number; title: string; artist: string }> = []
     const pathRewrites: Array<{ id: number; oldPath: string; newPath: string }> = []
     // Exact bytes that landed (or were confirmed already present) per track.
     // Verify/recopy MUST use these — never the library master — or a convert
@@ -1225,9 +1228,28 @@ export function createSyncEngine(host: SyncEngineHost) {
         } catch (err) {
           // No Apple encoder: the song is refused and named, never copied as its
           // lossless master or as an ffmpeg AAC (aac-mirror-recipe.ts, Brief 265).
-          if (isAacEncoderMissing(err)) {
+          // …and so is a song whose own conversion failed (Brief 266): it used to fall through
+          // here and copy the lossless master onto an AAC iPod.
+          if (isAacEncoderMissing(err) || isAacConvertFailed(err)) {
             console.error(`sync-to-ipod: ${err instanceof Error ? err.message : String(err)}`)
             const tr = trackByLocal.get(local)
+            // Already on the card (an earlier sync's copy): it keeps that file and its song-list
+            // row, and is said as not updated. Dropped here, the verify and the orphan cleanup
+            // used to delete it (Brief 266).
+            // Only for a failure that was the Mac's: a permanent one over a lossless card copy would
+            // keep the master on an AAC iPod for good (re-review of #519).
+            const onCard = keepCardCopyFor(err) ? await keptCardCopy(ipod, local) : null
+            if (onCard) {
+              console.warn(`sync-to-ipod: "${title}" keeps its copy on the iPod (its new copy couldn't be made)`)
+              writtenById.set(trackId, { srcPath: onCard.abs, dstPath: onCard.abs, expectedSize: onCard.size })
+              if (onCard.abs !== ipod && tr) {
+                const newRel = onCard.abs.slice(IPOD_MOUNT.length + 1)
+                convertedPathRewrites.push({ id: tr.id as number, oldPath: String(tr.path || ''), newPath: ':' + newRel.split(pathSep).join(':') })
+              }
+              notUpdated.push({ id: Number(tr?.id), title: String(tr?.title ?? title), artist: String(tr?.artist ?? '') })
+              sendToRenderer('sync-progress', { phase: 'copy', current: copied + copyErrors, total: totalToCopy, title })
+              continue
+            }
             notConverted.push({ id: Number(tr?.id), title: String(tr?.title ?? title), artist: String(tr?.artist ?? '') })
             copyErrors++
             sendToRenderer('sync-progress', {
@@ -1477,14 +1499,24 @@ export function createSyncEngine(host: SyncEngineHost) {
         try {
           if (await isStreamedTrackFile(libraryFile)) continue
           let srcForVerify = libraryFile
+          let dstForVerify = join(IPOD_MOUNT, relPath)
           if (convertOptions?.enabled) {
-            const mirror = await buildAacMirror(libraryFile, convertOptions.targetKbps, convertOptions.codec)
-            if (mirror) srcForVerify = mirror
+            try {
+              const mirror = await buildAacMirror(libraryFile, convertOptions.targetKbps, convertOptions.codec)
+              if (mirror) srcForVerify = mirror
+            } catch (err) {
+              // No new copy: the card's own copy is what's checked, so a song already on the
+              // card isn't dropped from the song list and then deleted as an orphan (Brief 266).
+              const onCard = keepCardCopyFor(err) ? await keptCardCopy(dstForVerify, libraryFile) : null
+              if (!onCard) throw err
+              srcForVerify = onCard.abs
+              dstForVerify = onCard.abs
+            }
           }
           const sz = (await stat(srcForVerify)).size
           verify.push({
             id,
-            dstPath: join(IPOD_MOUNT, relPath),
+            dstPath: dstForVerify,
             localFile: srcForVerify,
             expectedSize: sz,
           })
@@ -2449,6 +2481,7 @@ export function createSyncEngine(host: SyncEngineHost) {
             ipodOrphansDeleted,
             ...(notConverted.length > 0 ? { notConverted } : {}),
             ...(notReplaced.length > 0 ? { notReplaced } : {}),
+            ...(notUpdated.length > 0 ? { notUpdated } : {}),
             // Return ONLY the smart-match re-links so the renderer can update
             // library.json; converted / playable card names stay on the card.
             pathRewrites: libraryPathRewrites,
