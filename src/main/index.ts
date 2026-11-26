@@ -105,7 +105,7 @@ import { assertNoSyncedPicksPush } from './synced-picks-client.ts'
 import { createArtistPhotos, nameKey as photoNameKey } from './artist-photo.ts'
 import { createArtistPhotoPicks } from './artist-photo-picks.ts'
 import { createArtistImageServer } from './artist-image-serve.ts'
-import { phoneOverlayFields } from '../common/genre-vocab.ts'; import { mergeOverrideField } from './override-merge.ts'; import { registerUserEdits } from './ipc/user-edits-ipc.ts'
+import { phoneOverlayFields } from '../common/genre-vocab.ts'; import { heldWhileRecordsUnreadable, LISTENING_COUNTER_FIELDS, mergeOverrideField } from './override-merge.ts'; import { registerUserEdits } from './ipc/user-edits-ipc.ts'
 import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
 import { registerSyncHistoryIpc } from './ipc/sync-history-ipc.ts'
 import { registerActivityPoolIpc } from './ipc/activity-pool-ipc.ts'
@@ -910,18 +910,31 @@ async function persistOverrideFields(
   // The one merge rule (override-merge.ts): it used to replace the whole entry
   // whenever the fingerprints weren't identical, wiping Jake's other fields
   // after a title or artist correction (review of #501).
+  // Every writer here is automatic (analysis, the genre filer): with his records
+  // unreadable, an entry whose fingerprint changed is held, not wiped (Brief 266).
   const jake = await jakeNamesFor(trackId, fingerprint)
   await writeOverridesSerialized((overrides) => {
+    if (jake.unreadable && heldWhileRecordsUnreadable(overrides, trackId, fingerprint)) { warnHeldWhileUnreadable(trackId, Object.keys(fields)); return overrides }
     for (const [field, value] of Object.entries(fields)) mergeOverrideField(overrides, trackId, field, value, fingerprint, jake)
     return overrides
   })
+}
+// One line a minute at most: a sweep can reach hundreds of songs while his records are unreadable.
+let heldWarnedAt = 0
+let heldSinceWarn = 0
+function warnHeldWhileUnreadable(trackId: number, fields: string[]): void {
+  heldSinceWarn++
+  if (Date.now() - heldWarnedAt < 60_000) return
+  console.warn(`[jake-edits] his edits can't be read; held an automatic write to ${trackId} (${fields.join(', ')}) whose song may have changed${heldSinceWarn > 1 ? ` (${heldSinceWarn} held since the last note)` : ''}`)
+  heldWarnedAt = Date.now()
+  heldSinceWarn = 0
 }
 // The titles and artists Jake set for an id (journal + phone): the only evidence that
 // lets an entry keep its fields across a fingerprint change (override-merge.ts isAnotherSong).
 const jakeNamesRead = createJakeNames(createJakeEdits({ readJournal: () => readJournalStrict(app.getPath('userData')), readPhone: () => mobileMetadataOverridesCache.get(), ttlMs: 5_000 }))
 // In call order, so two quick saves of one field still reach the serialized writer in the order they were made.
 let jakeNamesChain: Promise<unknown> = Promise.resolve()
-function jakeNamesFor(trackId: number, fingerprint?: string): Promise<{ title: string[]; artist: string[] }> {
+function jakeNamesFor(trackId: number, fingerprint?: string): Promise<{ title: string[]; artist: string[]; unreadable?: true }> {
   const next = jakeNamesChain.then(() => jakeNamesRead(trackId, fingerprint))
   jakeNamesChain = next.catch(() => undefined)
   return next
@@ -9209,7 +9222,12 @@ ipc.handle('load-metadata-overrides', async () => {
 // absorb leave it false (review of #505: a robot is never its own evidence).
 async function applyMetadataOverrideInternal(trackId: number, field: string, value: string, fingerprint?: string, writtenByJake = false): Promise<void> {
   const jake = await jakeNamesFor(trackId, fingerprint)
-  await writeOverridesSerialized((overrides) => mergeOverrideField(overrides, trackId, field, value, fingerprint, jake, { writtenByJake }))
+  await writeOverridesSerialized((overrides) => {
+    // An automatic write (Cynthia, the hub absorb, the listening counters) with his
+    // records unreadable: held, not a wipe (Brief 266). Jake's own save always writes.
+    if (!writtenByJake && jake.unreadable && heldWhileRecordsUnreadable(overrides, trackId, fingerprint)) { warnHeldWhileUnreadable(trackId, [field]); return overrides }
+    return mergeOverrideField(overrides, trackId, field, value, fingerprint, jake, { writtenByJake })
+  })
 }
 
 // Brief 020's tag write-back, behind a queue (tag-writeback-queue.ts): one edit
@@ -9295,7 +9313,9 @@ ipc.handle('save-metadata-override', async (_event, trackId: number, field: stri
   // write waits its turn (tag-writeback-queue.ts). Never rejects.
   if (WRITABLE_FIELDS.has(field)) await tagWriteback.edit({ trackId, field, value, fingerprint })
   void (async () => {
-  await applyMetadataOverrideInternal(trackId, field, value, fingerprint, true)   // Jake's own save
+  // Jake's own save, except the player's listening counters, which reach this
+  // handler too but are automatic (Brief 266: held, never a wipe, while his records can't be read).
+  await applyMetadataOverrideInternal(trackId, field, value, fingerprint, !LISTENING_COUNTER_FIELDS.has(field))
   // 2026-10-20: the ONLY journal writer for this Mac's own edits — Jake's
   // clicks reach this handler; robots, sync and hub adoption never do.
   void userEdits.record(trackId, field, value, editAt)

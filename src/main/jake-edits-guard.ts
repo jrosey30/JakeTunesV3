@@ -69,13 +69,15 @@ export function createHeldForJake(edits: { lookup: () => Promise<JakeEditLookup>
 /**
  * The titles and artists Jake set for one id (journal + phone), for the override
  * merge's evidence (override-merge.ts isAnotherSong). His records unreadable →
- * no evidence: a changed fingerprint then starts the entry fresh, as it always did.
+ * no evidence and `unreadable: true`: an automatic write to an entry whose
+ * fingerprint changed is then held, never a fresh start that wipes his fields
+ * (override-merge.ts heldWhileRecordsUnreadable; Brief 266, suspect 7).
  */
 export function createJakeNames(edits: { lookup: () => Promise<JakeEditLookup> }) {
   /** `fingerprint`: the song the id names now; his records (journal or phone) for a song of another length don't count. */
-  return async (trackId: number | string, fingerprint?: string): Promise<{ title: string[]; artist: string[] }> => {
+  return async (trackId: number | string, fingerprint?: string): Promise<{ title: string[]; artist: string[]; unreadable?: true }> => {
     let look: JakeEditLookup
-    try { look = await edits.lookup() } catch { return { title: [], artist: [] } }
+    try { look = await edits.lookup() } catch { return { title: [], artist: [], unreadable: true } }
     const id = Number(trackId)
     const dur = fingerprint ? Number(fingerprint.slice(fingerprint.lastIndexOf('|') + 1)) || undefined : undefined
     // By id + length, never by the phone's fingerprint: the phone's entry carries

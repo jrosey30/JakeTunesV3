@@ -38,8 +38,34 @@ function evidenceFor(fields: Record<string, string> | undefined, field: string, 
   return { title, artist }
 }
 
-/** Titles and artists Jake himself set for one id: his override, his journal, his phone edits. */
-export interface JakeNames { title?: readonly string[]; artist?: readonly string[] }
+/**
+ * Titles and artists Jake himself set for one id: his override, his journal, his phone edits.
+ * `unreadable`: his journal or the phone's edits file exists and can't be read,
+ * so there is no telling which names are his (jake-edits-guard.ts createJakeNames).
+ */
+export interface JakeNames { title?: readonly string[]; artist?: readonly string[]; unreadable?: boolean }
+
+/**
+ * The listening counters the player saves through save-metadata-override. They
+ * reach the same handler as Jake's Get Info, but no person typed them: they are
+ * automatic writes (Brief 266, suspect 7).
+ */
+export const LISTENING_COUNTER_FIELDS: ReadonlySet<string> = new Set(['playCount', 'lastPlayedAt', 'skipCount'])
+
+/**
+ * Brief 266, suspect 7: when Jake's records can't be read, an automatic write
+ * writes NOTHING to an entry whose fingerprint differs from the new one. Without
+ * his records there is no evidence either way, and the merge would start the
+ * entry fresh, taking his genre and every other field with it. Held until his
+ * records read again; an entry with the same fingerprint (or none) merges as
+ * always, keeping every field.
+ */
+export function heldWhileRecordsUnreadable(overrides: Record<string, unknown>, trackId: number | string, fingerprint?: string): boolean {
+  const existing = overrides[String(trackId)] as OvEntry | undefined
+  if (!existing || typeof existing !== 'object' || !('fields' in existing)) return false
+  const existingFp = existing.fp || ''
+  return typeof fingerprint === 'string' && fingerprint !== '' && existingFp !== '' && existingFp !== fingerprint
+}
 
 /**
  * Another song under this id? A changed fingerprint is the same recording only
@@ -76,6 +102,9 @@ export function mergeOverrideField(
   jake: JakeNames = {},
   opts: { writtenByJake?: boolean } = {},
 ): Record<string, unknown> {
+  // His records can't be read: an automatic write to an entry whose song may
+  // have changed is held, never a wipe (heldWhileRecordsUnreadable).
+  if (jake.unreadable && opts.writtenByJake !== true && heldWhileRecordsUnreadable(overrides, trackId, fingerprint)) return overrides
   const key = String(trackId)
   const existing = overrides[key] as OvEntry | undefined
   const isV2 = !!existing && typeof existing === 'object' && 'fields' in existing
