@@ -6,7 +6,7 @@ import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   addKeyLayer, addEscape, addUndo, claimKeys, isClaimed, escapeStack, offerToLayers, routeGlobal, applyRoute, modalOpen,
-  resetKeyboardForTests, installKeyboard,
+  resetKeyboardForTests, installKeyboard, spaceFirst,
 } from '../../renderer/keyboard.ts'
 
 interface FakeEvent {
@@ -205,5 +205,158 @@ describe('installKeyboard: the two listeners together', () => {
   it('with no layer, Space reaches play/pause once', () => {
     const fired = withWindow((fire) => { fire(' ', 'Space') })
     assert.deepEqual(fired, ['play-pause'])
+  })
+})
+
+// Brief 266: a mouse click in Electron focuses the button or card it lands
+// on. Space after that must be play/pause, not the focused element's own
+// Space (▶ playing the record again, a show card reopening its link).
+describe('Space after a click: play/pause comes before the focused element', () => {
+  beforeEach(() => resetKeyboardForTests())
+
+  interface Focused {
+    tagName: string; isContentEditable?: boolean; closest?: (s: string) => unknown
+    /** The element's own onKeyDown (React runs it between window capture and window bubble). */
+    onKeyDown?: (e: KeyboardEvent) => void
+    /** The native press a button / role=button card gets from Space unless keydown was prevented. */
+    activate?: () => void
+  }
+
+  /** One real-order keydown on a focused element: window capture, the element, window bubble, then the native press. */
+  function pressSpaceOn(target: Focused, setup: () => void = () => {}, mods: Partial<FakeEvent> = {}): { fired: string[]; e: KeyboardEvent } {
+    const fired: string[] = []
+    const listeners: { fn: (e: KeyboardEvent) => void; capture: boolean }[] = []
+    const g = globalThis as unknown as { window?: unknown }
+    const before = g.window
+    g.window = {
+      addEventListener: (type: string, fn: (e: KeyboardEvent) => void, capture?: boolean) => { if (type === 'keydown') listeners.push({ fn, capture: !!capture }) },
+      removeEventListener: () => {},
+    }
+    const off = installKeyboard({ shortcut: (id) => fired.push(id), clearSearch: () => fired.push('clear-search') })
+    setup()
+    const e = ev(' ', 'Space', { target, ...mods })
+    try {
+      for (const l of listeners.filter((x) => x.capture)) l.fn(e)
+      if (!e.cancelBubble) target.onKeyDown?.(e)
+      if (!e.cancelBubble) for (const l of listeners.filter((x) => !x.capture)) l.fn(e)
+      if (!e.defaultPrevented) target.activate?.()
+    } finally { off(); g.window = before }
+    return { fired, e }
+  }
+
+  // PlayButton.tsx: onClick plays; onKeyDown stops Space / Enter.
+  function playButton(onPlay: () => void): Focused {
+    return {
+      tagName: 'BUTTON',
+      onKeyDown: (e) => { if (e.key === ' ' || e.key === 'Enter') e.stopPropagation() },
+      activate: onPlay,
+    }
+  }
+
+  it('focus on ▶: Space is play/pause once, and the button does not play again', () => {
+    let played = 0
+    const { fired } = pressSpaceOn(playButton(() => { played++ }))
+    assert.deepEqual(fired, ['play-pause'])
+    assert.equal(played, 0, 'the button\'s own Space press must not restart the record')
+  })
+
+  it('focus on a show card (role=button, its own Space opens it): Space is play/pause, the card stays shut', () => {
+    let opened = 0
+    const card: Focused = {
+      tagName: 'DIV',
+      onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); opened++ } },
+    }
+    const { fired } = pressSpaceOn(card)
+    assert.deepEqual(fired, ['play-pause'])
+    assert.equal(opened, 0)
+  })
+
+  it('focus in a text field: Space types, no play/pause', () => {
+    let typed = 0
+    const { fired, e } = pressSpaceOn({ tagName: 'INPUT', closest: () => null, onKeyDown: () => { typed++ } })
+    assert.deepEqual(fired, [])
+    assert.equal(typed, 1)
+    assert.equal(e.defaultPrevented, false)
+    assert.deepEqual(pressSpaceOn({ tagName: 'DIV', isContentEditable: true }).fired, [], 'contenteditable too')
+  })
+
+  it('a page that claims Space (the blind check) wins over play/pause, even with ▶ focused', () => {
+    let blind = 0
+    let played = 0
+    const { fired } = pressSpaceOn(playButton(() => { played++ }), () => {
+      claimKeys('top1000-audit', ['Space'])
+      addKeyLayer('top1000-audit', (e) => { if (e.key === ' ') { e.preventDefault(); blind++ } })
+    })
+    assert.deepEqual(fired, [])
+    assert.equal(blind, 1)
+    assert.equal(played, 0)
+  })
+
+  it('a claim alone (no layer took it) still keeps Space from play/pause', () => {
+    let pressed = 0
+    const { fired } = pressSpaceOn({ tagName: 'BUTTON', activate: () => { pressed++ } }, () => { claimKeys('listen-list', ['Space']) })
+    assert.deepEqual(fired, [])
+    assert.equal(pressed, 1, 'the focused button keeps its own Space')
+  })
+
+  it('a dialog open: its focused button keeps Space; no play/pause before it', () => {
+    let confirmed = 0
+    const { fired } = pressSpaceOn(playButton(() => { confirmed++ }), () => { addEscape('confirm', () => {}) })
+    assert.deepEqual(fired, [])
+    assert.equal(confirmed, 1)
+  })
+
+  it('a modified Space (⇧Space) is not taken early', () => {
+    let pressed = 0
+    const { fired } = pressSpaceOn({ tagName: 'BUTTON', activate: () => { pressed++ } }, () => {}, { shiftKey: true })
+    assert.deepEqual(fired, [])
+    assert.equal(pressed, 1)
+  })
+
+  it('Enter on a focused ▶ is still the button\'s (unchanged)', () => {
+    const fired: string[] = []
+    const listeners: { fn: (e: KeyboardEvent) => void; capture: boolean }[] = []
+    const g = globalThis as unknown as { window?: unknown }
+    const before = g.window
+    g.window = { addEventListener: (_t: string, fn: (e: KeyboardEvent) => void, capture?: boolean) => listeners.push({ fn, capture: !!capture }), removeEventListener: () => {} }
+    const off = installKeyboard({ shortcut: (id) => fired.push(id), clearSearch: () => {} })
+    let played = 0
+    const btn = playButton(() => { played++ })
+    const e = ev('Enter', 'Enter', { target: btn })
+    try {
+      for (const l of listeners.filter((x) => x.capture)) l.fn(e)
+      if (!e.cancelBubble) btn.onKeyDown?.(e)
+      if (!e.cancelBubble) for (const l of listeners.filter((x) => !x.capture)) l.fn(e)
+      if (!e.defaultPrevented) btn.activate?.()
+    } finally { off(); g.window = before }
+    assert.deepEqual(fired, [])
+    assert.equal(played, 1)
+  })
+
+  it('a list layer that takes Space early still has it (plays the highlighted row)', () => {
+    let rowPlayed = 0
+    const { fired } = pressSpaceOn({ tagName: 'DIV' }, () => {
+      addKeyLayer('track-list', (e) => { if (e.key === ' ') { e.preventDefault(); e.stopPropagation(); rowPlayed++ } })
+    })
+    assert.deepEqual(fired, [])
+    assert.equal(rowPlayed, 1)
+  })
+
+  it('spaceFirst names each case on its own (not only through routeKey)', () => {
+    assert.equal(spaceFirst(SPACE()), true)
+    assert.equal(spaceFirst(ev(' ', 'Space', { target: { tagName: 'BUTTON' } })), true)
+    assert.equal(spaceFirst(ev(' ', 'Space', { target: { tagName: 'INPUT', closest: () => null } })), false, 'text field')
+    assert.equal(spaceFirst(ev(' ', 'Space', { target: { tagName: 'TEXTAREA', closest: () => ({}) } })), false, 'field in a dialog')
+    assert.equal(spaceFirst(ev(' ', 'Space', { target: { tagName: 'DIV', isContentEditable: true } })), false, 'contenteditable')
+    assert.equal(spaceFirst(ev(' ', 'Space', { shiftKey: true })), false, '⇧Space')
+    assert.equal(spaceFirst(ev(' ', 'Space', { metaKey: true })), false, '⌘Space')
+    assert.equal(spaceFirst(ev('Enter', 'Enter')), false, 'Enter')
+    const off = claimKeys('top1000-audit', ['Space'])
+    assert.equal(spaceFirst(SPACE()), false, 'claimed')
+    off()
+    const close = addEscape('settings', () => {})
+    assert.equal(spaceFirst(SPACE()), false, 'dialog open')
+    close()
+    assert.equal(spaceFirst(SPACE()), true)
   })
 })

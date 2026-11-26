@@ -8,6 +8,9 @@
  *   1. (capture) to the layers: dialogs first, then the page and its lists,
  *      newest first (keymap.ts layerOrder). A layer that handles a key calls
  *      preventDefault / stopPropagation or returns true, and that's the end.
+ *      Then plain Space, if no layer took it, is play/pause right here, ahead
+ *      of the focused element (spaceFirst below), unless focus is in a text
+ *      field, a page claims Space, or a dialog is open.
  *   2. the focused element itself (a text field, a button, a Cover Flow with
  *      focus). It can keep the key the same way.
  *   3. (bubble) to the late layers, then the on-screen Cover Flow's ←/→,
@@ -22,7 +25,7 @@
  *   addUndo       an Undo toast ⌘Z presses
  * React hooks over these: hooks/useKeyboard.ts.
  */
-import { layerOrder, routeKey, type FocusState, type LayerInfo, type Route } from '../common/keymap.ts'
+import { eventKeyName, layerOrder, routeKey, type FocusState, type LayerInfo, type Route } from '../common/keymap.ts'
 import { handleOwnedArrowKey, OVERLAY_SELECTOR } from './utils/arrowKeyOwner.ts'
 
 export type KeyHandler = (e: KeyboardEvent) => boolean | void
@@ -182,6 +185,24 @@ export function applyRoute(route: Route, e: KeyboardEvent, actions: KeyboardActi
   }
 }
 
+/**
+ * Plain Space is play/pause before the focused element sees it (Brief 266).
+ * In Electron a mouse click focuses the button or card it lands on, so with
+ * Space offered to focus first, clicking ▶ and then pressing Space played the
+ * record again (the button's own Space press) and a show card or news row
+ * opened its link again: the pre-V7 App caught Space in the capture phase,
+ * and this keeps that order for Space alone. It stays with the focused
+ * element in a text field (focusStateOf), on a page that claims Space (the
+ * blind check, the Listen List, the Supreme Court room), and while a dialog
+ * is open, whose buttons keep their own Space. Enter is untouched.
+ */
+export function spaceFirst(e: KeyboardEvent): boolean {
+  if (e.isComposing || e.defaultPrevented) return false
+  if (eventKeyName(e) !== 'Space' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return false
+  if (focusStateOf(e.target) !== 'none' || isClaimed(e.code || 'Space') || modalOpen()) return false
+  return true
+}
+
 /** Mount once (App). Installs the app's only window keyboard listeners. */
 export function installKeyboard(actions: KeyboardActions): () => void {
   // A layer that took the key early by returning true (without preventDefault)
@@ -189,7 +210,15 @@ export function installKeyboard(actions: KeyboardActions): () => void {
   const taken = new WeakSet<KeyboardEvent>()
   const early = (e: KeyboardEvent): void => {
     if (e.isComposing) return
-    if (offerToLayers(e, 'early')) taken.add(e)
+    if (offerToLayers(e, 'early')) { taken.add(e); return }
+    if (!spaceFirst(e)) return
+    const route = routeGlobal(e)
+    if (route.to !== 'shortcut') return
+    // preventDefault (in applyRoute) cancels the focused button's own press;
+    // stopPropagation keeps the focused element's onKeyDown from running.
+    applyRoute(route, e, actions)
+    e.stopPropagation()
+    taken.add(e)
   }
   const late = (e: KeyboardEvent): void => {
     if (e.isComposing || taken.has(e)) return
