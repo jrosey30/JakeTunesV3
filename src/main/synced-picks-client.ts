@@ -119,8 +119,9 @@ export interface SyncedPicksClient<V> {
   /** One network pass: GET, then replay (or drop) the queued edit. Coalesced. */
   sync(opts?: { direct?: boolean }): Promise<PicksState<V>>
   /** Validate, queue, render-ready immediately, then PUT. `from.tailKnown` is
-   *  the `tailKnown` of the state the edit was built from; left out, the last
-   *  state this client handed out is taken as the one. */
+   *  the `tailKnown` of the state the edit was built from, and the app always
+   *  sends it. Left out (tests, a caller with no view), the last state this
+   *  client read is used: a guess, since a read is not proof a view drew it. */
   save(values: unknown, from?: { tailKnown?: boolean }): Promise<SaveResult<V>>
   hasPending(): Promise<boolean>
   /** Called whenever the drawable state changes (after a save or a sync). */

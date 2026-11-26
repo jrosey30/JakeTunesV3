@@ -35,8 +35,9 @@ interface Props {
 
 const plural = (n: number, w: string): string => `${n.toLocaleString()} ${w}${n === 1 ? '' : 's'}`
 
-async function commit(next: FavoriteSlot[]): Promise<void> {
-  const r = await saveFavoriteArtists(next)
+/** `from` is the state `next` was built from (see IslandAlbumsShelf commit). */
+async function commit(next: FavoriteSlot[], from: { tailKnown?: boolean }): Promise<void> {
+  const r = await saveFavoriteArtists(next, from.tailKnown === true)
   // A refused save (homemini's 400 sentence, or "not synced yet") — say it.
   if (!r.ok) setNotice(r.error, { kind: 'error' })
 }
@@ -94,10 +95,10 @@ export default function FavoriteArtistsRow({ artists, onOpenArtist }: Props): JS
     if (!values[slot]) return [{ label: 'Choose Artist…', disabled: !editable, onClick: () => setPicking(slot) }]
     return [
       { label: 'Replace…', disabled: !editable, onClick: () => setPicking(slot) },
-      { label: 'Remove', disabled: !editable, onClick: () => { void commit(clearSlot(values, slot)) } },
+      { label: 'Remove', disabled: !editable, onClick: () => { void commit(clearSlot(values, slot), picks) } },
       { separator: true },
-      { label: 'Move Left', disabled: !editable || slot === 0, onClick: () => { void commit(moveSlot(values, slot, -1)) } },
-      { label: 'Move Right', disabled: !editable || slot === FAVORITE_ARTIST_SLOT_COUNT - 1, onClick: () => { void commit(moveSlot(values, slot, 1)) } },
+      { label: 'Move Left', disabled: !editable || slot === 0, onClick: () => { void commit(moveSlot(values, slot, -1), picks) } },
+      { label: 'Move Right', disabled: !editable || slot === FAVORITE_ARTIST_SLOT_COUNT - 1, onClick: () => { void commit(moveSlot(values, slot, 1), picks) } },
     ]
   }
 
@@ -192,7 +193,7 @@ export default function FavoriteArtistsRow({ artists, onOpenArtist }: Props): JS
             const a = candidates.get(key)
             const slot = picking
             setPicking(null)
-            if (a) void commit(placeInSlot(values, slot, a.name, favoriteArtistKey))
+            if (a) void commit(placeInSlot(values, slot, a.name, favoriteArtistKey), picks)
           }}
         />
       )}

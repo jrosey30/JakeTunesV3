@@ -50,8 +50,10 @@ interface Props {
   albumMenu?: (album: Album) => MenuEntry[]
 }
 
-async function commit(next: IslandSlot[]): Promise<void> {
-  const r = await saveIslandSlots(next)
+/** `from` is the state `next` was built from. It goes with the edit so main
+ *  knows whether that view showed every slot (a menu can outlive a refresh). */
+async function commit(next: IslandSlot[], from: { tailKnown?: boolean }): Promise<void> {
+  const r = await saveIslandSlots(next, from.tailKnown === true)
   // A refused save (homemini's 400 sentence, or "not synced yet") — say it.
   if (!r.ok) setNotice(r.error, { kind: 'error' })
 }
@@ -64,7 +66,7 @@ export function islandMenuEntry(album: Album, state: AnyPicksState & { values: I
   const values = state.values
   const at = slotOfAlbum(values, album)
   const editable = picksEditable(state)
-  if (at >= 0) return { label: `Remove from Island Albums (#${at + 1})`, disabled: !editable, onClick: () => { void commit(clearSlot(values, at)) } }
+  if (at >= 0) return { label: `Remove from Island Albums (#${at + 1})`, disabled: !editable, onClick: () => { void commit(clearSlot(values, at), state) } }
   if (!islandEligible(album.tracks)) return null
   if (!editable) return { label: 'Add to Island Albums…', disabled: true }
   const pick = islandPickOf(album)
@@ -73,7 +75,7 @@ export function islandMenuEntry(album: Album, state: AnyPicksState & { values: I
     submenu: values.map((v, i) => ({
       label: v ? `${i + 1}. Replace “${v.album}”` : `${i + 1}. Empty slot`,
       onClick: () => {
-        void commit(placeInSlot(values, i, pick, islandAlbumKey))
+        void commit(placeInSlot(values, i, pick, islandAlbumKey), state)
         setNotice(`${album.name} is island album #${i + 1}`)
       },
     })),
@@ -135,10 +137,10 @@ export default function IslandAlbumsShelf({ albums, findArtHash, lookupArt, requ
     return [
       ...(albumLines.length ? [...albumLines, { separator: true as const }] : []),
       { label: 'Replace…', disabled: !editable, onClick: () => setPicking(slot) },
-      { label: 'Remove', disabled: !editable, onClick: () => { void commit(clearSlot(values, slot)) } },
+      { label: 'Remove', disabled: !editable, onClick: () => { void commit(clearSlot(values, slot), picks) } },
       { separator: true },
-      { label: 'Move Left', disabled: !editable || slot === 0, onClick: () => { void commit(moveSlot(values, slot, -1)) } },
-      { label: 'Move Right', disabled: !editable || slot === ISLAND_SLOT_COUNT - 1, onClick: () => { void commit(moveSlot(values, slot, 1)) } },
+      { label: 'Move Left', disabled: !editable || slot === 0, onClick: () => { void commit(moveSlot(values, slot, -1), picks) } },
+      { label: 'Move Right', disabled: !editable || slot === ISLAND_SLOT_COUNT - 1, onClick: () => { void commit(moveSlot(values, slot, 1), picks) } },
     ]
   }
 
@@ -231,7 +233,7 @@ export default function IslandAlbumsShelf({ albums, findArtHash, lookupArt, requ
             const a = candidates.get(key)
             const slot = picking
             setPicking(null)
-            if (a) void commit(placeInSlot(values, slot, islandPickOf(a), islandAlbumKey))
+            if (a) void commit(placeInSlot(values, slot, islandPickOf(a), islandAlbumKey), picks)
           }}
         />
       )}

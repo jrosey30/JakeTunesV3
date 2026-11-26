@@ -669,6 +669,23 @@ describe('after the lists grew: what the older app left behind', () => {
     assert.deepEqual(hub.doc!.slots, want)
   })
 
+  it('a menu built before the list was read and clicked after it: its edit keeps the new slots', async () => {
+    // The album right-click menu is built once from the state of that moment
+    // and can be clicked after a refresh has made the cache whole.
+    const hubDoc = phoneDoc([...ten(), ...tail()], at)
+    await oldCache(hubDoc, ten())
+    const { hub, client } = setup({ doc: hubDoc, now: Date.parse('2026-11-26T12:00:00.000Z') })
+    const menuState = await client.read()                         // short view: tailKnown false
+    assert.equal(menuState.tailKnown, false)
+    assert.equal((await client.sync()).tailKnown, true)           // the refresh lands
+    const fromMenu = [...menuState.values]; fromMenu[2] = null    // "Remove from Island Albums (#3)"
+    const r = await client.save(fromMenu, { tailKnown: menuState.tailKnown })
+    assert.equal(r.ok, true)
+    const want = [...ten(), ...tail()]; want[2] = null
+    assert.deepEqual(hub.doc!.slots, want)
+    assert.deepEqual(r.state.values, want)
+  })
+
   it('a shelf that says it knew every slot is not believed over a short cache', async () => {
     const hubDoc = phoneDoc([...ten(), ...tail()], at)
     await oldCache(hubDoc, ten())
