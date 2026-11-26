@@ -19,7 +19,7 @@ import { persistGuarded } from '../genre-filer-persist.ts'
 import { writeJsonAtomic } from '../atomic-write.ts'
 import { runGenreCorrections } from '../genre-corrections.ts'
 import { runGenreRulings } from '../genre-rulings.ts'
-import { filerRole, genreFilerPass, runReplicaGenreRepair } from '../genre-replica.ts'
+import { filerRole, genreFilerPass, journalGenresStrict, runReplicaGenreRepair } from '../genre-replica.ts'
 import { musicBrainzArtistCandidates, musicBrainzAlbum, confirmedArtist, musicBrainzCountryById } from '../artist-tags.ts'
 import { lookupArtistOrigin, cleanAlbumTitle } from '../origin-lookup.ts'
 import { exaSearch } from '../exa.ts'
@@ -95,6 +95,8 @@ export function updateProvenance(mutate: (doc: ProvenanceDoc) => void): Promise<
   provChain = run.catch(() => undefined)
   return run
 }
+/** His journaled genres for display and ownership (who set a genre); unreadable reads as none.
+ *  Never for a writer that removes: the replica repair reads strictly (genre-replica.ts journalGenresStrict). */
 async function loadJournalGenres(): Promise<Map<string, { v: string; at: number; dur?: number }>> {
   const out = new Map<string, { v: string; at: number; dur?: number }>()
   try {
@@ -208,7 +210,7 @@ export function startGenreFiler(host: GenreFilerHost): void {
     if (!saidReplica) { saidReplica = true; console.warn('[genre-filer] replica: not filing here — genres come from the hub (the MacBook files for every device)') }
     if (replicaTried || !host.updateOverrides) return
     replicaTried = true
-    await runReplicaGenreRepair({ userData: app.getPath('userData'), flushOverrides: host.flushOverrides, updateOverrides: host.updateOverrides, journalGenres: loadJournalGenres, log: (m) => console.warn(m) })
+    await runReplicaGenreRepair({ userData: app.getPath('userData'), flushOverrides: host.flushOverrides, updateOverrides: host.updateOverrides, journalGenres: () => journalGenresStrict(app.getPath('userData')), log: (m) => console.warn(m) })
       .catch((err) => console.warn('[genre-replica] repair failed:', err instanceof Error ? err.message : err))
   }
   const sweep = async (): Promise<void> => {

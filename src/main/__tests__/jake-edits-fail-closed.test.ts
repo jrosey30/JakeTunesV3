@@ -6,11 +6,12 @@
  */
 import { after, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createJakeEdits, createJakeNames, readJournalStrict } from '../jake-edits-guard.ts'
 import { heldWhileRecordsUnreadable, LISTENING_COUNTER_FIELDS, mergeOverrideField } from '../override-merge.ts'
+import { journalGenresStrict, REPLICA_REPAIR_MARKER, runReplicaGenreRepair } from '../genre-replica.ts'
 import { emptyUserEdits, recordUserEdit, USER_EDITS_FILE } from '../../common/user-edits.ts'
 
 const root = mkdtempSync(join(tmpdir(), 'jt-266-fail-closed-'))
@@ -72,5 +73,50 @@ describe('gap 1: the override merge, his journal unreadable', () => {
   })
   test('the play and skip counters are the automatic ones', () => {
     assert.deepEqual([...LISTENING_COUNTER_FIELDS].sort(), ['lastPlayedAt', 'playCount', 'skipCount'])
+  })
+})
+
+describe('gap 2: the replica genre repair, his journal unreadable', () => {
+  const overridesFile = (): Record<string, unknown> => ({
+    '1': { fp: 'a|b|1', fields: { genre: 'Experimental', bpm: '100' } },
+    '2': { fp: 'c|d|2', fields: { genre: 'Ska-Punk' } },
+  })
+  async function repair(dir: string): Promise<{ r: Awaited<ReturnType<typeof runReplicaGenreRepair>>; file: Record<string, unknown>; writes: number }> {
+    writeFileSync(join(dir, 'metadata-overrides.json'), JSON.stringify(overridesFile()))
+    let file = overridesFile()
+    let writes = 0
+    const r = await runReplicaGenreRepair({
+      userData: dir,
+      updateOverrides: async (m) => { writes++; file = m(file) },
+      journalGenres: () => journalGenresStrict(dir),   // what genre-filer-ipc.ts passes
+      log: () => {},
+    })
+    return { r, file, writes }
+  }
+  test('a torn journal on disk: nothing stripped, no marker, so it runs again once the journal reads', async () => {
+    const dir = freshDir()
+    writeFileSync(join(dir, USER_EDITS_FILE), '{ torn')
+    const { r, file, writes } = await repair(dir)
+    assert.equal(r.ran, false)
+    assert.equal(writes, 0, 'the override writer was never called')
+    assert.deepEqual(file, overridesFile(), 'his genres are all there')
+    assert.ok(!existsSync(join(dir, REPLICA_REPAIR_MARKER)), 'no marker: not "done"')
+    assert.ok(!readdirSync(dir).some((f) => f.includes('.bak-replica-genres-')), 'nothing touched, not even a backup')
+    writeFileSync(join(dir, USER_EDITS_FILE), JSON.stringify(recordUserEdit(emptyUserEdits(1), 2, 'genre', 'Ska-Punk', 5_000)))
+    const again = await repair(dir)
+    assert.equal(again.r.ran, true, 'readable again: the repair runs')
+    assert.deepEqual(again.file, { '1': { fp: 'a|b|1', fields: { bpm: '100' } }, '2': { fp: 'c|d|2', fields: { genre: 'Ska-Punk' } } }, 'his own genre here kept')
+  })
+  test('a fresh install (no journal): runs as before, the missing file read as no edits', async () => {
+    const dir = freshDir()
+    const { r, file } = await repair(dir)
+    assert.equal(r.ran, true)
+    assert.equal(r.stripped, 2)
+    assert.deepEqual(file['1'], { fp: 'a|b|1', fields: { bpm: '100' } })
+    assert.ok(existsSync(join(dir, REPLICA_REPAIR_MARKER)))
+  })
+  test('the app passes the strict reader (wiring)', () => {
+    const ipc = readFileSync(join(import.meta.dirname, '..', 'ipc', 'genre-filer-ipc.ts'), 'utf8')
+    assert.match(ipc, /journalGenres: \(\) => journalGenresStrict\(app\.getPath\('userData'\)\), log/)
   })
 })
