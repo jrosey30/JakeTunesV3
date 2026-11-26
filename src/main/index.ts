@@ -105,7 +105,7 @@ import { assertNoSyncedPicksPush } from './synced-picks-client.ts'
 import { createArtistPhotos, nameKey as photoNameKey } from './artist-photo.ts'
 import { createArtistPhotoPicks } from './artist-photo-picks.ts'
 import { createArtistImageServer } from './artist-image-serve.ts'
-import { phoneOverlayFields } from '../common/genre-vocab.ts'; import { mergeOverrideField } from './override-merge.ts'; import { registerUserEdits } from './ipc/user-edits-ipc.ts'
+import { phoneOverlayFields } from '../common/genre-vocab.ts'; import { heldWhileRecordsUnreadable, LISTENING_COUNTER_FIELDS, mergeOverrideField, mergeOverrideFields } from './override-merge.ts'; import { registerUserEdits } from './ipc/user-edits-ipc.ts'
 import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
 import { registerSyncHistoryIpc } from './ipc/sync-history-ipc.ts'
 import { registerActivityPoolIpc } from './ipc/activity-pool-ipc.ts'
@@ -906,22 +906,36 @@ async function persistOverrideFields(
   trackId: number,
   fields: Record<string, string>,
   fingerprint: string,
+  opts: { writtenByJake?: boolean } = {},
 ): Promise<void> {
   // The one merge rule (override-merge.ts): it used to replace the whole entry
   // whenever the fingerprints weren't identical, wiping Jake's other fields
   // after a title or artist correction (review of #501).
+  // Automatic writers (analysis, the genre filer's picks): with his records
+  // unreadable, a write the merge would turn into a wipe is held (Brief 266).
+  // `writtenByJake`: a check-list File or a ruling (genre-filer-persist.ts) always writes.
   const jake = await jakeNamesFor(trackId, fingerprint)
   await writeOverridesSerialized((overrides) => {
-    for (const [field, value] of Object.entries(fields)) mergeOverrideField(overrides, trackId, field, value, fingerprint, jake)
+    if (!mergeOverrideFields(overrides, trackId, fields, fingerprint, jake, opts)) warnHeldWhileUnreadable(trackId, Object.keys(fields))
     return overrides
   })
 }
+// One line a minute at most: a sweep can reach hundreds of songs while his records are unreadable.
+let heldWarnedAt = 0
+let heldSinceWarn = 0
+function warnHeldWhileUnreadable(trackId: number, fields: string[]): void {
+  heldSinceWarn++
+  if (Date.now() - heldWarnedAt < 60_000) return
+  console.warn(`[jake-edits] his edits can't be read; held an automatic write to ${trackId} (${fields.join(', ')}) whose song may have changed${heldSinceWarn > 1 ? ` (${heldSinceWarn} held since the last note)` : ''}`)
+  heldWarnedAt = Date.now()
+  heldSinceWarn = 0
+}
 // The titles and artists Jake set for an id (journal + phone): the only evidence that
 // lets an entry keep its fields across a fingerprint change (override-merge.ts isAnotherSong).
-const jakeNamesRead = createJakeNames(createJakeEdits({ readJournal: () => readJournalStrict(app.getPath('userData')), readPhone: () => mobileMetadataOverridesCache.get(), ttlMs: 5_000 }))
+const jakeNamesRead = createJakeNames(createJakeEdits({ readJournal: () => readJournalStrict(app.getPath('userData')), readPhone: () => mobileMetadataOverridesCache.getStrict(), ttlMs: 5_000 }))
 // In call order, so two quick saves of one field still reach the serialized writer in the order they were made.
 let jakeNamesChain: Promise<unknown> = Promise.resolve()
-function jakeNamesFor(trackId: number, fingerprint?: string): Promise<{ title: string[]; artist: string[] }> {
+function jakeNamesFor(trackId: number, fingerprint?: string): Promise<{ title: string[]; artist: string[]; unreadable?: true }> {
   const next = jakeNamesChain.then(() => jakeNamesRead(trackId, fingerprint))
   jakeNamesChain = next.catch(() => undefined)
   return next
@@ -6970,7 +6984,7 @@ function cynthiaGetAlbumsSnapshot(): Map<string, { label: string; tracks: Cynthi
 }
 
 // His records of hand (the journal, strictly, and the phone's Get Info), read once per sweep (jake-edits-guard.ts).
-const cynthiaHeldForJake = createHeldForJake(createJakeEdits({ readJournal: () => readJournalStrict(app.getPath('userData')), readPhone: () => mobileMetadataOverridesCache.get() }))
+const cynthiaHeldForJake = createHeldForJake(createJakeEdits({ readJournal: () => readJournalStrict(app.getPath('userData')), readPhone: () => mobileMetadataOverridesCache.getStrict() }))
 function buildCynthiaSweepHooks() {
   return {
     getAlbums: cynthiaGetAlbumsSnapshot,
@@ -9058,7 +9072,7 @@ const sweepFriendImports = async (): Promise<number> => ((await isHomeminiPlayba
  */
 // Taste ledger + weights extracted to ipc/taste-ipc.ts (6.0 Phase 1).
 registerTasteIpc(ipc)
-registerGenreFilerIpc(ipc, { libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], overrides: async () => (await overridesCache.get()) as Record<string, { fp?: string; fields?: Record<string, string> }>, phoneOverrides: () => mobileMetadataOverridesCache.get(), flushOverrides: () => overridesCache.flush(), isReplica: isHomeminiPlaybackClientCached, updateOverrides: (m) => writeOverridesSerialized(m), recordEdit: (id, field, value, at) => userEdits.record(id, field, value, at), persist: (id, fields, fp) => persistOverrideFields(id, fields, fp).then(() => triggerSync('metadata-edit')), send: (ch, p) => sendToRenderer(ch, p), claude: async (system, user) => { const r = await claudeCall('genre-filer', { model: MODEL_SMART, max_tokens: 2000, system, messages: [{ role: 'user', content: user }] }); const b = r.content[0]; return b && b.type === 'text' ? b.text : '' }, mbThrottle, userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` })
+registerGenreFilerIpc(ipc, { libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], overrides: async () => (await overridesCache.get()) as Record<string, { fp?: string; fields?: Record<string, string> }>, phoneOverrides: () => mobileMetadataOverridesCache.getStrict(), flushOverrides: () => overridesCache.flush(), isReplica: isHomeminiPlaybackClientCached, updateOverrides: (m) => writeOverridesSerialized(m), recordEdit: (id, field, value, at) => userEdits.record(id, field, value, at), persist: (id, fields, fp, opts) => persistOverrideFields(id, fields, fp, opts).then(() => triggerSync('metadata-edit')), send: (ch, p) => sendToRenderer(ch, p), claude: async (system, user) => { const r = await claudeCall('genre-filer', { model: MODEL_SMART, max_tokens: 2000, system, messages: [{ role: 'user', content: user }] }); const b = r.content[0]; return b && b.type === 'text' ? b.text : '' }, mbThrottle, userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` })
 startTaxonomyStagedApply({ stateDir: STATE_DIR, libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], updateOverrides: (m) => writeOverridesSerialized(m), flushOverrides: () => overridesCache.flush(), overrideFlushStats: () => overridesCache.flushStats(), onApplied: (updates) => { sendToRenderer('genre-filer:applied', { updates }); triggerSync('metadata-edit') }, fingerprint: trackFingerprint, log: (m) => console.warn(m) })
 registerRockDnaIpc(ipc)
 registerFriendShareIpc(ipc, { getMainWindow: () => mainWindow })  // Share Song / Share Album (homemini builds the links)
@@ -9209,7 +9223,12 @@ ipc.handle('load-metadata-overrides', async () => {
 // absorb leave it false (review of #505: a robot is never its own evidence).
 async function applyMetadataOverrideInternal(trackId: number, field: string, value: string, fingerprint?: string, writtenByJake = false): Promise<void> {
   const jake = await jakeNamesFor(trackId, fingerprint)
-  await writeOverridesSerialized((overrides) => mergeOverrideField(overrides, trackId, field, value, fingerprint, jake, { writtenByJake }))
+  await writeOverridesSerialized((overrides) => {
+    // An automatic write (Cynthia, the hub absorb, the listening counters) with his
+    // records unreadable: held, not a wipe (Brief 266). Jake's own save always writes.
+    if (!writtenByJake && jake.unreadable && heldWhileRecordsUnreadable(overrides, trackId, fingerprint)) { warnHeldWhileUnreadable(trackId, [field]); return overrides }
+    return mergeOverrideField(overrides, trackId, field, value, fingerprint, jake, { writtenByJake })
+  })
 }
 
 // Brief 020's tag write-back, behind a queue (tag-writeback-queue.ts): one edit
@@ -9295,7 +9314,9 @@ ipc.handle('save-metadata-override', async (_event, trackId: number, field: stri
   // write waits its turn (tag-writeback-queue.ts). Never rejects.
   if (WRITABLE_FIELDS.has(field)) await tagWriteback.edit({ trackId, field, value, fingerprint })
   void (async () => {
-  await applyMetadataOverrideInternal(trackId, field, value, fingerprint, true)   // Jake's own save
+  // Jake's own save, except the player's listening counters, which reach this
+  // handler too but are automatic (Brief 266: held, never a wipe, while his records can't be read).
+  await applyMetadataOverrideInternal(trackId, field, value, fingerprint, !LISTENING_COUNTER_FIELDS.has(field))
   // 2026-10-20: the ONLY journal writer for this Mac's own edits — Jake's
   // clicks reach this handler; robots, sync and hub adoption never do.
   void userEdits.record(trackId, field, value, editAt)

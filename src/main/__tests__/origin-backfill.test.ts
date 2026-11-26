@@ -318,7 +318,7 @@ describe('logs and writes', () => {
     assert.match(ipc, /log: \(m\) => console\.warn\(m\)/)
     assert.match(ipc, /console\.warn\(`\[genre-filer\] sweep:/)
     assert.match(ipc, /origin-lookups-v3\.json/)
-    assert.match(src('main/index.ts'), /registerGenreFilerIpc\(ipc, \{[^\n]*persist: \(id, fields, fp\) => persistOverrideFields\(id, fields, fp\)/)
+    assert.match(src('main/index.ts'), /registerGenreFilerIpc\(ipc, \{[^\n]*persist: \(id, fields, fp, opts\) => persistOverrideFields\(id, fields, fp, opts\)/)
     for (const f of ['main/genre-filer.ts', 'main/ipc/genre-filer-ipc.ts', 'main/origin-lookup.ts']) assert.ok(!/library\.json/.test(src(f)), f)
   })
 

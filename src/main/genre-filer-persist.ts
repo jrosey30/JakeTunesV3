@@ -20,7 +20,8 @@ import type { JakeEditLookup } from './jake-edits-guard.ts'
 import type { ProvenanceDoc } from './genre-provenance.ts'
 
 export interface GuardedPersistHost {
-  persist(trackId: number, fields: Record<string, string>, fingerprint: string): Promise<void>
+  /** `writtenByJake` on his own write: the override writer never holds it (Brief 266). */
+  persist(trackId: number, fields: Record<string, string>, fingerprint: string, opts?: { writtenByJake?: boolean }): Promise<void>
   /** His edit into the journal. Required: a write he directed is always journaled. */
   recordEdit(trackId: number, field: string, value: string, at: number): Promise<void>
   updateProvenance(mutate: (doc: ProvenanceDoc) => void): Promise<void>
@@ -53,7 +54,8 @@ export async function persistGuarded(h: GuardedPersistHost, t: FilerTrack, wante
   if (held.length) h.log(`[genre-filer] ${t.id}: ${held.join(', ')} kept as Jake set it`)
   for (const f of held) h.refused.add(t.id, f, wanted[f])
   if (Object.keys(fields).length === 0) return {}
-  await h.persist(t.id, fields, fp)
+  // His own write says so, so the override writer never holds it while his records can't be read (Brief 266).
+  await h.persist(t.id, fields, fp, writer.by === 'jake' ? { writtenByJake: true } : undefined)
   if (fields.genre === undefined || !why) return fields
   const at = new Date().toISOString()
   // His choice (a check-list File, a ruling) is journaled like a Get Info

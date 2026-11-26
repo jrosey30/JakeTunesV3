@@ -36,6 +36,7 @@
  */
 import { copyFile, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { readUserEditsJournalStrict } from './user-edits-sync.ts'
 
 export type FilerRole = 'hub' | 'replica'
 
@@ -85,6 +86,18 @@ export function stripReplicaGenres(
   return { next, stripped, kept }
 }
 
+/**
+ * His journaled genre per song id, strictly (Brief 266, suspect 7): a missing
+ * journal is none (a fresh install), one that exists and can't be read throws.
+ * The repair removes genres, so "unreadable" must never read as "he set none".
+ */
+export async function journalGenresStrict(userData: string): Promise<Map<string, { v: string; at: number; dur?: number }>> {
+  const out = new Map<string, { v: string; at: number; dur?: number }>()
+  const doc = await readUserEditsJournalStrict(userData)
+  for (const [id, f] of Object.entries(doc?.edits ?? {})) if (f.genre) out.set(id, { v: f.genre.v, at: f.genre.at, dur: f.genre.dur })
+  return out
+}
+
 export const REPLICA_REPAIR_MARKER = 'replica-genre-repair.json'
 export const REPLICA_REPAIR_ID = 'replica-genres-follow-hub-2026-10-29'
 
@@ -94,7 +107,7 @@ export interface ReplicaRepairDeps {
   flushOverrides?(): Promise<void>
   /** the app's own serialized override writer (writeOverridesSerialized) */
   updateOverrides(mutate: (cur: Record<string, unknown>) => Record<string, unknown>): Promise<void>
-  /** this replica's journaled genre per song id (user-edits.json) */
+  /** this replica's journaled genre per song id (user-edits.json), read strictly: throws when the journal exists and can't be read */
   journalGenres(): Promise<Map<string, { v: string }>>
   log?(msg: string): void
   now?(): Date
@@ -111,6 +124,14 @@ export async function runReplicaGenreRepair(deps: ReplicaRepairDeps): Promise<Re
   } catch { /* never ran */ }
   const log = (s: string): void => deps.log?.(`[genre-replica] ${s}`)
   const now = (deps.now ?? (() => new Date()))()
+  // His journal first, strictly (Brief 266, suspect 7): one that can't be read
+  // is never "he set no genres here". Nothing is stripped and no marker is
+  // written, so the repair runs at a later launch once it reads.
+  let journal: Map<string, { v: string }>
+  try { journal = await deps.journalGenres() } catch (err) {
+    log(`his edit journal can't be read (${err instanceof Error ? err.message : String(err)}); repair not run, nothing changed`)
+    return { ran: false, stripped: 0, kept: 0 }
+  }
   await deps.flushOverrides?.()
   const src = join(deps.userData, 'metadata-overrides.json')
   const backup = `${src}.bak-replica-genres-${now.toISOString().replace(/[-:]/g, '').replace(/\..*/, '')}`
@@ -123,7 +144,6 @@ export async function runReplicaGenreRepair(deps: ReplicaRepairDeps): Promise<Re
     await writeFile(markerPath, JSON.stringify({ id: REPLICA_REPAIR_ID, at: now.toISOString(), stripped: 0, kept: 0 }, null, 2))
     return { ran: true, stripped: 0, kept: 0 }
   }
-  const journal = await deps.journalGenres()
   let stripped = 0
   let kept = 0
   await deps.updateOverrides((cur) => {

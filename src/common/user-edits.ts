@@ -103,18 +103,29 @@ const isTime = (n: unknown): n is number => typeof n === 'number' && Number.isFi
 
 /** The journal, or null when `raw` is not one. Bad entries are dropped, never guessed. */
 export function parseUserEdits(raw: unknown): UserEditsDoc | null {
+  return parseUserEditsCounted(raw)?.doc ?? null
+}
+
+/**
+ * parseUserEdits, also saying how many entries it dropped (a song whose fields
+ * aren't an object, a field that isn't a user field, an edit with no value or
+ * time). The strict reader refuses a journal that dropped any: a dropped entry
+ * may be his, and a writer must never read it as "nothing of his" (Brief 266).
+ */
+export function parseUserEditsCounted(raw: unknown): { doc: UserEditsDoc; dropped: number } | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const o = raw as Record<string, unknown>
   if (o.version !== USER_EDITS_VERSION || !isTime(o.since)) return null
   const rawEdits = o.edits
   if (!rawEdits || typeof rawEdits !== 'object' || Array.isArray(rawEdits)) return null
   const edits: UserEditsDoc['edits'] = {}
+  let dropped = 0
   for (const [id, fields] of Object.entries(rawEdits as Record<string, unknown>)) {
-    if (!id || !fields || typeof fields !== 'object' || Array.isArray(fields)) continue
+    if (!id || !fields || typeof fields !== 'object' || Array.isArray(fields)) { dropped++; continue }
     for (const [field, e] of Object.entries(fields as Record<string, unknown>)) {
-      if (!isUserEditField(field) || !e || typeof e !== 'object') continue
+      if (!isUserEditField(field) || !e || typeof e !== 'object') { dropped++; continue }
       const r = e as Record<string, unknown>
-      if (typeof r.v !== 'string' || !isTime(r.at)) continue
+      if (typeof r.v !== 'string' || !isTime(r.at)) { dropped++; continue }
       const out: UserEdit = { v: r.v, at: r.at }
       if (isTime(r.dur)) out.dur = r.dur
       if (typeof r.from === 'string' && r.from) out.from = r.from
@@ -123,7 +134,7 @@ export function parseUserEdits(raw: unknown): UserEditsDoc | null {
       ;(edits[id] ??= {})[field] = out
     }
   }
-  return { version: USER_EDITS_VERSION, since: o.since, edits }
+  return { doc: { version: USER_EDITS_VERSION, since: o.since, edits }, dropped }
 }
 
 export function getUserEdit(doc: UserEditsDoc | null | undefined, id: string, field: string): UserEdit | undefined {

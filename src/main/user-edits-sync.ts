@@ -44,7 +44,7 @@ import { withCompanionInit } from './hub-companion.ts'
 import { HUB_CATALOG_FIELDS, HUB_DETAIL_FIELDS, type HubCatalogPayload } from '../common/hub-catalog-merge.ts'
 import {
   USER_EDITS_FILE, USER_EDITS_HUB_CACHE_FILE, USER_EDITS_PATH,
-  PHONE_STAR_CAP, PHONE_UNSTAR_CAP, emptyUserEdits, isUserEditField, parseUserEdits, pinPendingEdits, planHubAbsorb, planPhoneStars, planPhoneUnstars, recordUserEdit,
+  PHONE_STAR_CAP, PHONE_UNSTAR_CAP, emptyUserEdits, isUserEditField, parseUserEdits, parseUserEditsCounted, pinPendingEdits, planHubAbsorb, planPhoneStars, planPhoneUnstars, recordUserEdit,
   replicaLiveUpdates, replicaOverlay, rowFingerprint, seedStarsFromOverrides,
   type RowLike, type StarEventsLike, type UserEditsDoc,
 } from '../common/user-edits.ts'
@@ -444,8 +444,9 @@ export function createUserEditsSync(host: UserEditsHost): UserEditsSync {
 
 /**
  * The journal, strictly, for a writer that must not guess (common/jake-edits-stay.ts):
- * missing → null ("no edits yet"); unreadable or not a journal → throws, so an
- * automatic writer holds everything back instead of reading it as "nothing of his".
+ * missing → null ("no edits yet"); unreadable, not a journal, or holding any entry
+ * that doesn't read → throws, so an automatic writer holds everything back instead
+ * of reading it as "nothing of his".
  */
 export async function readUserEditsJournalStrict(dir: string, read: (p: string) => Promise<string> = (p) => readFile(p, 'utf8')): Promise<UserEditsDoc | null> {
   let text: string
@@ -453,9 +454,11 @@ export async function readUserEditsJournalStrict(dir: string, read: (p: string) 
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null
     throw err
   }
-  const doc = parseUserEdits(JSON.parse(text))
-  if (!doc) throw new Error('the edit journal is not readable')
-  return doc
+  const parsed = parseUserEditsCounted(JSON.parse(text))
+  if (!parsed) throw new Error('the edit journal is not readable')
+  // An entry that doesn't read may be his: never "nothing of his" (Brief 266, suspect 7).
+  if (parsed.dropped > 0) throw new Error(`the edit journal has ${parsed.dropped} entr${parsed.dropped === 1 ? 'y' : 'ies'} that can't be read`)
+  return parsed.doc
 }
 
 /** The journal, read-only (the genre filer reads who set a genre). Never
