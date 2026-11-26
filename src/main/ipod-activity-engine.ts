@@ -1179,6 +1179,10 @@ async function runActivitySyncHolding(
   const keptOldCopies: string[] = []
   /** The ones a wave actually replaced (counted as one out and one in, like any changed song). */
   const replacedIds = new Set<number>()
+  /** Files of songs leaving the iPod taken off before the replacement waves (Brief 266 1e). */
+  let leftEarly = 0
+  /** The songs leaving were already taken off before the waves: the removal step only sweeps. */
+  let removedEarly = false
   let swap: SwapPlan | null = null
   let fullReason: string | null = null
   const stayRows = new Map<number, SwapManifestRow>()
@@ -1539,7 +1543,7 @@ async function runActivitySyncHolding(
     console.error(`activity-sync: swap stopped — took ${removed} file(s) copied this run back off; the card's catalog names ${cataloguedAbs.size} song(s), all on it${restored ? ' (the last sync\'s seal is back)' : ''}. ${why.error}`)
     // "Nothing was deleted" (the no-room refusal's words) only when this run took no file off the
     // card: none here, and no wave released an original before the stop (Brief 266).
-    const said = removed > 0 || replacedIds.size > 0
+    const said = removed > 0 || replacedIds.size > 0 || leftEarly > 0
       ? (why.error || '').replace(/\s*Nothing was deleted\./g, '')
       : why.error
     const error = [said || 'Sync stopped.', swapKeptNote(cataloguedAbs.size, restored)].join(' ')
@@ -2063,6 +2067,62 @@ async function runActivitySyncHolding(
       }
       return all
     }
+    // Songs leaving the iPod go first (Brief 266 1e). On a full card a replacement has no room
+    // beside its original until they are gone; they used to go only after the waves, so a full
+    // iPod stopped halfway. Same order as the removal step below: a song list of only the songs
+    // that stay (each one still to be replaced at its original, untouched) is written and proven
+    // first; then only the leaving songs' own files go, never one that list names, never a file
+    // a staying or replaced song uses. A song list that can't be read back removes nothing here.
+    // Only songs no longer on the list: a song that stays with a new copy made later (a changed
+    // identity, a new path without a fingerprint) keeps its file until the removal step below.
+    const onList = new Set(candidates.map((c) => c.id))
+    const goneRows = leavingRows.filter((r) => !onList.has(r.id))
+    if (goneRows.length > 0) {
+      const out = goneRows.length
+      host.sendProgress({ phase: 'copy', current: 0, total: out, mode, title: `Removing ${out.toLocaleString()} song${out === 1 ? '' : 's'} leaving the iPod…` })
+      const stayIds = new Set<number>([...keepIds, ...replaceIds].filter((id) => current.has(id)))
+      const atOriginal = (on: boolean): void => {
+        for (const p of pending) {
+          const t = tracks.find((x) => Number(x.id) === p.id)
+          if (t) t.path = on ? p.row.destPath : colonOf(p.e.dstToCopy)
+          dstById.set(p.id, on ? p.oldAbs : p.e.dstToCopy)
+        }
+      }
+      atOriginal(true)
+      const interim = await putCatalog(
+        tracks.filter((t) => stayIds.has(Number(t.id))),
+        playlists.map((p) => ({ ...p, trackIds: (Array.isArray(p.trackIds) ? p.trackIds : []).filter((id) => stayIds.has(Number(id))) })).filter((p) => p.trackIds.length > 0),
+        'interim', new Map([...stayIds].map((id) => [id, current.get(id)!.size])))
+      atOriginal(false)
+      if (!interim.ok) {
+        cataloguedAbs = await listedOnCard()
+        return swapStop(interim.result)
+      }
+      const db = await readFile(join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')).catch(() => null)
+      const listed = db ? catalogSizesByPath(db) : null
+      if (!listed) {
+        console.warn('activity-sync: the song list on the iPod couldn\'t be read back — the songs leaving stay on it until the removal step')
+      } else {
+        const named = new Set([...listed.keys()].map((c) => absOf(c).toLowerCase()))
+        const inUse = new Set([...keepAbs, ...pending.flatMap((p) => [p.oldAbs, p.e.dstToCopy])].map((a) => a.toLowerCase()))
+        for (const r of goneRows) {
+          const abs = absOf(r.destPath)
+          if (named.has(abs.toLowerCase()) || inUse.has(abs.toLowerCase())) continue
+          try {
+            await unlink(abs)
+            leftEarly++
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') console.warn(`activity-sync: ${abs} left for the removal step:`, err instanceof Error ? err.message : err)
+          }
+          current.delete(r.id)
+        }
+        // Songs still on the list that leave their old file (re-copied later) need the removal
+        // step's own song list; with none, that step only sweeps.
+        removedEarly = goneRows.length === leavingRows.length
+        console.log(`activity-sync: took ${leftEarly} song(s) leaving the iPod off before replacing ${pending.length}`)
+      }
+      cataloguedAbs = await listedOnCard()
+    }
     const total = pending.length
     let replaced = 0
     while (pending.length > 0) {
@@ -2212,7 +2272,7 @@ async function runActivitySyncHolding(
       return fail({ copied: 0, target, error: backupRefusal(backup.reason) })
     }
   }
-  if (swap && swap.leave.length > 0) {
+  if (swap && swap.leave.length > 0 && !removedEarly) {
     // First the card gets a catalog of only the songs that stay. From then
     // on, deleting a leaving song can't leave the iPod pointing at nothing.
     const out = swap.leave.length

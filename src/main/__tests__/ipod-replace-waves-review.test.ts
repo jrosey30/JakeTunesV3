@@ -18,12 +18,19 @@
  *      the stop deletes nothing (it used to take every song off the card).
  *   J (Brief 266): a new extension, and the wave's song list lands but fails its proof: the
  *      old .m4a files are never deleted before a commit names their replacements.
+ *   K (Brief 266 1e): a full iPod, songs taken off its list and the rest in a new format: the
+ *      songs leaving go first, so the replacements have room (they used to stall halfway).
+ *   L (Brief 266 1e): while that happens, no song that stays has its file deleted or moved
+ *      before the song list on the card names its new copy.
+ *   M (Brief 266 1e): a song that stays on the list but is copied again later (its identity
+ *      changed) is not one of the songs leaving: a stop in the waves leaves its file on the card.
  */
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { catalogSizesByPath, onCardBytes, waveReserveBytes } from '../ipod-replace-waves.ts'
@@ -76,10 +83,15 @@ function harness(name: string) {
   const tracks: Array<Record<string, unknown>> = []
   let root = '', lib = '', card = '', state = '', cache = ''
   let host: ActivitySyncHost
-  s.sync = () => runActivitySync(host, {
-    tracks: tracks.map((t) => ({ ...t })), playlists: [{ name: 'Nano', trackIds: tracks.map((t) => t.id) }],
-    requestedTarget: N, listOnly: true, ipodName: 'Nano', convertOptions: { enabled: true, targetKbps: 256, codec: s.codec },
-  })
+  /** The iPod's list, when songs were taken off it (null = all N). */
+  s.only = null as Set<number> | null
+  s.sync = () => {
+    const list = tracks.filter((t) => !s.only || s.only.has(Number(t.id)))
+    return runActivitySync(host, {
+      tracks: list.map((t) => ({ ...t })), playlists: [{ name: 'Nano', trackIds: list.map((t) => t.id) }],
+      requestedTarget: list.length, listOnly: true, ipodName: 'Nano', convertOptions: { enabled: true, targetKbps: 256, codec: s.codec },
+    })
+  }
   s.roomFor = async (n: number, bytes: number) => {
     const db = (await stat(join(card, 'iPod_Control', 'iTunes', 'iTunesDB'))).size
     return waveReserveBytes(Math.ceil(db * 1.5), 0) + n * onCardBytes(bytes, 4096) + 2048
@@ -139,6 +151,20 @@ function harness(name: string) {
       cardCapacityBytes: async () => 8_000_000,
     }
   }
+  /** Bytes the card's files take, whole clusters, hidden files and the song list included. */
+  s.cardUsed = async () => {
+    let used = 0
+    const walk = async (d: string): Promise<void> => {
+      for (const e of await readdir(d, { withFileTypes: true })) {
+        const p = join(d, e.name)
+        if (e.isDirectory()) await walk(p)
+        else used += onCardBytes((await stat(p)).size, 4096)
+      }
+    }
+    await walk(join(card, 'iPod_Control'))
+    return used
+  }
+  s.tracks = tracks
   s.paths = () => ({ card, state })
   s.after = () => rm(root, { recursive: true, force: true })
   return s
@@ -445,5 +471,99 @@ describe('J (Brief 266): a new extension, and the wave\'s song list lands on the
     assert.equal(h.events.some((t: string) => /^Wiping/.test(t)), false, 'the next sync wiped the iPod')
     assert.deepEqual(await h.catalogMissing(), [])
     assert.equal(r2.ok, true, r2.error)
+  })
+})
+
+/** A full card: free space is what its files leave of a fixed capacity, measured on the card itself. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fillCard(h: any, slackBytes: number): Promise<void> {
+  const capacity = (await h.cardUsed()) + (await h.roomFor(0, 0)) + slackBytes
+  h.freeFn = async () => Math.max(0, capacity - (await h.cardUsed()))
+}
+
+describe('K (Brief 266 1e): a full iPod, four songs taken off its list, the other six in a new format', () => {
+  const h = harness('b266-k-')
+  before(() => h.before()); after(() => h.after())
+  it('first sync', async () => { const r = await h.sync(); assert.equal(r.ok, true, r.error) })
+  it('the leaving songs go first, so every replacement fits and the sync finishes', async () => {
+    // Not room for even one new copy beside its original until the leaving songs are gone.
+    await fillCard(h, 100_000)
+    h.only = new Set([1, 2, 3, 4, 5, 6])
+    h.codec = 'mp3'; h.mirrorBytes = 300_000; await h.dropLanded()
+    h.events.length = 0; h.wavesSeen = 0
+    const r = await h.sync()
+    assert.equal(r.ok, true, r.error)
+    assert.equal(r.mode, 'swap', String(r.fullReason))
+    assert.equal(h.events.some((t: string) => /^Wiping/.test(t)), false, 'never a wipe')
+    assert.ok(h.wavesSeen >= 2, `replaced in waves (${h.wavesSeen})`)
+    const files = await h.cardFiles()
+    assert.equal(files.size, 6, `six songs on the card: ${[...files.keys()].join(', ')}`)
+    for (const [p, size] of files) { assert.match(p, /\.mp3$/); assert.equal(size, 300_000) }
+    assert.deepEqual(await h.catalogMissing(), [])
+    const sizes = catalogSizesByPath(await readFile(join(h.paths().card, 'iPod_Control', 'iTunes', 'iTunesDB')))!
+    assert.equal(sizes.size, 6)
+  })
+})
+
+describe('L (Brief 266 1e): a song that stays keeps its file until the song list names its new copy', () => {
+  const h = harness('b266-l-')
+  before(() => h.before()); after(() => { renameHook = null; unlinkHook = null; return h.after() })
+  it('first sync', async () => { const r = await h.sync(); assert.equal(r.ok, true, r.error) })
+  it('removing the leaving songs never touches a staying song\'s file; each original goes only after its commit', async () => {
+    const { card } = h.paths()
+    const onCard = await h.cardFiles()
+    // The songs that stay (ids 1-6), by their card file.
+    const stayOld = new Set<string>()
+    for (const k of onCard.keys()) { const m = /M(\d+)\.m4a$/.exec(k); if (m && Number(m[1]) <= 6) stayOld.add(join(card, 'iPod_Control', 'Music', k)) }
+    assert.equal(stayOld.size, 6, [...onCard.keys()].join(', '))
+    const named = (abs: string): boolean => {
+      const listed = catalogSizesByPath(readFileSync(join(card, 'iPod_Control', 'iTunes', 'iTunesDB')))
+      const colon = (':' + abs.slice(card.length + 1).split('/').join(':')).toLowerCase()
+      return !!listed && [...listed.keys()].some((p) => p.toLowerCase() === colon)
+    }
+    const bad: string[] = []
+    const touched = (p: string, how: string): void => {
+      if (!stayOld.has(p)) return
+      const mp3 = p.replace(/\.m4a$/, '.mp3')
+      if (!named(mp3)) bad.push(`${how} ${p} before the song list named its new copy`)
+      if (named(p)) bad.push(`${how} ${p} while the song list still names it`)
+    }
+    unlinkHook = (p) => touched(p, 'deleted')
+    renameHook = (a) => touched(a, 'moved')
+    await fillCard(h, 100_000)
+    h.only = new Set([1, 2, 3, 4, 5, 6])
+    h.codec = 'mp3'; h.mirrorBytes = 300_000; await h.dropLanded()
+    const r = await h.sync()
+    unlinkHook = null; renameHook = null
+    assert.equal(r.ok, true, r.error)
+    assert.deepEqual(bad, [])
+    assert.deepEqual(await h.catalogMissing(), [])
+    assert.equal((await h.cardFiles()).size, 6)
+  })
+})
+
+describe('M (Brief 266 1e): a song still on the list whose file is re-copied later is not removed before the waves', () => {
+  const h = harness('b266-m-')
+  before(() => h.before()); after(() => h.after())
+  it('first sync', async () => { const r = await h.sync(); assert.equal(r.ok, true, r.error) })
+  it('the waves stop for room: the songs leaving are gone, the re-copied song keeps its file', async () => {
+    const onCard = await h.cardFiles()
+    const seven = [...onCard.keys()].find((k) => /M7\.m4a$/.test(k))!
+    assert.ok(seven)
+    // Song 7 is now a different recording: same id, new identity, so it is copied again later.
+    const t7 = h.tracks.find((t: Record<string, unknown>) => t.id === 7)
+    t7.audioFingerprint = `sha1:${'f'.repeat(16)}|200000`
+    // Room for no replacement even after the three songs leaving are gone.
+    await fillCard(h, 100_000 - 3 * onCardBytes(250_000, 4096))
+    h.only = new Set([1, 2, 3, 4, 5, 6, 7])
+    h.codec = 'mp3'; h.mirrorBytes = 300_000; await h.dropLanded()
+    const r = await h.sync()
+    assert.equal(r.ok, false)
+    assert.match(String(r.error), /isn't room/)
+    assert.doesNotMatch(String(r.error), /Nothing was deleted/)
+    const after = await h.cardFiles()
+    assert.ok(after.has(seven), 'song 7\'s file is still on the card')
+    for (let id = 8; id <= 10; id++) assert.ok(![...after.keys()].some((k) => new RegExp(`M${id}\\.m4a$`).test(k)), `song ${id} left`)
+    assert.deepEqual(await h.catalogMissing(), [])
   })
 })
