@@ -7,6 +7,7 @@
  * ↑/↓ move the highlight, Enter picks, Esc or a click outside cancels.
  */
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { nameKey } from '../../common/fold-text.ts'
 import { useEscape } from '../hooks/useKeyboard'
 import '../styles/synced-picks.css'
@@ -66,7 +67,10 @@ export default function PicksPicker({ title, sub, placeholder, items, emptyText,
     }
   }
 
-  return (
+  // On the page's body, never inside the shelf: the shelf's own motion makes it
+  // a layer of its own, and a sheet inside it was drawn under the album grid
+  // and dimmed only the shelf (Jake, 2026-11-26: "i mean are you serious").
+  return createPortal(
     <div className="picks-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="picks-sheet" role="dialog" aria-modal="true" aria-label={title}>
         <div className="picks-sheet-head">
@@ -117,6 +121,7 @@ export default function PicksPicker({ title, sub, placeholder, items, emptyText,
           <button type="button" className="ui-btn ui-btn--sm" onClick={onClose}>Cancel</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
