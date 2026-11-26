@@ -11,7 +11,7 @@ import { promisify } from 'node:util'
 import { readFile } from 'node:fs/promises'
 import {
   AAC_MIRROR_TOKEN, AacConvertFailedError, AacEncoderMissingError, aacMirrorCacheName, afconvertAacArgs,
-  afconvertListsAacInM4af, createAfconvertCheck, isAacConvertFailed, isAacEncoderMissing, pcmDecodeArgs, probeAfconvert,
+  afconvertListsAacInM4af, createAfconvertCheck, isAacConvertFailed, isAacEncoderMissing, isTransientFailure, pcmDecodeArgs, probeAfconvert,
 } from '../aac-mirror-recipe.ts'
 import { AAC_ENCODER_SLOW, NO_AAC_ENCODER } from '../ipod-activity-engine.ts'
 
@@ -133,7 +133,7 @@ describe('the refusal', () => {
   it('both engines skip and name a refused song instead of copying the master', async () => {
     const sync = await readFile(new URL('../sync-engine/index.ts', import.meta.url), 'utf-8')
     const act = await readFile(new URL('../ipod-activity-engine.ts', import.meta.url), 'utf-8')
-    assert.match(sync, /if \(isAacEncoderMissing\(err\) \|\| isAacConvertFailed\(err\)\) \{[\s\S]{0,300}copyErrors\+\+[\s\S]{0,200}continue/)
+    assert.match(sync, /if \(isAacEncoderMissing\(err\) \|\| isAacConvertFailed\(err\)\) \{[\s\S]{0,1500}copyErrors\+\+[\s\S]{0,200}continue/)
     assert.match(act, /if \(isAacEncoderMissing\(err\)\) \{[\s\S]{0,300}kind: 'no-encoder', why: slow \? AAC_ENCODER_SLOW : NO_AAC_ENCODER/)
     assert.match(sync, /notConverted\.push\(/)
     assert.match(sync, /\.\.\.\(notConverted\.length > 0 \? \{ notConverted \} : \{\}\)/)
@@ -146,7 +146,7 @@ describe('the refusal', () => {
     const reserveAt = act.indexOf('skipUnconvertible(title, String(track.artist')
     assert.ok(stopAt > 0 && reserveAt > stopAt, 'the no-encoder stop comes before the damaged-file reserve path')
     assert.match(act.slice(stopAt, stopAt + 300), /return fail\(\{ copied: 0, target, error: `\$\{out\.why\}/)
-    assert.match(act, /if \(out\.kind === 'no-encoder'\) lateWhy\.set\(e\.id, out\.why\)/)
+    assert.match(act, /if \(out\.kind === 'no-encoder' \|\| out\.kind === 'convert-failed'\) lateWhy\.set\(e\.id, out\.why\)/)
   })
 
   it('a check that timed out is said as a timeout, never "isn\'t available" (Brief 266)', async () => {
@@ -176,7 +176,7 @@ describe('one song whose conversion fails (Brief 266)', () => {
   })
   it('the full-library sync leaves it off and names it, like a refused one', async () => {
     const sync = await readFile(new URL('../sync-engine/index.ts', import.meta.url), 'utf-8')
-    assert.match(sync, /if \(isAacEncoderMissing\(err\) \|\| isAacConvertFailed\(err\)\) \{[\s\S]{0,300}notConverted\.push\([\s\S]{0,200}copyErrors\+\+[\s\S]{0,200}continue/)
+    assert.match(sync, /if \(isAacEncoderMissing\(err\) \|\| isAacConvertFailed\(err\)\) \{[\s\S]{0,1500}notConverted\.push\([\s\S]{0,200}copyErrors\+\+[\s\S]{0,200}continue/)
   })
 })
 
@@ -207,5 +207,18 @@ describe('the recipe (pinned)', () => {
   it('afconvert encodes AAC-LC, m4af, true CBR, max quality', () => {
     assert.deepEqual(afconvertAacArgs('x.wav', 'y.m4a', 256),
       ['x.wav', '-o', 'y.m4a', '-d', 'aac', '-f', 'm4af', '-b', '256000', '-q', '127', '-s', '0'])
+  })
+})
+
+describe('a failure that was the Mac\'s, not the file\'s (review of #519)', () => {
+  it('a killed or timed-out encoder, a full disk: transient', () => {
+    assert.equal(isTransientFailure(Object.assign(new Error('Command failed: ffmpeg'), { killed: true, signal: 'SIGTERM' })), true)
+    assert.equal(isTransientFailure(Object.assign(new Error('write'), { code: 'ENOSPC' })), true)
+    assert.equal(isTransientFailure(new Error('operation timed out')), true)
+    assert.equal(new AacConvertFailedError('/a.flac', Object.assign(new Error('x'), { killed: true })).transient, true)
+  })
+  it('a decoder that says the file is bad: not transient', () => {
+    assert.equal(isTransientFailure(Object.assign(new Error('Invalid data found when processing input'), { code: 1 })), false)
+    assert.equal(new AacConvertFailedError('/a.flac', new Error('afconvert exited 1')).transient, false)
   })
 })

@@ -89,12 +89,27 @@ export class AacEncoderMissingError extends Error {
  */
 export class AacConvertFailedError extends Error {
   readonly code = 'AAC_CONVERT_FAILED'
+  /** A timeout, a full disk, a killed encoder: the song isn't damaged and the next sync may manage it. */
+  readonly transient: boolean
   constructor(srcPath: string, cause: unknown) {
     const name = srcPath.split(/[\\/]/).pop()
     const detail = cause instanceof Error ? cause.message : String(cause)
     super(`"${name}" couldn't be converted to AAC for the iPod (${detail.slice(0, 160)})`)
     this.name = 'AacConvertFailedError'
+    this.transient = isTransientFailure(cause)
   }
+}
+
+/** Was this failure the Mac's (timed out, killed, out of space) rather than the file's? */
+export function isTransientFailure(cause: unknown): boolean {
+  const e = (cause && typeof cause === 'object' ? cause : {}) as { killed?: unknown; signal?: unknown; code?: unknown; message?: unknown }
+  if (e.killed || e.signal) return true
+  if (typeof e.code === 'string' && ['ETIMEDOUT', 'ENOSPC', 'EDQUOT', 'EMFILE', 'ENFILE', 'EAGAIN', 'EBUSY', 'EIO'].includes(e.code)) return true
+  return /timed? ?out|ENOSPC|no space left|disk full/i.test(String(e.message ?? cause ?? ''))
+}
+
+export function isAacConvertTransient(err: unknown): boolean {
+  return isAacConvertFailed(err) && (err as { transient?: unknown }).transient === true
 }
 
 export function isAacConvertFailed(err: unknown): boolean {

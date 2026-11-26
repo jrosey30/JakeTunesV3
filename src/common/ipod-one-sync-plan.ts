@@ -122,14 +122,20 @@ export function fullSyncLeftOffLine(r: {
   copyErrors?: number
   notConverted?: ReadonlyArray<NamedSong>
   notReplaced?: ReadonlyArray<NamedSong>
+  notUpdated?: ReadonlyArray<NamedSong>
 }): string | null {
   const conv = r.notConverted ?? []
   const kept = r.notReplaced ?? []
+  const stale = r.notUpdated ?? []
   const failed = Math.max(0, (r.copyErrors ?? 0) - conv.length)
   const lines: string[] = []
   if (conv.length > 0) {
     const one = conv.length === 1
     lines.push(namedList(conv, `${n(conv.length)} ${one ? 'song' : 'songs'} couldn’t be converted and ${one ? 'was' : 'were'} left off`))
+  }
+  if (stale.length > 0) {
+    const one = stale.length === 1
+    lines.push(namedList(stale, `${n(stale.length)} ${one ? 'song' : 'songs'} couldn’t be updated and kept ${one ? 'its' : 'their'} old copy on the iPod`))
   }
   if (failed > 0) lines.push(`${n(failed)} ${failed === 1 ? 'song' : 'songs'} couldn’t be copied.`)
   if (kept.length > 0) {
