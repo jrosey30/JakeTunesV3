@@ -48,6 +48,8 @@ export class JsonFileCache<T> {
   // it permanently. The user can resolve by quitting (no writes occur)
   // and re-trying after fixing the underlying disk/permission issue.
   private loadedAsErrorFallback = false
+  /** The last load fell back after an error (a file that exists and can't be read). Reset by each load. */
+  private lastLoadFailed = false
 
   // Brief 173: flush outcome bookkeeping. A background flush that fails
   // (or a write dropped by the error-fallback safety lock) used to be a
@@ -78,6 +80,7 @@ export class JsonFileCache<T> {
     if (this.loadPromise) return this.loadPromise
     this.loadPromise = (async () => {
       const path = this.pathFn()
+      this.lastLoadFailed = false
       try {
         const raw = await readFile(path, 'utf-8')
         this.cache = JSON.parse(raw) as T
@@ -94,11 +97,23 @@ export class JsonFileCache<T> {
           console.warn(`[state-cache:${this.label}] read failed (${code || 'parse'}), DISABLING writes to protect on-disk data:`, err instanceof Error ? err.message : err)
           this.cache = this.fallback()
           this.loadedAsErrorFallback = true
+          this.lastLoadFailed = true
         }
       }
       return this.cache!
     })()
     return this.loadPromise
+  }
+
+  /**
+   * .get() for a reader that must not guess (Brief 266, suspect 7): a missing
+   * file is the fallback ("none"), but a file that exists and couldn't be read
+   * throws instead of answering with the fallback. Re-read after .invalidate().
+   */
+  async getStrict(): Promise<T> {
+    const value = await this.get()
+    if (this.lastLoadFailed) throw new Error(`${this.label} could not be read`)
+    return value
   }
 
   /** Synchronous read — returns null if cache hasn't been warmed yet. */

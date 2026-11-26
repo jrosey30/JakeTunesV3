@@ -6,10 +6,11 @@
  */
 import { after, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createJakeEdits, createJakeNames, readJournalStrict } from '../jake-edits-guard.ts'
+import { createHeldForJake, createJakeEdits, createJakeNames, readJournalStrict } from '../jake-edits-guard.ts'
+import { JsonFileCache } from '../state-cache.ts'
 import { heldWhileRecordsUnreadable, LISTENING_COUNTER_FIELDS, mergeOverrideField } from '../override-merge.ts'
 import { journalGenresStrict, REPLICA_REPAIR_MARKER, runReplicaGenreRepair } from '../genre-replica.ts'
 import { emptyUserEdits, recordUserEdit, USER_EDITS_FILE } from '../../common/user-edits.ts'
@@ -118,5 +119,82 @@ describe('gap 2: the replica genre repair, his journal unreadable', () => {
   test('the app passes the strict reader (wiring)', () => {
     const ipc = readFileSync(join(import.meta.dirname, '..', 'ipc', 'genre-filer-ipc.ts'), 'utf8')
     assert.match(ipc, /journalGenres: \(\) => journalGenresStrict\(app\.getPath\('userData'\)\), log/)
+  })
+})
+
+describe('gap 3: a journal entry that does not read, and an unreadable phone file', () => {
+  const journalWith = (bad: unknown): string => JSON.stringify({ version: 1, since: 1, edits: {
+    '21': { title: { v: 'Peg', at: 5_000, dur: 237_000 } },
+    '22': bad,
+  } })
+  test('one entry of the wrong shape: the strict reader throws, never "the rest is all of his"', async () => {
+    for (const bad of [{ genre: { v: 7, at: 5_000 } }, { genre: { v: 'Rock' } }, 'Rock', [], { bpm: { v: '120', at: 5_000 } }]) {
+      const dir = freshDir()
+      writeFileSync(join(dir, USER_EDITS_FILE), journalWith(bad))
+      await assert.rejects(readJournalStrict(dir), /can't be read/, JSON.stringify(bad))
+    }
+    const dir = freshDir()
+    writeFileSync(join(dir, USER_EDITS_FILE), journalWith({ genre: { v: 'Rock', at: 5_000 } }))
+    assert.equal((await readJournalStrict(dir))?.edits['22']?.genre?.v, 'Rock', 'a whole journal reads')
+  })
+  test('…and so every automatic writer holds: the merge, Cynthia\'s guard, the replica repair', async () => {
+    const dir = freshDir()
+    writeFileSync(join(dir, USER_EDITS_FILE), journalWith({ genre: { v: 'Rock' } }))
+    const o = hisEntry()
+    assert.equal(await automaticWrite(dir, o, { bpm: '96' }, NEW_FP), false)
+    assert.deepEqual(o, hisEntry())
+    const held = createHeldForJake(createJakeEdits({ readJournal: () => readJournalStrict(dir), readPhone: async () => null }), () => {})
+    assert.equal(await held(22, 'genre', 'Classic Rock'), true)
+    await assert.rejects(journalGenresStrict(dir))
+  })
+
+  const PHONE = 'mobile-metadata-overrides.json'
+  const phoneCache = (dir: string) => new JsonFileCache<Record<string, { fp?: string; fields?: Record<string, string> }>>(() => join(dir, PHONE), () => ({}), 'mobile-metadata-overrides')
+  test('the phone\'s file exists and does not parse: getStrict throws, and the automatic write is held', async () => {
+    const dir = freshDir()
+    writeFileSync(join(dir, PHONE), '{ "21": { "fp": "track 03|ste')
+    const cache = phoneCache(dir)
+    await assert.rejects(cache.getStrict(), /could not be read/)
+    assert.deepEqual(await cache.get(), {}, 'the lenient read still answers (for display)')
+    const o = hisEntry()
+    assert.equal(await automaticWrite(dir, o, { bpm: '96' }, NEW_FP, () => cache.getStrict()), false)
+    assert.deepEqual(o, hisEntry())
+    const held = createHeldForJake(createJakeEdits({ readJournal: () => readJournalStrict(dir), readPhone: () => cache.getStrict() }), () => {})
+    assert.equal(await held(21, 'genre', 'Classic Rock'), true, 'Cynthia and the genre filer hold too')
+  })
+  test('the phone\'s file exists and can\'t be opened (permissions): the same', { skip: process.getuid?.() === 0 ? 'root reads anything' : false }, async () => {
+    const dir = freshDir()
+    writeFileSync(join(dir, PHONE), '{}')
+    chmodSync(join(dir, PHONE), 0o000)
+    try {
+      await assert.rejects(phoneCache(dir).getStrict(), /could not be read/)
+    } finally { chmodSync(join(dir, PHONE), 0o644) }
+  })
+  test('no phone file at all (a fresh install): none, and writes go ahead', async () => {
+    const dir = freshDir()
+    const cache = phoneCache(dir)
+    assert.deepEqual(await cache.getStrict(), {})
+    const o: Record<string, unknown> = {}
+    assert.equal(await automaticWrite(dir, o, { bpm: '96' }, NEW_FP, () => cache.getStrict()), true)
+    assert.deepEqual(o['21'], { fp: NEW_FP, fields: { bpm: '96' } })
+  })
+  test('a phone file that reads again (the sync pulled a good copy, invalidate): writes go ahead', async () => {
+    const dir = freshDir()
+    writeFileSync(join(dir, PHONE), '{ torn')
+    const cache = phoneCache(dir)
+    await assert.rejects(cache.getStrict())
+    writeFileSync(join(dir, PHONE), JSON.stringify({ '21': { fp: OLD_FP, fields: { title: 'Peg' } } }))
+    cache.invalidate()
+    const o = hisEntry()
+    assert.equal(await automaticWrite(dir, o, { bpm: '96' }, NEW_FP, () => cache.getStrict()), true)
+    assert.deepEqual(o['21'], { fp: NEW_FP, fields: { genre: 'Yacht Rock', year: '1977', rating: '100', bpm: '96' } }, 'his phone title is the evidence: merged, nothing lost')
+  })
+  test('the app reads the phone strictly for every writer that asks his records (wiring)', () => {
+    const index = readFileSync(join(import.meta.dirname, '..', 'index.ts'), 'utf8')
+    assert.equal((index.match(/readPhone: \(\) => mobileMetadataOverridesCache\.getStrict\(\)/g) || []).length, 2)
+    assert.equal((index.match(/readPhone: \(\) => mobileMetadataOverridesCache\.get\(\)/g) || []).length, 0)
+    assert.match(index, /phoneOverrides: \(\) => mobileMetadataOverridesCache\.getStrict\(\),/)
+    const guard = readFileSync(join(import.meta.dirname, '..', 'jake-edits-guard.ts'), 'utf8')
+    assert.doesNotMatch(guard, /readPhone\(\)\.catch/, 'an unreadable phone file is never "no phone edits"')
   })
 })

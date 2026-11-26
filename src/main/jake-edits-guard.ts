@@ -6,7 +6,9 @@
  *     file is "no edits yet", but a file that can't be read or parsed holds
  *     every automatic write back (never guess that a field isn't his);
  *   - the phone's Get Info edits, the copy the desktop already reads
- *     (mobile-metadata-overrides.json, fingerprint-matched per song).
+ *     (mobile-metadata-overrides.json, fingerprint-matched per song), read the
+ *     same way: missing is none, a file that can't be read holds every
+ *     automatic write (readPhone throws; state-cache.ts getStrict).
  *
  * Read once per sweep: a lookup is reused for TTL_MS, so a pass over hundreds
  * of songs reads the files once.
@@ -47,7 +49,7 @@ export function createJakeEdits(o: { readJournal: () => Promise<UserEditsDoc | n
     lookup: async (): Promise<JakeEditLookup> => {
       if (cached && now() - cached.at < (o.ttlMs ?? TTL_MS)) return cached.look
       const journal = await o.readJournal()   // throws on a corrupt journal: the caller holds everything
-      const phone = await o.readPhone().catch(() => null)
+      const phone = await o.readPhone()       // throws when the phone's file exists and can't be read: the same (Brief 266)
       cached = { at: now(), look: lookupFrom(journal, phone) }
       return cached.look
     },

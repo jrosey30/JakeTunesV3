@@ -931,7 +931,7 @@ function warnHeldWhileUnreadable(trackId: number, fields: string[]): void {
 }
 // The titles and artists Jake set for an id (journal + phone): the only evidence that
 // lets an entry keep its fields across a fingerprint change (override-merge.ts isAnotherSong).
-const jakeNamesRead = createJakeNames(createJakeEdits({ readJournal: () => readJournalStrict(app.getPath('userData')), readPhone: () => mobileMetadataOverridesCache.get(), ttlMs: 5_000 }))
+const jakeNamesRead = createJakeNames(createJakeEdits({ readJournal: () => readJournalStrict(app.getPath('userData')), readPhone: () => mobileMetadataOverridesCache.getStrict(), ttlMs: 5_000 }))
 // In call order, so two quick saves of one field still reach the serialized writer in the order they were made.
 let jakeNamesChain: Promise<unknown> = Promise.resolve()
 function jakeNamesFor(trackId: number, fingerprint?: string): Promise<{ title: string[]; artist: string[]; unreadable?: true }> {
@@ -6983,7 +6983,7 @@ function cynthiaGetAlbumsSnapshot(): Map<string, { label: string; tracks: Cynthi
 }
 
 // His records of hand (the journal, strictly, and the phone's Get Info), read once per sweep (jake-edits-guard.ts).
-const cynthiaHeldForJake = createHeldForJake(createJakeEdits({ readJournal: () => readJournalStrict(app.getPath('userData')), readPhone: () => mobileMetadataOverridesCache.get() }))
+const cynthiaHeldForJake = createHeldForJake(createJakeEdits({ readJournal: () => readJournalStrict(app.getPath('userData')), readPhone: () => mobileMetadataOverridesCache.getStrict() }))
 function buildCynthiaSweepHooks() {
   return {
     getAlbums: cynthiaGetAlbumsSnapshot,
@@ -9071,7 +9071,7 @@ const sweepFriendImports = async (): Promise<number> => ((await isHomeminiPlayba
  */
 // Taste ledger + weights extracted to ipc/taste-ipc.ts (6.0 Phase 1).
 registerTasteIpc(ipc)
-registerGenreFilerIpc(ipc, { libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], overrides: async () => (await overridesCache.get()) as Record<string, { fp?: string; fields?: Record<string, string> }>, phoneOverrides: () => mobileMetadataOverridesCache.get(), flushOverrides: () => overridesCache.flush(), isReplica: isHomeminiPlaybackClientCached, updateOverrides: (m) => writeOverridesSerialized(m), recordEdit: (id, field, value, at) => userEdits.record(id, field, value, at), persist: (id, fields, fp) => persistOverrideFields(id, fields, fp).then(() => triggerSync('metadata-edit')), send: (ch, p) => sendToRenderer(ch, p), claude: async (system, user) => { const r = await claudeCall('genre-filer', { model: MODEL_SMART, max_tokens: 2000, system, messages: [{ role: 'user', content: user }] }); const b = r.content[0]; return b && b.type === 'text' ? b.text : '' }, mbThrottle, userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` })
+registerGenreFilerIpc(ipc, { libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], overrides: async () => (await overridesCache.get()) as Record<string, { fp?: string; fields?: Record<string, string> }>, phoneOverrides: () => mobileMetadataOverridesCache.getStrict(), flushOverrides: () => overridesCache.flush(), isReplica: isHomeminiPlaybackClientCached, updateOverrides: (m) => writeOverridesSerialized(m), recordEdit: (id, field, value, at) => userEdits.record(id, field, value, at), persist: (id, fields, fp) => persistOverrideFields(id, fields, fp).then(() => triggerSync('metadata-edit')), send: (ch, p) => sendToRenderer(ch, p), claude: async (system, user) => { const r = await claudeCall('genre-filer', { model: MODEL_SMART, max_tokens: 2000, system, messages: [{ role: 'user', content: user }] }); const b = r.content[0]; return b && b.type === 'text' ? b.text : '' }, mbThrottle, userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` })
 startTaxonomyStagedApply({ stateDir: STATE_DIR, libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], updateOverrides: (m) => writeOverridesSerialized(m), flushOverrides: () => overridesCache.flush(), overrideFlushStats: () => overridesCache.flushStats(), onApplied: (updates) => { sendToRenderer('genre-filer:applied', { updates }); triggerSync('metadata-edit') }, fingerprint: trackFingerprint, log: (m) => console.warn(m) })
 registerRockDnaIpc(ipc)
 registerFriendShareIpc(ipc, { getMainWindow: () => mainWindow })  // Share Song / Share Album (homemini builds the links)

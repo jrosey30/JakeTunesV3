@@ -298,7 +298,7 @@ describe('wiring (the behaviour is above; these pin that the app uses it)', () =
   test('Cynthia\'s sweep gets the same records, and the analysis writer merges instead of wiping', () => {
     const index = src('index.ts')
     assert.match(index, /heldForJake: cynthiaHeldForJake,/)
-    assert.match(index, /createHeldForJake\(createJakeEdits\(\{ readJournal: \(\) => readJournalStrict\(app\.getPath\('userData'\)\), readPhone: \(\) => mobileMetadataOverridesCache\.get\(\) \}\)\)/)
+    assert.match(index, /createHeldForJake\(createJakeEdits\(\{ readJournal: \(\) => readJournalStrict\(app\.getPath\('userData'\)\), readPhone: \(\) => mobileMetadataOverridesCache\.getStrict\(\) \}\)\)/)
     const fn = index.slice(index.indexOf('async function persistOverrideFields('), index.indexOf('async function persistOverrideFields(') + 1500)
     assert.match(fn, /const jake = await jakeNamesFor\(trackId, fingerprint\)/)
     assert.match(fn, /for \(const \[field, value\] of Object\.entries\(fields\)\) mergeOverrideField\(overrides, trackId, field, value, fingerprint, jake\)/)
@@ -311,7 +311,7 @@ describe('wiring (the behaviour is above; these pin that the app uses it)', () =
     assert.equal((index.match(/applyMetadataOverrideInternal\([^)]*, true\)/g) || []).length, 0, 'no other caller claims to be Jake')
     const save = index.slice(index.indexOf("ipc.handle('save-metadata-override'"), index.indexOf("ipc.handle('save-metadata-override'") + 4500)
     assert.ok(save.includes(his), 'and that one is the save-metadata-override handler, minus the play and skip counters (Brief 266)')
-    assert.match(index, /createJakeNames\(createJakeEdits\(\{ readJournal: \(\) => readJournalStrict\(app\.getPath\('userData'\)\), readPhone: \(\) => mobileMetadataOverridesCache\.get\(\), ttlMs: 5_000 \}\)\)/)
+    assert.match(index, /createJakeNames\(createJakeEdits\(\{ readJournal: \(\) => readJournalStrict\(app\.getPath\('userData'\)\), readPhone: \(\) => mobileMetadataOverridesCache\.getStrict\(\), ttlMs: 5_000 \}\)\)/)
     assert.doesNotMatch(fn, /overrides\[key\] = \{ fp: fingerprint \|\| '', fields: \{ \.\.\.fields \} \}/)
   })
 })
