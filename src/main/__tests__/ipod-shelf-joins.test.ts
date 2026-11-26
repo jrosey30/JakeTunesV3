@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { waitFor } from './wait-for.ts'
 import {
   createShelfJoins, createShelfJoinsRemote, isShelfListId, parseShelfJoins,
   SHELF_JOIN_GIVE_UP_MS, SHELF_JOINS_FILE, SHELF_WHY, type ShelfJoinAnswer,
@@ -61,7 +62,8 @@ test('the import is on disk before homemini is asked, and homemini is asked a mi
   assert.deepEqual(doc.joins.map((j: { listId: string; ids: number[] }) => [j.listId, j.ids]), [[Y2K, [101, 102]]])
   assert.equal(h.later.length, 1)
   h.later[0]!()
-  await new Promise((r) => setTimeout(r, 20))
+  // Wait for the send itself, not a guess at how fast the Mac is (wait-for.ts): 20 ms failed under load.
+  await waitFor(() => h.sent.length > 0, 'the send to homemini')
   assert.deepEqual(h.sent, [{ listId: Y2K, ids: [101, 102] }])
   assert.equal(await h.joins.flush(), 0)
   await h.done()
