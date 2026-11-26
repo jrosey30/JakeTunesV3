@@ -5,11 +5,11 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readdir, writeFile, truncate } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, writeFile, truncate } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { clearCache, pruneToCap, writeCapGb, CACHE_SETTINGS_FILE, SYNC_CONVERT_CACHE_SUBDIR } from '../sync-convert-cache.ts'
-import { protectedMirrorNames } from '../sync-convert-cache-protect.ts'
+import { DELETED_SONG_ON_IPOD, protectedMirrorNames } from '../sync-convert-cache-protect.ts'
 import { aacMirrorCacheName } from '../aac-mirror-recipe.ts'
 import { startSyncConvertCache } from '../ipc/sync-cache-ipc.ts'
 import { registerIpodProfileIpc } from '../ipc/ipod-profile-ipc.ts'
@@ -128,5 +128,65 @@ describe('the format is saved only for the iPod the page showed', () => {
     const right = await set({}, { codec: 'aac', kbps: 320, expectedId: 'nano-0001' }) as { ok: boolean; profile?: unknown }
     assert.equal(right.ok, true)
     assert.deepEqual(right.profile, { codec: 'aac', kbps: 320, enabled: true })
+  })
+})
+
+describe('what the page says when nothing could be taken: plain words, never an id or a path', () => {
+  /** No path separator, no number (a song id), no file name. */
+  const plainOnly = (text: string) => {
+    assert.doesNotMatch(text, /[/\\]|\d|\.json|manifest/, `plain words only: ${text}`)
+  }
+  for (const [what, opts] of [
+    ['an empty library', { tracks: [], manifest: '{"tracks": []}' }],
+    ['a damaged sync record', { manifest: '{"tracks": [ {"id": 1' }],
+    ['a sync record with no song list', { manifest: '{}' }],
+    ['a song deleted from the library still on an iPod', { tracks: [{ id: 2, path: ':iPod_Control:Music:F02:B.m4a' }] }],
+  ] as const) {
+    it(`${what}: Empty and a limit both say it plainly`, async () => {
+      const w = await world(opts as Parameters<typeof world>[0])
+      const r = await clearCache(w.cache, { ...idle, protect: w.protect })
+      assert.equal(r.ok, false)
+      if (!r.ok) plainOnly(r.error)
+      const p = await pruneToCap(w.cache, 0.000001, { ...idle, protect: w.protect })
+      assert.equal(p.pruned, false)
+      if (!p.pruned) { assert.ok(p.plain); plainOnly(p.plain!); assert.match(String(p.detail), /manifest|library|record/, 'the log keeps the detail') }
+    })
+  }
+  it('a song deleted from the library still on an iPod: "Sync that iPod, then try again."', async () => {
+    const w = await world({ tracks: [{ id: 2, path: ':iPod_Control:Music:F02:B.m4a' }] })
+    const r = await clearCache(w.cache, { ...idle, protect: w.protect })
+    assert.deepEqual(r, { ok: false, error: `Nothing was emptied. ${DELETED_SONG_ON_IPOD}` })
+    assert.match(DELETED_SONG_ON_IPOD, /Sync that iPod, then try again\.$/)
+    const p = await pruneToCap(w.cache, 0.000001, { ...idle, protect: w.protect })
+    assert.equal(!p.pruned && p.plain, DELETED_SONG_ON_IPOD)
+  })
+  it('setting a limit says the same, through the IPC', async () => {
+    const w = await world({ tracks: [{ id: 2, path: ':iPod_Control:Music:F02:B.m4a' }] })
+    const userData = join(w.root, 'userData')
+    await mkdir(join(userData, SYNC_CONVERT_CACHE_SUBDIR), { recursive: true })
+    await writeFile(join(userData, SYNC_CONVERT_CACHE_SUBDIR, 'x.m4a'), Buffer.alloc(10))
+    await truncate(join(userData, SYNC_CONVERT_CACHE_SUBDIR, 'x.m4a'), 1_500_000_000)
+    const handlers = new Map<string, (e: unknown, raw?: unknown) => Promise<unknown>>()
+    const ipc = { handle: (n: string, f: (e: unknown, raw?: unknown) => Promise<unknown>) => { handlers.set(n, f) } } as unknown as IpcRegistrar
+    const up = startSyncConvertCache(ipc, { userData, syncInFlight: () => false, ready: () => true, protectedNames: w.protect })
+    try {
+      const r = await handlers.get('sync-convert-cache:set-cap')!({}, { capGb: 1 }) as { ok: boolean; note?: string }
+      assert.equal(r.note, `Nothing was emptied. ${DELETED_SONG_ON_IPOD}`)
+      const before = await handlers.get('sync-convert-cache:clear')!({}) as { ok: boolean; error?: string }
+      plainOnly(String(before.error))
+    } finally { up.stop() }
+  })
+})
+
+describe('the app marks the library folder known only once it is resolved (index.ts)', () => {
+  it('musicDirResolved goes true on the line right after MUSIC_DIR = await resolveMusicDir(), and nowhere else', async () => {
+    const src = await readFile(new URL('../index.ts', import.meta.url), 'utf-8')
+    const lines = src.split('\n').map((l) => l.trim())
+    const sets = lines.flatMap((l, i) => (/^musicDirResolved\s*=\s*true\b/.test(l) ? [i] : []))
+    assert.equal(sets.length, 1, 'set true exactly once')
+    assert.equal(lines[sets[0] - 1], 'MUSIC_DIR = await resolveMusicDir()')
+    assert.equal(lines.filter((l) => /^let musicDirResolved\s*=\s*false\b/.test(l)).length, 1, 'starts false')
+    assert.match(src, /ready: \(\) => musicDirResolved/)
+    assert.match(src, /libraryRoot: musicDirResolved \? MUSIC_DIR/)
   })
 })
