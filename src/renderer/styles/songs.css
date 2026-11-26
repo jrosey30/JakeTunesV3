@@ -517,8 +517,8 @@
 }
 
 /* The Top 1000's '#' (2026-11-25): narrow, like iTunes. The rank sits right in
-   tabular digits; one small mark beside it (▲ ▼ ●, or the speaker on the
-   playing row) in a fixed slot, so the digits line up row to row. */
+   tabular digits; one small mark beside it (▲ ▼ ●) in a fixed slot; the playing row shows
+   the speaker at its own size in place of the number, so the digits line up row to row. */
 .songs-cell--lead.songs-cell--rank-compact {
   justify-content: flex-end;
   gap: 2px;
@@ -532,6 +532,6 @@
   justify-content: center;
   align-items: center;
 }
-.rank-mark svg { width: 9px; height: 9px; }
+.rank-playing { display: inline-flex; align-items: center; justify-content: flex-end; width: 100%; }
 .rank-mark-glyph { font-size: 9px; letter-spacing: 0; }
 .songs-cell--rank-compact .rank-num { min-width: 0; font-weight: 600; }

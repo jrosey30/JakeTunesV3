@@ -530,14 +530,16 @@ export default function SmartPlaylistView() {
         const rank = top1000Ranks?.[String(track.id)] ?? ownRank.get(track.id) ?? 0
         const mark = compactMovement(rank, top1000Moves.movement?.[String(track.id)], top1000Moves.comparedTo)
         return (
-          <>
-            <span className="rank-mark">
-              {playing
-                ? <span role="img" aria-label="Now playing"><SpeakerPlayingIcon /></span>
-                : mark && <span className={mark.className} title={mark.title} role="img" aria-label={mark.title}>{mark.glyph}</span>}
-            </span>
-            <span className="rank-num">{rank}</span>
-          </>
+          // The playing row: the speaker at its own size in place of the number, as an album's
+          // track list does (squeezed into the 9 px mark slot it looked wrong, 2026-11-26).
+          playing
+            ? <span className="rank-playing" role="img" aria-label={`Now playing, number ${rank}`} title={`Number ${rank}`}><SpeakerPlayingIcon /></span>
+            : <>
+                <span className="rank-mark">
+                  {mark && <span className={mark.className} title={mark.title} role="img" aria-label={mark.title}>{mark.glyph}</span>}
+                </span>
+                <span className="rank-num">{rank}</span>
+              </>
         )
       },
     }
