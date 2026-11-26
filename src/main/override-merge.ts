@@ -54,17 +54,34 @@ export const LISTENING_COUNTER_FIELDS: ReadonlySet<string> = new Set(['playCount
 
 /**
  * Brief 266, suspect 7: when Jake's records can't be read, an automatic write
- * writes NOTHING to an entry whose fingerprint differs from the new one. Without
- * his records there is no evidence either way, and the merge would start the
- * entry fresh, taking his genre and every other field with it. Held until his
- * records read again; an entry with the same fingerprint (or none) merges as
- * always, keeping every field.
+ * writes NOTHING where the merge would wipe the entry: a changed fingerprint
+ * that the merge's own test (isAnotherSong) calls another song. Without his
+ * records that test has only the entry's own names as evidence, and the fresh
+ * start would take his genre and every other field with it. Held until his
+ * records read again. A change the merge calls the same song (the length
+ * within 2 s, the entry's own title and artist) merges as always, keeping every field.
  */
 export function heldWhileRecordsUnreadable(overrides: Record<string, unknown>, trackId: number | string, fingerprint?: string): boolean {
   const existing = overrides[String(trackId)] as OvEntry | undefined
   if (!existing || typeof existing !== 'object' || !('fields' in existing)) return false
   const existingFp = existing.fp || ''
-  return typeof fingerprint === 'string' && fingerprint !== '' && existingFp !== '' && existingFp !== fingerprint
+  if (typeof fingerprint !== 'string' || fingerprint === '' || existingFp === '' || existingFp === fingerprint) return false
+  return isAnotherSong(existingFp, fingerprint, evidenceFor(existing.fields, '', '', {}, false))
+}
+
+/**
+ * Several fields of one write into `overrides` (persistOverrideFields): held
+ * whole while his records can't be read (heldWhileRecordsUnreadable), unless
+ * Jake is the one writing (a check-list File, a ruling). Returns false when held.
+ */
+export function mergeOverrideFields(
+  overrides: Record<string, unknown>, trackId: number | string, fields: Record<string, string>, fingerprint: string,
+  jake: JakeNames = {},
+  opts: { writtenByJake?: boolean } = {},
+): boolean {
+  if (opts.writtenByJake !== true && jake.unreadable && heldWhileRecordsUnreadable(overrides, trackId, fingerprint)) return false
+  for (const [field, value] of Object.entries(fields)) mergeOverrideField(overrides, trackId, field, value, fingerprint, jake, opts)
+  return true
 }
 
 /**

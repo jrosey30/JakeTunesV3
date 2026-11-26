@@ -105,7 +105,7 @@ import { assertNoSyncedPicksPush } from './synced-picks-client.ts'
 import { createArtistPhotos, nameKey as photoNameKey } from './artist-photo.ts'
 import { createArtistPhotoPicks } from './artist-photo-picks.ts'
 import { createArtistImageServer } from './artist-image-serve.ts'
-import { phoneOverlayFields } from '../common/genre-vocab.ts'; import { heldWhileRecordsUnreadable, LISTENING_COUNTER_FIELDS, mergeOverrideField } from './override-merge.ts'; import { registerUserEdits } from './ipc/user-edits-ipc.ts'
+import { phoneOverlayFields } from '../common/genre-vocab.ts'; import { heldWhileRecordsUnreadable, LISTENING_COUNTER_FIELDS, mergeOverrideField, mergeOverrideFields } from './override-merge.ts'; import { registerUserEdits } from './ipc/user-edits-ipc.ts'
 import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
 import { registerSyncHistoryIpc } from './ipc/sync-history-ipc.ts'
 import { registerActivityPoolIpc } from './ipc/activity-pool-ipc.ts'
@@ -906,16 +906,17 @@ async function persistOverrideFields(
   trackId: number,
   fields: Record<string, string>,
   fingerprint: string,
+  opts: { writtenByJake?: boolean } = {},
 ): Promise<void> {
   // The one merge rule (override-merge.ts): it used to replace the whole entry
   // whenever the fingerprints weren't identical, wiping Jake's other fields
   // after a title or artist correction (review of #501).
-  // Every writer here is automatic (analysis, the genre filer): with his records
-  // unreadable, an entry whose fingerprint changed is held, not wiped (Brief 266).
+  // Automatic writers (analysis, the genre filer's picks): with his records
+  // unreadable, a write the merge would turn into a wipe is held (Brief 266).
+  // `writtenByJake`: a check-list File or a ruling (genre-filer-persist.ts) always writes.
   const jake = await jakeNamesFor(trackId, fingerprint)
   await writeOverridesSerialized((overrides) => {
-    if (jake.unreadable && heldWhileRecordsUnreadable(overrides, trackId, fingerprint)) { warnHeldWhileUnreadable(trackId, Object.keys(fields)); return overrides }
-    for (const [field, value] of Object.entries(fields)) mergeOverrideField(overrides, trackId, field, value, fingerprint, jake)
+    if (!mergeOverrideFields(overrides, trackId, fields, fingerprint, jake, opts)) warnHeldWhileUnreadable(trackId, Object.keys(fields))
     return overrides
   })
 }
@@ -9071,7 +9072,7 @@ const sweepFriendImports = async (): Promise<number> => ((await isHomeminiPlayba
  */
 // Taste ledger + weights extracted to ipc/taste-ipc.ts (6.0 Phase 1).
 registerTasteIpc(ipc)
-registerGenreFilerIpc(ipc, { libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], overrides: async () => (await overridesCache.get()) as Record<string, { fp?: string; fields?: Record<string, string> }>, phoneOverrides: () => mobileMetadataOverridesCache.getStrict(), flushOverrides: () => overridesCache.flush(), isReplica: isHomeminiPlaybackClientCached, updateOverrides: (m) => writeOverridesSerialized(m), recordEdit: (id, field, value, at) => userEdits.record(id, field, value, at), persist: (id, fields, fp) => persistOverrideFields(id, fields, fp).then(() => triggerSync('metadata-edit')), send: (ch, p) => sendToRenderer(ch, p), claude: async (system, user) => { const r = await claudeCall('genre-filer', { model: MODEL_SMART, max_tokens: 2000, system, messages: [{ role: 'user', content: user }] }); const b = r.content[0]; return b && b.type === 'text' ? b.text : '' }, mbThrottle, userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` })
+registerGenreFilerIpc(ipc, { libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], overrides: async () => (await overridesCache.get()) as Record<string, { fp?: string; fields?: Record<string, string> }>, phoneOverrides: () => mobileMetadataOverridesCache.getStrict(), flushOverrides: () => overridesCache.flush(), isReplica: isHomeminiPlaybackClientCached, updateOverrides: (m) => writeOverridesSerialized(m), recordEdit: (id, field, value, at) => userEdits.record(id, field, value, at), persist: (id, fields, fp, opts) => persistOverrideFields(id, fields, fp, opts).then(() => triggerSync('metadata-edit')), send: (ch, p) => sendToRenderer(ch, p), claude: async (system, user) => { const r = await claudeCall('genre-filer', { model: MODEL_SMART, max_tokens: 2000, system, messages: [{ role: 'user', content: user }] }); const b = r.content[0]; return b && b.type === 'text' ? b.text : '' }, mbThrottle, userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` })
 startTaxonomyStagedApply({ stateDir: STATE_DIR, libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], updateOverrides: (m) => writeOverridesSerialized(m), flushOverrides: () => overridesCache.flush(), overrideFlushStats: () => overridesCache.flushStats(), onApplied: (updates) => { sendToRenderer('genre-filer:applied', { updates }); triggerSync('metadata-edit') }, fingerprint: trackFingerprint, log: (m) => console.warn(m) })
 registerRockDnaIpc(ipc)
 registerFriendShareIpc(ipc, { getMainWindow: () => mainWindow })  // Share Song / Share Album (homemini builds the links)

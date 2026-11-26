@@ -42,7 +42,8 @@ export interface GenreFilerHost {
   updateOverrides?(mutate: (cur: Record<string, unknown>) => Record<string, unknown>): Promise<void>
   /** His edit into the user-edits journal — the Get Info path (rulings, check-list Files). */
   recordEdit(trackId: number, field: string, value: string, at: number): Promise<void>
-  persist(trackId: number, fields: Record<string, string>, fingerprint: string): Promise<void>
+  /** `writtenByJake`: his own choice (a check-list File, a ruling): never held while his records can't be read. */
+  persist(trackId: number, fields: Record<string, string>, fingerprint: string, opts?: { writtenByJake?: boolean }): Promise<void>
   send(channel: string, payload: unknown): void
   claude(system: string, user: string): Promise<string>
   mbThrottle(): Promise<void>

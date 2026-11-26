@@ -11,7 +11,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHeldForJake, createJakeEdits, createJakeNames, readJournalStrict } from '../jake-edits-guard.ts'
 import { JsonFileCache } from '../state-cache.ts'
-import { heldWhileRecordsUnreadable, LISTENING_COUNTER_FIELDS, mergeOverrideField } from '../override-merge.ts'
+import { LISTENING_COUNTER_FIELDS, mergeOverrideField, mergeOverrideFields } from '../override-merge.ts'
+import { persistGuarded } from '../genre-filer-persist.ts'
+import { createRefusals } from '../../common/jake-edits-stay.ts'
+import type { FilerTrack } from '../genre-filer.ts'
 import { journalGenresStrict, REPLICA_REPAIR_MARKER, runReplicaGenreRepair } from '../genre-replica.ts'
 import { emptyUserEdits, recordUserEdit, USER_EDITS_FILE } from '../../common/user-edits.ts'
 
@@ -25,13 +28,10 @@ const OLD_FP = 'track 03|steely dan|237000'
 const NEW_FP = 'peg|steely dan|237400'   // the title moved; same length
 const hisEntry = (): Record<string, unknown> => ({ '21': { fp: OLD_FP, fields: { genre: 'Yacht Rock', year: '1977', rating: '100' } } })
 
-/** The analysis writer's path in index.ts (persistOverrideFields): his names, then the one merge. */
+/** The analysis writer's path in index.ts (persistOverrideFields): his names, then mergeOverrideFields. */
 async function automaticWrite(dir: string, overrides: Record<string, unknown>, fields: Record<string, string>, fp: string, readPhone: () => Promise<Record<string, { fp?: string; fields?: Record<string, string> }> | null> = async () => null): Promise<boolean> {
   const names = createJakeNames(createJakeEdits({ readJournal: () => readJournalStrict(dir), readPhone }))
-  const jake = await names(21, fp)
-  if (jake.unreadable && heldWhileRecordsUnreadable(overrides, 21, fp)) return false
-  for (const [f, v] of Object.entries(fields)) mergeOverrideField(overrides, 21, f, v, fp, jake)
-  return true
+  return mergeOverrideFields(overrides, 21, fields, fp, await names(21, fp))
 }
 
 describe('gap 1: the override merge, his journal unreadable', () => {
@@ -71,6 +71,38 @@ describe('gap 1: the override merge, his journal unreadable', () => {
     const o = hisEntry()
     assert.equal(await automaticWrite(dir, o, { bpm: '96' }, NEW_FP), true)
     assert.deepEqual(o['21'], { fp: NEW_FP, fields: { genre: 'Yacht Rock', year: '1977', rating: '100', bpm: '96' } })
+  })
+  test('only a write the merge would turn into a wipe is held: the same song (length within 2 s, its own names) still merges', async () => {
+    const dir = freshDir()
+    writeFileSync(join(dir, USER_EDITS_FILE), '{ torn')
+    const o = hisEntry()
+    assert.equal(await automaticWrite(dir, o, { bpm: '96' }, 'track 03|steely dan|237900'), true)
+    assert.deepEqual(o['21'], { fp: 'track 03|steely dan|237900', fields: { genre: 'Yacht Rock', year: '1977', rating: '100', bpm: '96' } })
+  })
+  test('a check-list File (Jake\'s own) with the journal torn: written, never silently dropped', async () => {
+    const dir = freshDir()
+    writeFileSync(join(dir, USER_EDITS_FILE), '{ torn')
+    const o = hisEntry()
+    const names = createJakeNames(createJakeEdits({ readJournal: () => readJournalStrict(dir), readPhone: async () => null }))
+    const journaled: string[] = []
+    const prov: Record<string, unknown> = {}
+    const t = { id: 21, title: 'Peg', artist: 'Steely Dan', duration: 237_400 } as unknown as FilerTrack
+    const host = {
+      // index.ts persistOverrideFields: his names, then mergeOverrideFields with the flag persistGuarded passes
+      persist: async (id: number, fields: Record<string, string>, fp: string, opts?: { writtenByJake?: boolean }) => { assert.ok(mergeOverrideFields(o, id, fields, fp, await names(id, fp), opts), 'not held') },
+      recordEdit: async (_id: number, _f: string, v: string) => { journaled.push(v) },
+      updateProvenance: async (m: (d: { tracks: Record<string, unknown> }) => void) => { m({ tracks: prov }) },
+      lookup: async () => { throw new Error('torn') },
+      refused: createRefusals(),
+      log: () => {},
+    }
+    const written = await persistGuarded(host as never, t, { genre: 'Ska-Punk' }, { by: 'jake', how: 'check-list' })
+    assert.deepEqual(written, { genre: 'Ska-Punk' }, 'reported as written')
+    assert.equal((o['21'] as { fields: Record<string, string> }).fields.genre, 'Ska-Punk', '…and it is on disk')
+    assert.deepEqual(journaled, ['Ska-Punk'])
+    const pick = await persistGuarded(host as never, t, { genre: 'Jazz' }, { by: 'filer', how: 'evidence' })
+    assert.deepEqual(pick, {}, 'the filer\'s own pick is still held')
+    assert.equal((o['21'] as { fields: Record<string, string> }).fields.genre, 'Ska-Punk')
   })
   test('the play and skip counters are the automatic ones', () => {
     assert.deepEqual([...LISTENING_COUNTER_FIELDS].sort(), ['lastPlayedAt', 'playCount', 'skipCount'])
