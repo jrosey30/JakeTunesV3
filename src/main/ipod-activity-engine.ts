@@ -69,6 +69,8 @@ import { NOT_CONVERTED_AGAIN, deleteLandedRecord, landedVerdict, readLandedRecor
 
 /** The plain reason a song wasn't converted when afconvert can't be used (Brief 265). */
 export const NO_AAC_ENCODER = "Apple's AAC encoder isn't available on this Mac"
+/** The check timed out on a busy Mac, twice: the encoder may be there, so never "isn't available" (Brief 266). */
+export const AAC_ENCODER_SLOW = "Apple's AAC encoder didn't answer in time"
 import { applyFileStamps, createFileStampCache, fileToStamp } from './ipod-file-stamps.ts'
 import { backupItunesDb, backupRefusal, restoreItunesDbBackup } from './ipod-db-backup.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
@@ -149,6 +151,7 @@ export interface ActivitySyncHost {
   sendProgress: (p: { phase: string; current: number; total: number; title: string; mode?: 'swap' | 'full'; summary?: string }) => void
   isCancelled: () => boolean
   isStreamedTrackFile: (abs: string) => Promise<boolean>
+  /** null = nothing to convert (copy as it is); a failed conversion throws (Brief 266). */
   buildAacMirror: (src: string, kbps: number, codec?: 'aac' | 'mp3') => Promise<string | null>
   buildIpodSafeAlacMirror: (src: string) => Promise<string | null>
   readIpodDatabase: () => Promise<{ tracks: Array<Record<string, unknown>>; playlists?: unknown[] }>
@@ -813,9 +816,13 @@ async function runActivitySyncHolding(
           // master in its place (aac-mirror-recipe.ts, Brief 265).
           if (isAacEncoderMissing(err)) {
             console.error(`activity-sync: ${err instanceof Error ? err.message : String(err)}`)
-            return { ok: false, kind: 'no-encoder', why: NO_AAC_ENCODER }
+            const slow = (err as { why?: unknown }).why === 'unknown'
+            return { ok: false, kind: 'no-encoder', why: slow ? AAC_ENCODER_SLOW : NO_AAC_ENCODER }
           }
-          console.warn(`activity-sync: AAC mirror failed for ${title}, copying original:`, err)
+          // This song's conversion failed (AacConvertFailedError): left off and named like a
+          // song with no MP3 or no iPod-safe ALAC, never copied as its lossless master (Brief 266).
+          console.error(`activity-sync: AAC mirror failed for ${title}, left off:`, err)
+          return { ok: false, kind: 'unconvertible', why: 'no AAC for this iPod' }
         }
         // Gen 1 plays MP3 only: a song that isn't one and couldn't be made one stays off,
         // never copied as a file that iPod can't play.
@@ -975,7 +982,7 @@ async function runActivitySyncHolding(
       // card is touched, instead of filling reserves with songs that hit the same wall.
       if (out.kind === 'no-encoder') {
         await host.writeJournal(null)
-        return fail({ copied: 0, target, error: `${NO_AAC_ENCODER}, so this iPod's songs couldn't be converted. Nothing on the iPod was changed.` })
+        return fail({ copied: 0, target, error: `${out.why}, so this iPod's songs couldn't be converted. Nothing on the iPod was changed.` })
       }
       if (out.kind === 'stage') {
         console.error(`activity-sync: ${out.msg}`)
@@ -1300,7 +1307,7 @@ async function runActivitySyncHolding(
     console.error(`activity-sync: "${e.title}" (id ${e.id}) must move and couldn't be prepared (${why}); the card is untouched`)
     fetchFailedIds.add(e.id)
     if (out.kind === 'unconvertible') lateWhy.set(e.id, out.why === NOT_CONVERTED_AGAIN ? NOT_CONVERTED_AGAIN : "its audio couldn't be converted for the iPod (damaged file)")
-    if (out.kind === 'no-encoder') lateWhy.set(e.id, NO_AAC_ENCODER)
+    if (out.kind === 'no-encoder') lateWhy.set(e.id, out.why)
   }
   if (swap) {
     const toFetch = plan.filter((e) => e.restage && e.i < reserveFrom && !keepIds.has(e.id) && !fetchFailedIds.has(e.id))

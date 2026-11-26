@@ -1020,6 +1020,10 @@ declare global {
         error?: string
         cancelled?: boolean
         alreadyRunning?: boolean
+        // Full-library sync: songs left off because they couldn't be converted, and songs
+        // kept as they were on the iPod (sync-engine/index.ts; said on the Device page, Brief 266).
+        notConverted?: Array<{ id: number; title: string; artist: string }>
+        notReplaced?: Array<{ id: number; title: string; artist: string }>
         pathRewrites?: Array<{ id: number; newPath: string }>
         // Updates from the silent post-sync identity verifier. Renderer
         // applies these as UPDATE_TRACKS so library.json reflects the

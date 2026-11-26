@@ -106,6 +106,39 @@ export function leftOffLine(plan: Extract<OneSyncPlan, { ok: true }>): string | 
   return c <= NAMES_IN_LINE && names.length === c ? `${lead}: ${names.join(', ')}.` : `${lead}.`
 }
 
+type NamedSong = { title?: string | null }
+const namedList = (songs: ReadonlyArray<NamedSong>, lead: string): string => {
+  const names = songs.map((s) => String(s.title ?? '')).filter((t) => t.trim() !== '')
+  return songs.length <= NAMES_IN_LINE && names.length === songs.length ? `${lead}: ${names.join(', ')}.` : `${lead}.`
+}
+
+/**
+ * The full-library sync's result, said after "Synced" (Brief 266): it used to be dropped,
+ * so a song left off looked synced. The same words and name rule as leftOffLine. `copyErrors`
+ * counts the not-converted songs too, so only the rest are "couldn’t be copied" (no names:
+ * the engine counts those). Null when nothing went wrong.
+ */
+export function fullSyncLeftOffLine(r: {
+  copyErrors?: number
+  notConverted?: ReadonlyArray<NamedSong>
+  notReplaced?: ReadonlyArray<NamedSong>
+}): string | null {
+  const conv = r.notConverted ?? []
+  const kept = r.notReplaced ?? []
+  const failed = Math.max(0, (r.copyErrors ?? 0) - conv.length)
+  const lines: string[] = []
+  if (conv.length > 0) {
+    const one = conv.length === 1
+    lines.push(namedList(conv, `${n(conv.length)} ${one ? 'song' : 'songs'} couldn’t be converted and ${one ? 'was' : 'were'} left off`))
+  }
+  if (failed > 0) lines.push(`${n(failed)} ${failed === 1 ? 'song' : 'songs'} couldn’t be copied.`)
+  if (kept.length > 0) {
+    const one = kept.length === 1
+    lines.push(namedList(kept, `${n(kept.length)} ${one ? 'song was' : 'songs were'} already on the iPod in another form and stayed as ${one ? 'it was' : 'they were'}`))
+  }
+  return lines.length > 0 ? lines.join(' ') : null
+}
+
 /** The list iPod's line: the same words (it used to be its own "Can’t sync" sentence). */
 export function listErrorLine(plan: Extract<OneSyncPlan, { ok: true }>): string | null {
   return leftOffLine(plan)

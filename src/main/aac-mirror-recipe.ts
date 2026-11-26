@@ -69,13 +69,36 @@ export function afconvertAacArgs(pcmPath: string, outPath: string, targetKbps: n
 
 export class AacEncoderMissingError extends Error {
   readonly code = 'AAC_ENCODER_MISSING'
+  /** 'unknown' = the check timed out (a busy Mac): the encoder may well be there (Brief 266). */
+  readonly why: 'missing' | 'unknown'
   constructor(srcPath: string, why: 'missing' | 'unknown' = 'missing') {
     const name = srcPath.split(/[\\/]/).pop()
     super(why === 'unknown'
       ? `Apple's AAC encoder (afconvert) didn't answer in time, so "${name}" was not converted this time. iPod AAC is never made with another encoder (Brief 265).`
       : `Apple's AAC encoder (afconvert) is not available on this Mac, so "${name}" was not converted. iPod AAC is never made with another encoder (Brief 265).`)
     this.name = 'AacEncoderMissingError'
+    this.why = why
   }
+}
+
+/**
+ * The encoder is there and this one song's conversion failed (Brief 266). Thrown, never a
+ * null: a null means "not lossless, copy it as it is", and the sync used to read a failed
+ * conversion that way and put the lossless master on an AAC iPod. The engines leave the
+ * song off and name it.
+ */
+export class AacConvertFailedError extends Error {
+  readonly code = 'AAC_CONVERT_FAILED'
+  constructor(srcPath: string, cause: unknown) {
+    const name = srcPath.split(/[\\/]/).pop()
+    const detail = cause instanceof Error ? cause.message : String(cause)
+    super(`"${name}" couldn't be converted to AAC for the iPod (${detail.slice(0, 160)})`)
+    this.name = 'AacConvertFailedError'
+  }
+}
+
+export function isAacConvertFailed(err: unknown): boolean {
+  return !!err && typeof err === 'object' && (err as { code?: unknown }).code === 'AAC_CONVERT_FAILED'
 }
 
 export function isAacEncoderMissing(err: unknown): boolean {
@@ -124,8 +147,8 @@ export async function probeAfconvert(run: RunForText): Promise<AfconvertAnswer> 
 export const AFCONVERT_RECHECK_MS = 30_000
 
 /**
- * The answer a sync uses: a 'yes' is kept for the session; a 'no' or 'unknown' is asked
- * again after AFCONVERT_RECHECK_MS, so one slow check can't refuse every conversion until
+ * The answer a sync uses: a 'yes' is kept for the session; an 'unknown' (timed out) is
+ * asked once more at once; a 'no' or 'unknown' is asked again after AFCONVERT_RECHECK_MS, so one slow check can't refuse every conversion until
  * the app restarts. Concurrent callers share one probe.
  */
 export function createAfconvertCheck(run: RunForText, now: () => number = Date.now, recheckMs = AFCONVERT_RECHECK_MS) {
@@ -136,7 +159,8 @@ export function createAfconvertCheck(run: RunForText, now: () => number = Date.n
     if (yes) return 'yes'
     if (last && now() - last.at < recheckMs) return last.answer
     if (!inFlight) {
-      inFlight = probeAfconvert(run).then((a) => {
+      // A timed-out check is asked once more at once (Brief 266): a busy Mac is not a missing encoder.
+      inFlight = probeAfconvert(run).then((a) => (a === 'unknown' ? probeAfconvert(run) : a)).then((a) => {
         last = { answer: a, at: now() }
         if (a === 'yes') yes = true
         return a

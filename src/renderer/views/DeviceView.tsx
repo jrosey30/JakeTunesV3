@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'reac
 import { useLibrary } from '../context/LibraryContext'
 import { assembleSyncPlaylists, planIpodSync, planTracks } from '../utils/workoutIpodSync'
 import type { OneSyncPlan } from '../../common/ipod-one-sync-plan'
-import { readyLine, leftOffLine, syncButtonLabel, lastSyncedLine, syncingStep, withLastSyncLeftOff } from '../../common/ipod-one-sync-plan'
+import { readyLine, leftOffLine, fullSyncLeftOffLine, syncButtonLabel, lastSyncedLine, syncingStep, withLastSyncLeftOff } from '../../common/ipod-one-sync-plan'
 import { syncIsDue } from '../../common/sync-due'
 import { readyOnMacLine, leaveOffQuestion, syncNowLeavingOffLabel, idsLeavingOff, mustAskBeforeSync, listFetchOutcome, leftOffNote as fetchLeftOffNote, type ReadyOnMac } from '../../common/ipod-ready-on-mac'
 import { stickerHex } from '../components/IpodIdentityBar'
@@ -371,6 +371,7 @@ export default function DeviceView() {
   const runFullLibrarySync = async () => {
     setShowFullSyncConfirm(false)
     const activity = await import('../activity')
+    setLeftOffNote(null)
     setSyncing(true)
     setSyncStatus({ state: 'syncing', step: 'Copying your whole library to the iPod…' })
     activity.setSync({ active: true, step: 'Copying your whole library to the iPod…' })
@@ -398,8 +399,11 @@ export default function DeviceView() {
         total: result.totalTracks ?? state.tracks.length,
         time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
       })
-      activity.setSync({ active: true, step: 'Synced' })
-      setTimeout(() => activity.setSync(null), 4000)
+      // Songs left off or kept as they were are said after "Synced", never dropped (Brief 266).
+      const note = fullSyncLeftOffLine(result)
+      setLeftOffNote(note)
+      activity.setSync({ active: true, step: note ? `Synced. ${note}` : 'Synced' })
+      setTimeout(() => activity.setSync(null), note ? 7000 : 4000)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Sync failed'
       setSyncStatus({ state: 'error', message: msg })

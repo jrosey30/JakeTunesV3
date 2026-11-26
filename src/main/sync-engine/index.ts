@@ -42,7 +42,7 @@ import {
   exceedsIpodPlayableCeiling, ipodPlayableDestPath, needsIpodAlacTranscode, sampleRateForItunesDb,
 } from '../ipod-reconcile.ts'
 import { confirmWriteOnCard, flushCardCaches, remountVerifyEntries, retireIpodFirmwareScratch } from '../ipod-sync-card.ts'
-import { isAacEncoderMissing } from '../aac-mirror-recipe.ts'
+import { isAacConvertFailed, isAacEncoderMissing } from '../aac-mirror-recipe.ts'
 import { deleteLandedRecord } from '../ipod-landed-record.ts'
 import { keepListedOnCard, readCardListing } from '../ipod-replace-waves.ts'
 import { applyFileStamps, createFileStampCache, fileToStamp } from '../ipod-file-stamps.ts'
@@ -1225,7 +1225,9 @@ export function createSyncEngine(host: SyncEngineHost) {
         } catch (err) {
           // No Apple encoder: the song is refused and named, never copied as its
           // lossless master or as an ffmpeg AAC (aac-mirror-recipe.ts, Brief 265).
-          if (isAacEncoderMissing(err)) {
+          // …and so is a song whose own conversion failed (Brief 266): it used to fall through
+          // here and copy the lossless master onto an AAC iPod.
+          if (isAacEncoderMissing(err) || isAacConvertFailed(err)) {
             console.error(`sync-to-ipod: ${err instanceof Error ? err.message : String(err)}`)
             const tr = trackByLocal.get(local)
             notConverted.push({ id: Number(tr?.id), title: String(tr?.title ?? title), artist: String(tr?.artist ?? '') })
