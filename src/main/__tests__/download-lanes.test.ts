@@ -257,16 +257,35 @@ describe('the saved list', () => {
 })
 
 describe('done when: a quit in the middle of three album saves loses nothing', () => {
+  /**
+   * main's save, wired to a real store. `landed()` waits until every save the
+   * renderer has sent is on disk. A save first reads the file (`load`), so a
+   * bare `store.flush()` right after a change can return before that save has
+   * even started writing, and the "quit" then reads an empty list (CI run
+   * 45767512007 got [] here under load).
+   */
+  function savingTo(store: ReturnType<typeof createDownloadQueueStore>): () => Promise<void> {
+    const sent: Promise<void>[] = []
+    main.save = (jobs) => { const p = store.saveJobs(jobs); sent.push(p); return p }
+    return async () => {
+      await new Promise((r) => setImmediate(r))   // the renderer's save goes out on a microtask
+      for (let n = -1; n !== sent.length;) { n = sent.length; await Promise.all(sent) }
+      await store.flush()
+    }
+  }
+
   it('the same jobs come back, in order, the interrupted one restarted', async () => {
     const path = join(dir, 'download-queue.json')
     const store = createDownloadQueueStore({ path })
-    main.save = (jobs) => store.saveJobs(jobs)
+    const landed = savingTo(store)
     for (const n of ['First Album', 'Second Album', 'Third Album']) main.answers.set(n, hang)
     enqueue(album('First Album', 9)); enqueue(album('Second Album', 12)); enqueue(album('Third Album', 10))
     await waitFor(() => job('First Album')?.status === 'downloading', 'the first album to start')
     const firstArm = job('First Album')!.armId
     main.progress!({ jobId: firstArm!, have: 4, of: 9 })
-    await sleep(5); await store.flush()
+    await landed()
+    assert.deepEqual((JSON.parse(await readFile(path, 'utf-8')) as SavedQueueDoc).jobs.map((x) => x.result.album),
+      ['First Album', 'Second Album', 'Third Album'], 'all three are on disk before the quit')
 
     // The quit: the app's memory goes; only the file is left.
     resetQueueForTests({ restored: false })
@@ -289,13 +308,13 @@ describe('done when: a quit in the middle of three album saves loses nothing', (
   it('an album that finished just before the quit is not downloaded again', async () => {
     const path = join(dir, 'download-queue.json')
     const store = createDownloadQueueStore({ path })
-    main.save = (jobs) => store.saveJobs(jobs)
+    const landed = savingTo(store)
     let finish: (a: Answer) => void = () => {}
     main.answers.set('Just Done', () => new Promise<Answer>((r) => { finish = r }))
     main.answers.set('Still Waiting', hang)
     enqueue(album('Just Done')); enqueue(album('Still Waiting'))
     await waitFor(() => job('Just Done')?.status === 'downloading', 'it to start')
-    await store.flush()
+    await landed()
     // main imported it and noted it in its ledger; the app quit before the renderer saved "done".
     await store.markFinished(job('Just Done')!.armId!, { imported: 12, dupes: 0, completion: '12 tracks' })
     await store.flush()
