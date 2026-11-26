@@ -7,13 +7,13 @@ import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  absOnCard, cardListsPath, catalogSizesByPath, nextWave, noRoomForReplacement, onCardBytes, ownerOfSide, proveCardFromJournal, recoverFromJournal,
-  sideName, waveReserveBytes, WAVE_RESERVE_BYTES, type WavesJournal,
+  absOnCard, cardListsPath, catalogSizesByPath, keepListedOnCard, nextWave, noRoomForReplacement, onCardBytes, ownerOfSide, proveCardFromJournal, recoverFromJournal,
+  readCardListing, sideName, waveReserveBytes, WAVE_RESERVE_BYTES, type WavesJournal,
 } from '../ipod-replace-waves.ts'
 import { runActivitySync, type ActivitySyncHost } from '../ipod-activity-engine.ts'
 import { parseCatalogPaths } from '../sync-engine/roundtrip.ts'
@@ -335,10 +335,60 @@ describe('the full-library sync never overwrites a song the card lists', () => {
   })
   it('the guard runs before the copy, on the card\'s own song list', async () => {
     const src = await readFile(new URL('../sync-engine/index.ts', import.meta.url), 'utf-8')
-    const guard = src.indexOf('if (there && cardListsPath(listedOnCard,')
+    const guard = src.indexOf('if (await keepListedOnCard(listedOnCard, IPOD_MOUNT, dstToCopy))')
     const copy = src.indexOf('await copyFile(srcToCopy, dstToCopy)', guard)
     assert.ok(guard > 0 && copy > guard, 'the guard is right before the in-place copy')
     assert.match(src.slice(guard, copy), /notReplaced\.push\([\s\S]*continue/)
-    assert.match(src, /const listedOnCard = catalogSizesByPath\(await readFile\(join\(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB'\)\)/)
+    assert.match(src, /const listedOnCard = await readCardListing\(IPOD_MOUNT\)/)
+  })
+
+  // Brief 266 1c: the sync's own steps, in its order (index.ts: readCardListing, then
+  // keepListedOnCard right before copyFile, notReplaced on a keep), on a real folder.
+  async function fullSyncOne(listingSetup: (itunes: string) => Promise<void>) {
+    const root = await mkdtemp(join(tmpdir(), 'jt-1c-'))
+    const itunes = join(root, 'iPod_Control', 'iTunes')
+    const f27 = join(root, 'iPod_Control', 'Music', 'F27')
+    await mkdir(itunes, { recursive: true }); await mkdir(f27, { recursive: true })
+    const dst = join(f27, 'ABCD.m4a')
+    await writeFile(dst, Buffer.from('THE SONG ON THE IPOD'))
+    const srcFile = join(root, 'new.m4a')
+    await writeFile(srcFile, Buffer.from('A DIFFERENT FILE FROM THE MAC'))
+    await listingSetup(itunes)
+    const notReplaced: Array<{ title: string }> = []
+    const listing = await readCardListing(root)
+    if (await keepListedOnCard(listing, root, dst)) notReplaced.push({ title: 'Zero' })
+    else await copyFile(srcFile, dst)
+    const after = (await readFile(dst)).toString()
+    await rm(root, { recursive: true, force: true })
+    return { listing, notReplaced, after }
+  }
+  it('a song list that can\'t be read: the song on the iPod is untouched and reported', async () => {
+    const r = await fullSyncOne(async (itunes) => { await mkdir(join(itunes, 'iTunesDB')) }) // EISDIR on read
+    assert.equal(r.after, 'THE SONG ON THE IPOD', 'the listed file\'s bytes are untouched')
+    assert.deepEqual(r.notReplaced, [{ title: 'Zero' }], 'the song is reported as not replaced')
+    assert.equal(r.listing, 'unreadable')
+  })
+  it('a song list that can\'t be parsed: the song on the iPod is untouched and reported', async () => {
+    const r = await fullSyncOne(async (itunes) => { await writeFile(join(itunes, 'iTunesDB'), Buffer.from('mhbd-CORRUPT')) })
+    assert.equal(r.after, 'THE SONG ON THE IPOD', 'the listed file\'s bytes are untouched')
+    assert.deepEqual(r.notReplaced, [{ title: 'Zero' }], 'the song is reported as not replaced')
+    assert.equal(r.listing, 'unreadable')
+  })
+  it('no song list at all: today\'s behaviour (nothing listed, the copy goes ahead)', async () => {
+    const r = await fullSyncOne(async () => {})
+    assert.ok(r.listing instanceof Map && r.listing.size === 0)
+    assert.equal(r.after, 'A DIFFERENT FILE FROM THE MAC')
+    assert.deepEqual(r.notReplaced, [])
+  })
+  it('a readable song list: only the paths it lists are kept', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jt-1c-'))
+    const f27 = join(root, 'iPod_Control', 'Music', 'F27')
+    await mkdir(f27, { recursive: true })
+    await writeFile(join(f27, 'ABCD.m4a'), 'x'); await writeFile(join(f27, 'OTHER.m4a'), 'y')
+    const listing = new Map([[':iPod_Control:Music:F27:abcd.m4a', 1]])
+    assert.equal(await keepListedOnCard(listing, root, join(f27, 'ABCD.m4a')), true)
+    assert.equal(await keepListedOnCard(listing, root, join(f27, 'OTHER.m4a')), false)
+    assert.equal(await keepListedOnCard('unreadable', root, join(f27, 'NOT-THERE.m4a')), false, 'a new file is never blocked')
+    await rm(root, { recursive: true, force: true })
   })
 })
