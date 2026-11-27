@@ -76,6 +76,13 @@ describe('loop hold meter', () => {
     assert.equal(r.wallMs, 5100)
     k.advance(100, 1); m.tick()
     assert.equal(m.take(), null)
+    k.advance(400, 250, 410); m.tick() // a shorter hold in a later window gets its own numbers
+    const r2 = m.take()
+    assert.ok(r2)
+    assert.equal(r2.count, 1)
+    assert.equal(r2.max, 300)
+    assert.equal(r2.cpuMs, 250)
+    assert.equal(r2.wallMs, 410)
   })
 
   it('a late tick under the threshold is not a hold', () => {

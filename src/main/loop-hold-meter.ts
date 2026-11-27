@@ -8,9 +8,12 @@
  * sleeping or napping Mac, or one starved by a build, makes the same number.
  * So each hold also carries:
  *
- *   cpuMs     this process's CPU time across the late tick. Near `ms`: the
- *             app was busy (the code). Far under it: the app was waiting on
- *             the machine.
+ *   cpuMs     this process's CPU time across the late tick, every thread in
+ *             it (the main thread, the thread pool, GC). Near or over `ms`:
+ *             the process was busy, not necessarily the main thread. Far
+ *             under it: the app was waiting on the machine.
+ *   (sinceSuspendMs is read when the window is reported, up to 10 s after
+ *   the hold.)
  *   wallMs    the wall clock across the same tick. Far over `ms`: the Mac
  *             slept and the monotonic clock stood still.
  *   sinceSuspendMs  wall ms since the Mac last said it was going to sleep
