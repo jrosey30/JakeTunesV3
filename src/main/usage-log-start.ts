@@ -25,13 +25,14 @@
  * failure it waits 1, 2, 4 … 30 minutes. Until homemini's route is deployed
  * (404) everything simply waits on disk.
  */
-import { app, BrowserWindow, ipcMain, type WebContents } from 'electron'
+import { app, BrowserWindow, ipcMain, powerMonitor, type WebContents } from 'electron'
 import { join } from 'node:path'
 import { hostname as osHostname } from 'node:os'
 import { deviceFromHostname, ipcEvent, MAX_EVENTS_PER_IPC, routeOf, USAGE_ROUTE, type UsageDetail, type UsageKind } from '../common/usage-log.ts'
 import { createUsageStore, USAGE_LOG_DIR, type UsageStore } from './usage-log-store.ts'
 import { ipcInFlight, observeIpc } from './ipc-register.ts'
 import { withCompanionInit } from './hub-companion.ts'
+import { createLoopHoldMeter } from './loop-hold-meter.ts'
 
 export interface UsageLogDeps {
   userData: string
@@ -189,21 +190,20 @@ export function startUsageLog(deps: UsageLogDeps): UsageLog {
   netSummary.unref()
 
   // ── the main event loop held ──
-  let expected = performance.now() + LOOP_TICK_MS
-  let holds = 0
-  let holdMax = 0
-  const loop = setInterval(() => {
-    const t = performance.now()
-    const late = t - expected
-    expected = t + LOOP_TICK_MS
-    if (late > LOOP_HELD_MS) { holds++; holdMax = Math.max(holdMax, Math.round(late)) }
-  }, LOOP_TICK_MS)
+  // Each hold says whose it is: the app's CPU across it, the wall clock, and a
+  // sleep (loop-hold-meter.ts has why).
+  const holdMeter = createLoopHoldMeter({
+    mono: () => performance.now(),
+    wall: () => Date.now(),
+    cpu: () => { const c = process.cpuUsage(); return (c.user + c.system) / 1000 },
+  }, LOOP_TICK_MS, LOOP_HELD_MS)
+  try { powerMonitor.on('suspend', () => holdMeter.suspend()) } catch { /* no power events: holds just carry no sleep mark */ }
+  const loop = setInterval(() => holdMeter.tick(), LOOP_TICK_MS)
   loop.unref()
   const loopReport = setInterval(() => {
-    if (!holds) return
-    log('slow', 'main.loop-held', { ms: holdMax, detail: { count: holds, max: holdMax, windowMs: LOOP_REPORT_MS } })
-    holds = 0
-    holdMax = 0
+    const r = holdMeter.take()
+    if (!r) return
+    log('slow', 'main.loop-held', { ms: r.max, detail: { count: r.count, max: r.max, windowMs: LOOP_REPORT_MS, cpuMs: r.cpuMs, wallMs: r.wallMs, sinceSuspendMs: r.sinceSuspendMs } })
   }, LOOP_REPORT_MS)
   loopReport.unref()
 
