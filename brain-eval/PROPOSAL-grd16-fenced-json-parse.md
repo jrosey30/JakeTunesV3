@@ -55,6 +55,24 @@ mirroring v3. Flake tally: 6 nights (10-14, 10-18, 10-22, 10-24, 11-22,
 11-23) across four probes and now both rulers. v1 true grounding 11-23 =
 1.000.
 
+**2026-11-28 update — FIRST DOUBLE-FLAKE NIGHT; both proven classes fired
+once each, and a FIFTH probe joined the class.** `grd-005` (v1) and
+`v3-grd-07` ("Name a few Deep House tracks I own", new to the class) both
+scored 0 as `unparseable (reply was not JSON)` on runs `B1-20261128` /
+`B3-20261128`. Read-only ×3 replays on the exact rebuilt contexts
+(`grd_flake_forensic_20261128.py`, full raws in
+`/tmp/grd-flake-raws-20261128.txt`) reproduced BOTH classes live:
+grd-005 = class 2 (1/3 repro: valid obj1 citing 5 real Nirvana tracks, then
+"Wait—I need to correct that" + second emission; `raw_decode` recovers obj1
+cleanly); v3-grd-07 = class 1 (1/3 repro: unescaped inner double quotes —
+`Check out "Caldo Verde" by Erwin...` inside the `answer` string, delimiter
+error at pos 401). Every parsed replay cited 4–5 real tracks, zero
+fabrication. The recommended fix (fence-strip → `raw_decode` → bounded
+tracks-array regex) would have scored BOTH probes 1.0 tonight. Flake tally:
+8 nights (10-14, 10-18, 10-22, 10-24, 11-22, 11-23, 11-25, 11-28) across
+five probes and both rulers; zero fabrication across all of them. True
+grounding 11-28: v1 = 1.000, v3 = 0.950 (grd-15 trap only).
+
 ## What PR #194's raw_excerpt capture revealed (2026-10-22)
 
 The model's behavior was CORRECT — it cited zero tracks and refused the
